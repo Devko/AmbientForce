@@ -31,8 +31,9 @@ const af::Wavetable& table(int id) {
     return t[id];
 }
 
-// n samples of one oscillator at a fixed pitch and position, in blocks of `block`.
-Buf play(af::TableOsc& o, const af::Wavetable& t, float inc, float pos, int n, int block = kOscBlock) {
+// n samples of one oscillator (either read) at a fixed pitch and position, in blocks of `block`.
+template <class Osc>
+Buf play(Osc& o, const af::Wavetable& t, float inc, float pos, int n, int block = kOscBlock) {
     Buf x(static_cast<size_t>(n));
     for (int i = 0; i < n; i += block) o.render(t, inc, pos, &x[static_cast<size_t>(i)], std::min(block, n - i));
     return x;
@@ -126,13 +127,14 @@ void testPitch() {
 
 // Check 2: the saw from C1 to C8 folds nothing back below 15 kHz louder than -70 dB under its
 // fundamental. Everything that isn't a harmonic of the note counts: a harmonic of the table folded
-// back (the mip choice) and the interpolation's own images (the read).
-void testAliasing() {
-    std::printf("== lifeosc: no aliasing (saw, notes 24..108)\n");
+// back (the mip choice) and the interpolation's own images (the read). The linear read (B's) leaves
+// its images at -64 dB (level 5, note 72): it is held to -60.
+template <class Osc>
+void aliasSweep(const char* name, double limit) {
     double worstAll = -400.0;
     int worstNote = 0;
     for (int note = 24; note <= 108; note += 12) {
-        af::TableOsc o;
+        Osc o;
         o.reset();
         const float inc = af::noteHz(static_cast<float>(note)) / af::kRate;
         const Buf x = play(o, table(af::TB_SAW), inc, 0.0f, 1 << 16);
@@ -149,9 +151,15 @@ void testAliasing() {
             worstAll = rel;
             worstNote = note;
         }
-        CHECK(rel < -70.0);
+        CHECK(rel < limit);
     }
-    std::printf("  worst %.1f dB (note %d)\n", worstAll, worstNote);
+    std::printf("  %s: worst %.1f dB (note %d)\n", name, worstAll, worstNote);
+}
+
+void testAliasing() {
+    std::printf("== lifeosc: no aliasing (saw, notes 24..108)\n");
+    aliasSweep<af::TableOsc>("Hermite", -70.0);
+    aliasSweep<af::TableOscLinear>("linear", -60.0);
 }
 
 // Check 3: a jump of the position from the first frame to the last within one block glides across
@@ -322,9 +330,11 @@ void testSmear() {
     CHECK(walk(6) != v);
 }
 
-// Checks 6 and 7, and Mix and AM: the Couple modes through renderCoupled, one control step at a time.
+// Checks 6 and 7, and Mix and AM: the Couple modes through renderCoupled, one control step at a
+// time (A Hermite, B linear).
 Buf coupled(int mode, float amt, float blend, int tableA, double hzA, int tableB, double hzB, int n = 1 << 16) {
-    af::TableOsc a, b;
+    af::TableOsc a;
+    af::TableOscLinear b;
     a.reset();
     b.reset();
     Buf x(static_cast<size_t>(n));
@@ -354,7 +364,8 @@ void testCouple() {
     const double f1 = 1000.0, f2 = 300.0;
     {   // Ring, amt 1: A times B, the sum and the difference, no carrier.
         const Buf x = coupled(af::CP_RING, 1.0f, 0.0f, af::TB_SINE, f1, af::TB_SINE, f2);
-        std::printf("  Ring: f1-f2 %.3f, f1+f2 %.3f, f1 %.0f dB\n", magnitude(x, f1 - f2), magnitude(x, f1 + f2), db(magnitude(x, f1)));
+        std::printf("  Ring: f1-f2 %.3f, f1+f2 %.3f, f1 %.0f dB\n", magnitude(x, f1 - f2), magnitude(x, f1 + f2),
+                    db(magnitude(x, f1)));
         CHECK(std::fabs(magnitude(x, f1 - f2) - 0.5) < 0.005 && std::fabs(magnitude(x, f1 + f2) - 0.5) < 0.005);
         CHECK(db(magnitude(x, f1)) < -40.0 && db(magnitude(x, f2)) < -40.0);
     }
@@ -368,9 +379,34 @@ void testCouple() {
         CHECK(std::fabs(magnitude(x, f1) - 0.5) < 0.005 && std::fabs(magnitude(x, f2) - 0.5) < 0.005);
         CHECK(db(magnitude(x, f1 + f2)) < -90.0);
         const Buf b1 = coupled(af::CP_RING, 1.0f, 1.0f, af::TB_SAW, f1, af::TB_SQUARE, f2, 4096);
-        af::TableOsc o;
+        af::TableOscLinear o;
         o.reset();
         CHECK(b1 == play(o, table(af::TB_SQUARE), static_cast<float>(f2) / af::kRate, 0.5f, 4096, af::kChunk));
+    }
+    {   // Mix at blend 0 doesn't render B: the same output, sample for sample, as rendering B and
+        // mixing none of it in. (The pitches are worked out once for both: the device build may
+        // divide by the rate in one place and multiply by its reciprocal in another, an ulp apart.)
+        const int n = 4096;
+        const float incA = static_cast<float>(f1) / af::kRate, incB = static_cast<float>(f2) / af::kRate;
+        const af::Wavetable &ta = table(af::TB_SINE_BLOOM), &tb = table(af::TB_SAW);
+        af::TableOsc a, as;
+        af::TableOscLinear b, bs;
+        a.reset();
+        b.reset();
+        as.reset();
+        bs.reset();
+        Buf skipped(static_cast<size_t>(n)), full(static_cast<size_t>(n));
+        float scratch[2 * af::kChunk], bb[af::kChunk];
+        for (int i = 0; i < n; i += af::kChunk) {
+            af::renderCoupled(as, ta, incA, bs, tb, incB, 0.5f, af::CP_MIX, 0.7f, 0.0f, &skipped[static_cast<size_t>(i)],
+                              scratch, af::kChunk);
+            float* o = &full[static_cast<size_t>(i)];
+            b.render(tb, incB, 0.5f, bb, af::kChunk);
+            a.render(ta, incA, 0.5f, o, af::kChunk);
+            af::couple(af::CP_MIX, 0.7f, 0.0f, o, bb, o, af::kChunk);
+        }
+        CHECK(skipped == full);
+        CHECK(peak(skipped) > 0.5f);
     }
 }
 

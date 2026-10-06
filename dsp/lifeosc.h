@@ -4,12 +4,26 @@
 // Smear); and the Couple modes that join oscillator A to oscillator B. Header-only: the voices'
 // loops inline it.
 //
-// The read differs from PolyForce's in one way: 4-point Hermite interpolation instead of linear.
-// The upper mip levels keep 8 samples per cycle of their top harmonic, and linear interpolation
-// there leaves images of those harmonics at about -64 dB under a saw's fundamental (level 5: 32
-// harmonics in 256 samples), folded anywhere into the audio band. Hermite takes them to about
-// -75 dB, for twice the reads. Lifetime frames, whose top harmonics are much quieter than a saw's,
-// need it less; table B's digital waves need it most.
+// Two reads, chosen at compile time: 4-point Hermite interpolation (TableOsc) and PolyForce's
+// linear one (TableOscLinear). The upper mip levels keep 8 samples per cycle of their top
+// harmonic, and linear interpolation there leaves images of those harmonics at -64 dB under a
+// saw's fundamental (level 5: 32 harmonics in 256 samples; note 72, folded to 14.6 kHz). Hermite
+// takes them to -74.5 dB, for twice the reads. Lifetime frames, whose top harmonics are much
+// quieter than a saw's, leave less either way.
+//
+// The cost, as ARM instructions a sample in the inner loop (-O3, the device's flags), over one
+// frame / a pair of frames / a position crossing frames within the render; FM adds 3 to 5:
+//   Hermite  41 / 66 / 85
+//   linear   20 / 35 / 52
+// By PolyForce's calibration (its ARM instructions per block against its device bench: about 1 ns
+// an instruction), a Hermite oscillator over a pair of frames is about 0.29% of a 128-frame block
+// and a linear one over one frame about 0.09%. So the lifetime oscillators (A, Ground's partials)
+// read with Hermite and Bloom's oscillator B, mostly a digital wave, linearly (renderCoupled()).
+// The device bench (Task 11) has the final word; if Bloom runs over, its unison drops from 2 to 1
+// first (CONCEPT.md 11, the caps' order).
+//
+// A known limit: FM widens A's spectrum, but A's mip level comes from A's own pitch, so at high
+// notes with deep FM the partials pushed past Nyquist fold back down.
 #include "common.h"
 #include "wavetable.h"
 
@@ -148,7 +162,8 @@ AF_INLINE void taps(const int16_t* p, uint32_t j, uint32_t wrap, float& xm, floa
 // n samples into out; returns the phase after the last. The phase is a 32-bit fixed-point fraction
 // of a cycle: its top bits index the level, the rest are the interpolation fraction, and the
 // wrap-around is integer overflow. FM: fm[i] (cycles) moves the read, not the phase itself.
-template <int Kind, bool FM>
+// Hermite: four samples a frame; else two (linear, PolyForce's read).
+template <bool Hermite, int Kind, bool FM>
 uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const float* fm) {
     // Locals: the stores to out could otherwise alias the span, and every field would be loaded
     // again for every sample.
@@ -167,10 +182,15 @@ uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const
         k += 1.0f;
         const uint32_t j = p >> shift;
         const float t = static_cast<float>(p & fracMask) * frac;
-        float am, a0, a1, a2;
         if constexpr (Kind == K_ONE) {
-            taps(a, j, wrap, am, a0, a1, a2);
-            out[i] = hermite(am, a0, a1, a2, t) * sa;
+            if constexpr (Hermite) {
+                float am, a0, a1, a2;
+                taps(a, j, wrap, am, a0, a1, a2);
+                out[i] = hermite(am, a0, a1, a2, t) * sa;
+            } else {
+                const float a0 = static_cast<float>(a[j]), a1 = static_cast<float>(a[j + 1]);
+                out[i] = (a0 + t * (a1 - a0)) * sa;
+            }
         } else {
             const int16_t *A = a, *B = b;
             float wa, wb;
@@ -188,10 +208,16 @@ uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const
             }
             // Interpolation and crossfade are both linear in the samples: mix the taps, then
             // interpolate once.
-            float bm, b0, b1, b2;
-            taps(A, j, wrap, am, a0, a1, a2);
-            taps(B, j, wrap, bm, b0, b1, b2);
-            out[i] = hermite(am * wa + bm * wb, a0 * wa + b0 * wb, a1 * wa + b1 * wb, a2 * wa + b2 * wb, t);
+            if constexpr (Hermite) {
+                float am, a0, a1, a2, bm, b0, b1, b2;
+                taps(A, j, wrap, am, a0, a1, a2);
+                taps(B, j, wrap, bm, b0, b1, b2);
+                out[i] = hermite(am * wa + bm * wb, a0 * wa + b0 * wb, a1 * wa + b1 * wb, a2 * wa + b2 * wb, t);
+            } else {
+                const float c0 = static_cast<float>(A[j]) * wa + static_cast<float>(B[j]) * wb;
+                const float c1 = static_cast<float>(A[j + 1]) * wa + static_cast<float>(B[j + 1]) * wb;
+                out[i] = c0 + t * (c1 - c0);
+            }
         }
     }
     return ph;
@@ -201,6 +227,8 @@ uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const
 
 // One oscillator over one table: phase, frame crossfade, mip choice. Frames are read as they are
 // stored (int16 * scale): lifetime frames are equal-RMS already, so there is no level per frame.
+// Hermite: the 4-point read (TableOsc), else the linear one (TableOscLinear); see the top of this
+// file for what each costs and leaves behind.
 //
 // The phase is a 32-bit fixed-point fraction of a cycle, as in PolyForce. Adding the increment
 // wraps it by integer overflow, which is exact: after any number of samples, hours of them, the
@@ -209,7 +237,8 @@ uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const
 // cycle would round each increment to its 2^-24 grid, a pitch error of up to 0.1 cent in the bass
 // that changes with the phase; a float that is never wrapped loses a bit each time its count
 // doubles.)
-class TableOsc {
+template <bool Hermite>
+class TableOscT {
 public:
     void reset(float phase = 0.0f) {
         const double p = static_cast<double>(phase) - std::floor(static_cast<double>(phase));
@@ -300,12 +329,12 @@ private:
             s.sa = t.scale[static_cast<size_t>(f)];
         }
         switch (kind * 2 + (fm ? 1 : 0)) {
-            case 0: return play<K_ONE, false>(s, ph, dph, out, n, fm);
-            case 1: return play<K_ONE, true>(s, ph, dph, out, n, fm);
-            case 2: return play<K_PAIR, false>(s, ph, dph, out, n, fm);
-            case 3: return play<K_PAIR, true>(s, ph, dph, out, n, fm);
-            case 4: return play<K_WALK, false>(s, ph, dph, out, n, fm);
-            default: return play<K_WALK, true>(s, ph, dph, out, n, fm);
+            case 0: return play<Hermite, K_ONE, false>(s, ph, dph, out, n, fm);
+            case 1: return play<Hermite, K_ONE, true>(s, ph, dph, out, n, fm);
+            case 2: return play<Hermite, K_PAIR, false>(s, ph, dph, out, n, fm);
+            case 3: return play<Hermite, K_PAIR, true>(s, ph, dph, out, n, fm);
+            case 4: return play<Hermite, K_WALK, false>(s, ph, dph, out, n, fm);
+            default: return play<Hermite, K_WALK, true>(s, ph, dph, out, n, fm);
         }
     }
 
@@ -313,6 +342,9 @@ private:
     float pos_ = 0.0f;   // the last render's position, where the next one's glide starts
     int mip_ = -1;       // the last render's level; -1: none since reset() (no glide, no level fade)
 };
+
+using TableOsc = TableOscT<true>;         // the lifetime oscillator: A, and Ground's partials
+using TableOscLinear = TableOscT<false>;  // half the reads: Bloom's oscillator B
 
 // --- Couple: oscillator A with oscillator B -----------------------------------------------------
 //
@@ -348,9 +380,22 @@ inline void couple(int mode, float amt, float blend, const float* a, const float
 }
 
 // One control step of a coupled pair, both oscillators at the same position. scratch: 2n floats.
-inline void renderCoupled(TableOsc& oa, const Wavetable& ta, float incA, TableOsc& ob, const Wavetable& tb, float incB,
-                          float pos, int mode, float amt, float blend, float* out, float* scratch, int n) {
+//
+// B reads linearly (TableOscLinear). It is mostly a digital wave, there as a blend or a modulator,
+// and the linear read's images (-64 dB under a saw's fundamental at worst, folded to 14.6 kHz,
+// under a reverb) are not worth the Hermite read's cost a second time per voice (see the top of
+// this file). Mix at blend 0 doesn't render B at all: none of it is heard, and Mix doesn't depend
+// on where B's phase stands against A's (when the blend opens again B goes on from where it
+// stopped, its position gliding over from where it was). FM, AM and Ring always render it, so
+// that phase relation, which they do depend on, holds.
+inline void renderCoupled(TableOsc& oa, const Wavetable& ta, float incA, TableOscLinear& ob, const Wavetable& tb,
+                          float incB, float pos, int mode, float amt, float blend, float* out, float* scratch, int n) {
     if (n <= 0) return;
+    const bool mix = mode != CP_FM && mode != CP_AM && mode != CP_RING;   // what couple() plays as Mix
+    if (mix && lifeosc::unit(blend) == 0.0f) {
+        oa.render(ta, incA, pos, out, n);   // what couple() would leave: A, exactly
+        return;
+    }
     float* b = scratch;
     ob.render(tb, incB, pos, b, n);
     if (mode == CP_FM) {
