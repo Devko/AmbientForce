@@ -357,7 +357,7 @@ int main() {
     };
 
     engineTests();
-    tablesTests();   // before the first plugin instance: it times the builder thread from its start
+    tablesTests();   // early: it starts, stops and restarts the shared builder itself, from no instance alive
     testBasics();
     testGetters();
     testPlay();

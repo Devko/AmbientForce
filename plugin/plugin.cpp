@@ -404,7 +404,7 @@ uint32_t instanceSeed(const void* p) {
 
 AEffect* createPlugin(audioMasterCallback master) {
     Plugin* p = new Plugin();
-    af::instanceOpened();   // until effClose: the shared tables stay while it may read them
+    af::instanceOpened();   // the first starts the shared table builds; until effClose the tables stay
     p->master = master;
     const uint32_t seed = instanceSeed(p);
     p->engine.seed(seed);
@@ -433,7 +433,7 @@ AEffect* createPlugin(audioMasterCallback master) {
 // Nothing may throw into MPC: a failed creation reports "no plugin" instead.
 extern "C" __attribute__((visibility("default"))) AEffect* VSTPluginMain(audioMasterCallback master) {
     try {
-        af::ensureTablesBuilding();   // the first instance starts the process-wide table builds
+        af::sineTable();   // every slot's fallback, built here and never on the audio thread
         return createPlugin(master);
     } catch (...) {
         return nullptr;

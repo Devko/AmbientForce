@@ -16,7 +16,7 @@ constexpr double kPi = 3.14159265358979323846;
 //
 // Frame f shows the note at time t = T * (f / 255)^kLifeCurve. Each harmonic h has the amplitude
 //
-//   A_h(t) = S_h * life_h(t) * (1 + beat_h(t)) * formant(h, t)
+//   A_h(t) = S_h * life_h(t) * (1 + beat_h(t)) * wobble_h(t) * formant(h, t)
 //
 // S_h       the start: a tilt in dB per octave, the even harmonics' share, a strong 2nd if asked,
 //           a soft high cut.
@@ -24,11 +24,13 @@ constexpr double kPi = 3.14159265358979323846;
 //           first; or, for a bloom, a growth (t / T)^(bloom (h - 1)), so they arrive last.
 // beat_h    a slow sinusoidal dip, -beat * (1 - cos(2 pi rate_h t + phase_h)) / 2, so a partial
 //           pulses the way two strings tuned a hair apart do. Each harmonic its own rate.
+// wobble_h  a slow swing of the whole tilt, 10^(wobble sin(2 pi wobbleHz t) log2(h) / 20): the
+//           brightness rising and falling together, as a bow's pressure does it.
 // formant   floor + F1 + F2, two resonance peaks that may move over the life (Hz at the model's
 //           reference pitch).
 //
 // A table is pitch-free, so its formants sit on fixed harmonics: true at `ref`, shifted with the
-// note elsewhere. Each harmonic keeps one phase (pseudo-random, seeded by the table) in every
+// note elsewhere. Each harmonic keeps one phase (pseudo-random, from the model's seed) in every
 // frame: the waveform has no big peak where all partials line up, and two neighbouring frames
 // crossfade without comb filtering. Then the frame is scaled to the same RMS as all the others.
 
@@ -39,6 +41,9 @@ struct Formant {
 };
 
 struct LifeModel {
+    // The phases' and beat rates' random numbers: fixed per model (its table's place in the
+    // browser when it was made), so reordering the browser doesn't change the sound.
+    uint32_t seed = 0;
     double length = 10.0;      // T: seconds of the note that the 256 frames span
     // S_h, the spectrum at the start
     double tilt = -6.0;        // dB per octave
@@ -59,7 +64,10 @@ struct LifeModel {
     double wobbleHz = 0.0;
     // formant(h, t)
     double ref = 220.0;        // Hz: the pitch the formants are placed for
-    double floor = 0.0;        // the gain away from the peaks; 0 (with no peaks): no formants
+    // Added to the two peaks everywhere. Their skirts fall slowly (gain / sqrt(1 + z^2), z in half
+    // bandwidths: still 1/5 of the peak 5 half bandwidths away), so far from both the gain is the
+    // floor plus a little of each. Formants are off when the floor and every gain are 0.
+    double floor = 0.0;
     Formant start[2], end[2];  // F1 and F2 at the start of the life and at its end
     double path = 1.0;         // the formants move as (t / T)^path
 };
@@ -73,6 +81,7 @@ struct LifeModel {
 // damping darkens it (tau1 1.5 s sets that pace), and the tone would no longer age one way.
 LifeModel feltPiano() {
     LifeModel m;
+    m.seed = 0;
     m.length = 20.0;
     m.tilt = -9.0;
     m.second = 2.0;          // -3 dB under the fundamental instead of the tilt's -9
@@ -92,6 +101,7 @@ LifeModel feltPiano() {
 // harmonics away within the first second, leaving the resonator's near-sine for the tail.
 LifeModel celesta() {
     LifeModel m;
+    m.seed = 1;
     m.length = 8.0;
     m.tilt = -6.0;
     m.even = 0.3;
@@ -105,6 +115,7 @@ LifeModel celesta() {
 // (0.1-0.3 Hz, 4 dB deep) against the steady fundamental, as the glass's partials drift.
 LifeModel glassHarmonica() {
     LifeModel m;
+    m.seed = 2;
     m.length = 30.0;
     m.tilt = -11.0;
     m.only = 1u << 1 | 1u << 2 | 1u << 3 | 1u << 5;
@@ -125,6 +136,7 @@ LifeModel glassHarmonica() {
 // down by the end).
 LifeModel celloTasto() {
     LifeModel m;
+    m.seed = 3;
     m.length = 12.0;
     m.tilt = -12.0;
     m.tau1 = 6.0;
@@ -145,6 +157,7 @@ LifeModel celloTasto() {
 // pitch.
 LifeModel choirAhOo() {
     LifeModel m;
+    m.seed = 4;
     m.length = 16.0;
     m.tilt = -6.0;
     m.rolloff = 24.0;
@@ -166,6 +179,7 @@ LifeModel choirAhOo() {
 // beating (0.5-1.2 Hz) between the reeds of a rank.
 LifeModel reedOrgan() {
     LifeModel m;
+    m.seed = 5;
     m.length = 10.0;
     m.tilt = -6.0;
     m.even = 0.15;
@@ -182,6 +196,7 @@ LifeModel reedOrgan() {
 // the fundamental, at frame 192 10 dB (the 5th 28 dB).
 LifeModel sineBloom() {
     LifeModel m;
+    m.seed = 6;
     m.length = 20.0;
     m.tilt = -7.5;
     m.rolloff = 32.0;
@@ -195,6 +210,7 @@ LifeModel sineBloom() {
 // different bows.
 LifeModel tapeStrings() {
     LifeModel m;
+    m.seed = 7;
     m.length = 10.0;
     m.tilt = -6.0;
     m.rolloff = 36.0;
@@ -210,10 +226,11 @@ LifeModel (*const kModels[])() = {feltPiano, celesta, glassHarmonica, celloTasto
                                    choirAhOo, reedOrgan, sineBloom, tapeStrings};
 static_assert(sizeof kModels / sizeof kModels[0] == TB_SINE, "one model per lifetime table");
 
-// A pseudo-random number in [0, 1) per (table, harmonic, use): the same table on every build and
-// every machine (splitmix64; no library generator, whose sequence may differ between versions).
-double rnd(int id, int h, int use) {
-    uint64_t x = static_cast<uint64_t>(id) << 40 ^ static_cast<uint64_t>(use) << 32 ^ static_cast<uint64_t>(h);
+// A pseudo-random number in [0, 1) per (model's seed, harmonic, use): the same table on every
+// build and every machine (splitmix64; no library generator, whose sequence may differ between
+// versions).
+double rnd(uint32_t seed, int h, int use) {
+    uint64_t x = static_cast<uint64_t>(seed) << 40 ^ static_cast<uint64_t>(use) << 32 ^ static_cast<uint64_t>(h);
     x += 0x9E3779B97F4A7C15ull;
     x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
     x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
@@ -232,7 +249,7 @@ struct Partial {
     double hz = 0.0;       // at the reference pitch
 };
 
-std::vector<Partial> partials(const LifeModel& m, int id) {
+std::vector<Partial> partials(const LifeModel& m) {
     std::vector<Partial> ps(kMaxHarmonic);
     for (int h = 1; h < kMaxHarmonic; ++h) {
         Partial& p = ps[static_cast<size_t>(h)];
@@ -244,10 +261,10 @@ std::vector<Partial> partials(const LifeModel& m, int id) {
         if (m.rolloff > 0.0) p.start *= std::exp(-(h - 1) / m.rolloff);
         if (m.tau1 > 0.0) p.decay = (1.0 + m.damp * (h - 1)) / m.tau1;
         if (m.beat > 0.0 && h >= m.beatFrom) {
-            p.beatW = 2.0 * kPi * (m.beatLo + (m.beatHi - m.beatLo) * rnd(id, h, 1));
-            p.beatPh = m.beatTogether ? 0.0 : 2.0 * kPi * rnd(id, h, 2);
+            p.beatW = 2.0 * kPi * (m.beatLo + (m.beatHi - m.beatLo) * rnd(m.seed, h, 1));
+            p.beatPh = m.beatTogether ? 0.0 : 2.0 * kPi * rnd(m.seed, h, 2);
         }
-        const double ph = 2.0 * kPi * rnd(id, h, 0);
+        const double ph = 2.0 * kPi * rnd(m.seed, h, 0);
         p.sinPh = std::sin(ph);
         p.cosPh = std::cos(ph);
     }
@@ -263,7 +280,8 @@ double peak(double f, const Formant& r) {
 // Frame at time t: amplitudes, then scaled so the harmonics' energy is a unit sine's (RMS 1/sqrt(2)).
 void spectrumAt(const LifeModel& m, const std::vector<Partial>& ps, double t, std::vector<double>& amp, Spectrum& s) {
     const double u = std::min(t / m.length, 1.0);
-    const bool formants = m.floor > 0.0 || m.start[0].gain > 0.0 || m.start[1].gain > 0.0;
+    const bool formants = m.floor > 0.0 || m.start[0].gain > 0.0 || m.start[1].gain > 0.0 || m.end[0].gain > 0.0 ||
+                          m.end[1].gain > 0.0;
     Formant f[2];
     if (formants) {
         const double x = std::pow(u, m.path);
@@ -283,7 +301,7 @@ void spectrumAt(const LifeModel& m, const std::vector<Partial>& ps, double t, st
         if (a > 0.0) {
             if (m.bloom > 0.0) a *= h == 1 ? 1.0 : std::pow(u, m.bloom * (h - 1));
             const double d = t * p.decay;
-            a *= d < 600.0 ? std::exp(-d) : 0.0;   // past that it is 0 anyway, and no denormals
+            a *= d < 600.0 ? std::exp(-d) : 0.0;   // exp(-600) = 1e-261, nothing at any level: skip the exp
             if (p.beatW > 0.0) a *= 1.0 - m.beat * 0.5 * (1.0 - std::cos(p.beatW * t + p.beatPh));
             if (tilt != 0.0) a *= std::pow(10.0, tilt * p.octave / 20.0);
             if (formants) a *= m.floor + peak(p.hz, f[0]) + peak(p.hz, f[1]);
@@ -309,7 +327,7 @@ bool cancelled(const std::atomic<bool>* cancel) { return cancel && cancel->load(
 
 bool buildLife(int id, Wavetable& t, const std::atomic<bool>* cancel) {
     const LifeModel m = kModels[id]();
-    const std::vector<Partial> ps = partials(m, id);
+    const std::vector<Partial> ps = partials(m);
     std::vector<double> amp(kMaxHarmonic, 0.0);
     Spectrum a, b;
     const FrameBuilder fb;

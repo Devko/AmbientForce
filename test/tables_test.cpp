@@ -162,16 +162,20 @@ void testBandLimits(const std::vector<af::Wavetable>& tables) {
     std::printf("  (%.1f s)\n", secondsSince(t0));
 }
 
-// Check 2: a lifetime table carries timbre, not level: frames 0, 128 and 255 within 0.5 dB of each
-// other, and all at a full-scale sine's RMS.
+// Check 2: a lifetime table carries timbre, not level: all 256 frames within 0.5 dB of each other,
+// and all at a full-scale sine's RMS.
 void testEqualRms(const std::vector<af::Wavetable>& tables) {
-    std::printf("== tables: equal RMS across a life\n");
+    std::printf("== tables: equal RMS across a life, every frame\n");
     for (int id = 0; id < af::TB_SINE; ++id) {
         const af::Wavetable& t = tables[static_cast<size_t>(id)];
         CHECK(t.frames == af::kLifeFrames);
         if (t.frames != af::kLifeFrames) continue;
-        const double r[3] = {rmsOf(t, 0), rmsOf(t, 128), rmsOf(t, 255)};
-        const double lo = std::min({r[0], r[1], r[2]}), hi = std::max({r[0], r[1], r[2]});
+        double lo = 1e9, hi = 0.0;
+        for (int f = 0; f < t.frames; ++f) {
+            const double r = rmsOf(t, f);
+            lo = std::min(lo, r);
+            hi = std::max(hi, r);
+        }
         CHECK(20.0 * std::log10(hi / lo) <= 0.5);
         CHECK(std::fabs(20.0 * std::log10(lo / std::sqrt(0.5))) < 0.1);
         CHECK(std::fabs(20.0 * std::log10(hi / std::sqrt(0.5))) < 0.1);
