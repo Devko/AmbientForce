@@ -383,30 +383,64 @@ void testCouple() {
         o.reset();
         CHECK(b1 == play(o, table(af::TB_SQUARE), static_cast<float>(f2) / af::kRate, 0.5f, 4096, af::kChunk));
     }
-    {   // Mix at blend 0 doesn't render B: the same output, sample for sample, as rendering B and
-        // mixing none of it in. (The pitches are worked out once for both: the device build may
-        // divide by the rate in one place and multiply by its reciprocal in another, an ulp apart.)
-        const int n = 4096;
-        const float incA = static_cast<float>(f1) / af::kRate, incB = static_cast<float>(f2) / af::kRate;
-        const af::Wavetable &ta = table(af::TB_SINE_BLOOM), &tb = table(af::TB_SAW);
+    {   // Mix at blend 0 doesn't read B but keeps it going: two sines in tune, one step at blend 0,
+        // then half of each. In step they add up to full scale; had B stood still for the step
+        // (0.32 cycles at 441 Hz) they would come to 0.54.
+        const float inc = 441.0f / af::kRate;
+        af::TableOsc a;
+        af::TableOscLinear b;
+        a.reset();
+        b.reset();
+        Buf x(64 * af::kChunk);
+        float scratch[2 * af::kChunk];
+        for (int k = 0; k < 64; ++k)
+            af::renderCoupled(a, table(af::TB_SINE), inc, b, table(af::TB_SINE), inc, 0.5f, af::CP_MIX, 0.0f,
+                              k == 0 ? 0.0f : 0.5f, &x[static_cast<size_t>(k * af::kChunk)], scratch, af::kChunk);
+        std::printf("  Mix, blend 0 for a step, then 0.5: peak %.4f\n", peak(x, af::kChunk));
+        CHECK(std::fabs(peak(x, af::kChunk) - 1.0f) < 1e-3f);
+    }
+    {   // The blend open, shut for 32 steps and open again, while A's and B's position moves and
+        // B's pitch crosses into the next mip level (step 40): sample for sample what rendering B
+        // throughout and mixing it in at the blend gives. (The pitches are worked out once for
+        // both: the device build may divide by the rate in one place and multiply by its
+        // reciprocal in another, an ulp apart.)
+        const af::Wavetable& t = table(af::TB_SINE_BLOOM);
+        const float incA = static_cast<float>(f1) / af::kRate;
+        const float edge = af::kAliasLimit / 64.0f, incLo = edge * 0.99f, incHi = edge * 1.01f;
         af::TableOsc a, as;
         af::TableOscLinear b, bs;
         a.reset();
         b.reset();
         as.reset();
         bs.reset();
-        Buf skipped(static_cast<size_t>(n)), full(static_cast<size_t>(n));
+        Buf skipped(128 * af::kChunk), full(128 * af::kChunk);
         float scratch[2 * af::kChunk], bb[af::kChunk];
-        for (int i = 0; i < n; i += af::kChunk) {
-            af::renderCoupled(as, ta, incA, bs, tb, incB, 0.5f, af::CP_MIX, 0.7f, 0.0f, &skipped[static_cast<size_t>(i)],
-                              scratch, af::kChunk);
-            float* o = &full[static_cast<size_t>(i)];
-            b.render(tb, incB, 0.5f, bb, af::kChunk);
-            a.render(ta, incA, 0.5f, o, af::kChunk);
-            af::couple(af::CP_MIX, 0.7f, 0.0f, o, bb, o, af::kChunk);
+        for (int k = 0; k < 128; ++k) {
+            const float blend = k >= 32 && k < 64 ? 0.0f : 0.5f, pos = 0.3f + 0.002f * static_cast<float>(k);
+            const float incB = k < 40 ? incLo : incHi;
+            float* o = &full[static_cast<size_t>(k * af::kChunk)];
+            af::renderCoupled(as, t, incA, bs, t, incB, pos, af::CP_MIX, 0.7f, blend,
+                              &skipped[static_cast<size_t>(k * af::kChunk)], scratch, af::kChunk);
+            b.render(t, incB, pos, bb, af::kChunk);
+            a.render(t, incA, pos, o, af::kChunk);
+            af::couple(af::CP_MIX, 0.7f, blend, o, bb, o, af::kChunk);
         }
         CHECK(skipped == full);
         CHECK(peak(skipped) > 0.5f);
+    }
+    {   // skip() leaves an oscillator where render() would: the phase, the level, the position.
+        const af::Wavetable& t = table(af::TB_SINE_BLOOM);
+        af::TableOscLinear r, s;
+        r.reset(0.2f);
+        s.reset(0.2f);
+        float x[af::kChunk], y[af::kChunk];
+        r.render(t, 0.003f, 0.1f, x, af::kChunk);
+        s.render(t, 0.003f, 0.1f, y, af::kChunk);
+        r.render(t, 0.02f, 0.6f, x, 17);   // another level, another position, an odd length
+        s.skip(t, 0.02f, 0.6f, 17);
+        r.render(t, 0.02f, 0.6f, x, af::kChunk);
+        s.render(t, 0.02f, 0.6f, y, af::kChunk);
+        CHECK(std::equal(x, x + af::kChunk, y));
     }
 }
 
@@ -493,25 +527,42 @@ void testEdges() {
     for (size_t i = 0; i < e1.size(); ++i) diff = std::max(diff, std::fabs(e1[i] - e2[i]));
     CHECK(diff < 1e-3f);
 
-    // A scan fed NaN (a rate, a time, a position) gives a position all the same, and recovers.
-    af::LifeScan s;
-    s.seed(9);
-    bool ok = true;
-    const float nan = std::nanf("");
-    for (const af::LifePos& p : {af::LifePos{nan, nan, nan, nan}, af::LifePos{0.5f, 1.0f, nan, 1.0f}})
-        for (float dt : {kStepS, nan, -1.0f}) {
-            const float v = s.step(p, dt);
-            ok = ok && v >= 0.0f && v <= 1.0f;
-        }
+    // A scan fed a NaN or an infinity (a rate, a time, a position, a phase) gives a position all
+    // the same, and keeps swaying afterwards.
+    const float nan = std::nanf(""), inf = INFINITY;
     const af::LifePos sane{0.5f, 1.0f, 0.5f, 1.0f};
-    float lo = 1.0f, hi = 0.0f;
-    for (int i = 0; i < 4000; ++i) {
-        const float v = s.step(sane, kStepS);
-        lo = std::min(lo, v);
-        hi = std::max(hi, v);
+    auto swaysOn = [&](af::LifeScan& s) {
+        float lo = 1.0f, hi = 0.0f;
+        for (int i = 0; i < 4000; ++i) {
+            const float v = s.step(sane, kStepS);
+            lo = std::min(lo, v);
+            hi = std::max(hi, v);
+        }
+        return lo < 0.3f && hi > 0.7f;
+    };
+    for (const af::LifePos& p : {af::LifePos{nan, nan, nan, nan}, af::LifePos{0.5f, 1.0f, nan, 1.0f},
+                                 af::LifePos{inf, inf, inf, inf}, af::LifePos{0.5f, 1.0f, -inf, 1.0f}})
+        for (float dt : {kStepS, nan, -1.0f, inf, -inf}) {
+            af::LifeScan s;
+            s.seed(9);
+            const float v = s.step(p, dt);
+            CHECK(v >= 0.0f && v <= 1.0f);
+            CHECK(swaysOn(s));
+        }
+    for (float phase : {nan, inf, -inf}) {
+        af::LifeScan s;
+        s.seed(9);
+        s.reset(phase);
+        CHECK(swaysOn(s));
     }
-    CHECK(ok);
-    CHECK(lo < 0.3f && hi > 0.7f);   // still swaying
+
+    // An oscillator reset to a phase that isn't a number starts at 0.
+    for (float phase : {nan, inf, -inf}) {
+        af::TableOsc p, q;
+        p.reset(phase);
+        q.reset(0.0f);
+        CHECK(play(p, table(af::TB_SINE), 0.01f, 0.0f, 256) == play(q, table(af::TB_SINE), 0.01f, 0.0f, 256));
+    }
 }
 
 } // namespace

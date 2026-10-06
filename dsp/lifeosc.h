@@ -48,6 +48,11 @@ namespace lifeosc {
 
 inline float unit(float x) { return x > 0.0f ? std::min(x, 1.0f) : 0.0f; }   // 0..1, NaN to 0
 inline float rand01(uint32_t& s) { return static_cast<float>(xorshift(s) >> 8) * (1.0f / 16777216.0f); }
+// A phase as a fraction of a cycle, 0..1; a NaN or an infinity has none: 0.
+inline double cycles(float phase) {
+    const double p = std::isfinite(phase) ? static_cast<double>(phase) : 0.0;
+    return p - std::floor(p);
+}
 
 } // namespace lifeosc
 
@@ -74,17 +79,18 @@ public:
         xorshift(rng_);
         reset(lifeosc::rand01(rng_));
     }
-    // The sway's phase (cycles: 0 starts at Age and rises), and the smear back to its centre.
+    // The sway's phase (cycles: 0 starts at Age and rises; not finite: 0), and the smear back to
+    // its centre.
     void reset(float phase) {
-        sway_ = static_cast<double>(phase) - std::floor(static_cast<double>(phase));
+        sway_ = lifeosc::cycles(phase);
         from_ = to_ = 0.0f;
         t_ = 1.0f;   // the next step starts a new leg, from the centre
         rate_ = 0.0f;
     }
     // The position 0..1 for the next control step, `seconds` after the last.
     float step(const LifePos& p, float seconds) {
-        // A NaN would stay in the phase and the walk for good: it counts as nothing.
-        seconds = seconds > 0.0f ? seconds : 0.0f;
+        // A NaN or an infinity would stay in the phase and the walk for good: it counts as nothing.
+        seconds = std::isfinite(seconds) && seconds > 0.0f ? seconds : 0.0f;
         const float hz = p.swayHz > 0.0f ? std::min(p.swayHz, 2.0f) : 0.0f;
         // Double: at 0.002 Hz the phase moves 1.5e-6 a step, which a float near 1 would round by
         // up to 2% (a slower sway in half of each cycle).
@@ -240,15 +246,19 @@ uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const
 template <bool Hermite>
 class TableOscT {
 public:
+    // phase: cycles (a NaN or an infinity: 0).
     void reset(float phase = 0.0f) {
-        const double p = static_cast<double>(phase) - std::floor(static_cast<double>(phase));
+        const double p = lifeosc::cycles(phase);
         ph_ = static_cast<uint32_t>(static_cast<uint64_t>(p * 4294967296.0));   // a p that rounds to 1 wraps to 0
         mip_ = -1;
     }
 
     // inc: cycles per sample (0..0.49); pos: 0..1 over the frames. Renders n samples into out
-    // (overwrites). fmIn: a per-sample phase offset in cycles (|offset| < 128), or nullptr; it
-    // must not be out.
+    // (overwrites). fmIn: a per-sample phase offset in cycles, or nullptr; it must not be out, and
+    // it must stay within +-128 cycles (it is converted to an integer, which past that overflows).
+    // renderCoupled()'s is amt * 0.5 * B, under a cycle. It isn't clamped here: a clamp costs every
+    // FM sample 6 or 7 ARM instructions (measured; 44 -> 51 over one frame) for a bound nothing
+    // reaches.
     //
     // The position glides: sample i of n plays pos_last + (pos - pos_last) (i + 1) / n, so the last
     // sample is at pos and a moving Age never steps (the first render after reset() starts at pos).
@@ -261,10 +271,10 @@ public:
             std::fill(out, out + n, 0.0f);
             return;
         }
-        inc = inc > 0.0f ? std::min(inc, 0.49f) : 0.0f;   // NaN too
+        inc = clampInc(inc);
         pos = lifeosc::unit(pos);
-        const int mip = mipFor(std::max(inc, 1e-6f));   // never kAliasLimit / 0
-        const uint32_t dph = static_cast<uint32_t>(inc * 4294967296.0f);
+        const int mip = levelFor(inc);
+        const uint32_t dph = stepFor(inc);
         const float frames1 = static_cast<float>(t.frames - 1);
         const float f1 = pos * frames1, f0 = mip_ < 0 ? f1 : pos_ * frames1;
         const int was = mip_;
@@ -287,7 +297,25 @@ public:
         }
     }
 
+    // What render() would do to the oscillator, without reading the table or writing anything:
+    // the phase moves on n samples, and the position and the level are left where render() would
+    // leave them. For an oscillator nobody hears for a while that has to come back in step (B
+    // against A, renderCoupled()). FM doesn't move the phase itself, so it doesn't matter here.
+    void skip(const Wavetable& t, float inc, float pos, int n) {
+        if (n <= 0 || t.frames <= 0) return;   // render() leaves the state alone too
+        inc = clampInc(inc);
+        pos_ = lifeosc::unit(pos);
+        mip_ = levelFor(inc);
+        ph_ += static_cast<uint32_t>(n) * stepFor(inc);   // modulo 2^32, as n additions would be
+    }
+
 private:
+    // The pitch as render() and skip() take it: 0..0.49 cycles a sample (a NaN: 0), its mip level
+    // and its phase step.
+    static float clampInc(float inc) { return inc > 0.0f ? std::min(inc, 0.49f) : 0.0f; }
+    static int levelFor(float inc) { return mipFor(std::max(inc, 1e-6f)); }   // never kAliasLimit / 0
+    static uint32_t stepFor(float inc) { return static_cast<uint32_t>(inc * 4294967296.0f); }
+
     // n samples of level `mip` from phase ph, the frame position gliding from f0 (before the first
     // sample) to f1 (the last). Returns the phase after them.
     static uint32_t span(const Wavetable& t, int mip, uint32_t ph, uint32_t dph, float f0, float f1, float* out, int n,
@@ -384,15 +412,18 @@ inline void couple(int mode, float amt, float blend, const float* a, const float
 // B reads linearly (TableOscLinear). It is mostly a digital wave, there as a blend or a modulator,
 // and the linear read's images (-64 dB under a saw's fundamental at worst, folded to 14.6 kHz,
 // under a reverb) are not worth the Hermite read's cost a second time per voice (see the top of
-// this file). Mix at blend 0 doesn't render B at all: none of it is heard, and Mix doesn't depend
-// on where B's phase stands against A's (when the blend opens again B goes on from where it
-// stopped, its position gliding over from where it was). FM, AM and Ring always render it, so
-// that phase relation, which they do depend on, holds.
+// this file). Mix at blend 0 doesn't read B at all, as none of it is heard, but B is skip()ped
+// along, not left standing: where B's phase stands against A's matters to Mix too whenever the
+// two are in tune (the same pitch, or octaves apart, as Bloom's B octave sets them). Two sines in
+// tune add up to anything from silence to twice the level; when the blend opens again, that must
+// not depend on how long it sat at 0. Every mode always ends up exactly where rendering B
+// throughout would have.
 inline void renderCoupled(TableOsc& oa, const Wavetable& ta, float incA, TableOscLinear& ob, const Wavetable& tb,
                           float incB, float pos, int mode, float amt, float blend, float* out, float* scratch, int n) {
     if (n <= 0) return;
     const bool mix = mode != CP_FM && mode != CP_AM && mode != CP_RING;   // what couple() plays as Mix
     if (mix && lifeosc::unit(blend) == 0.0f) {
+        ob.skip(tb, incB, pos, n);
         oa.render(ta, incA, pos, out, n);   // what couple() would leave: A, exactly
         return;
     }
