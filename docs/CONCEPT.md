@@ -139,8 +139,10 @@ four levels of detail:
 |---|---|---|
 | Notes | plays what your hands play | Bloom |
 | Harmony | follows the harmony memory, not the notes themselves | Ground, Air |
-| Free | runs on its own, in key | Weather |
-| Off | ignores MIDI (its level still applies) | — |
+| Free | runs on its own, in key, from the first note until Stop | Weather |
+
+Silence is the Mute tile's job, so there is no Off. Nothing sounds before the first note, Free
+strata included.
 
 With the defaults your hands play Bloom and the other three accompany it. Switch Air to Notes and
 your hands play glass melodies over drone and rain. The harmony brain is the shared state, and
