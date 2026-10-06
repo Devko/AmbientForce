@@ -16,6 +16,7 @@
 #include "patch_map.h"
 #include "state.h"
 #include "surface.h"
+#include "tables.h"
 #include "trace.h"
 #include "../dsp/engine.h"
 #include "../dsp/stages.h"
@@ -332,7 +333,7 @@ intptr_t dispatch(Plugin* p, int32_t op, int32_t idx, intptr_t val, void* ptr) {
     const bool validIdx = idx >= 0 && idx < P_COUNT;
     switch (op) {
         case vst::effOpen: return 1;
-        case vst::effClose: delete p; return 1;
+        case vst::effClose: delete p; af::instanceClosed(); return 1;
         case vst::effGetProgram: return 0;
         case vst::effGetProgramName: copyStr(ptr, kPlugName, 24); return 0;
         case vst::effGetPlugCategory: return vst::kPlugCategSynth;
@@ -403,6 +404,7 @@ uint32_t instanceSeed(const void* p) {
 
 AEffect* createPlugin(audioMasterCallback master) {
     Plugin* p = new Plugin();
+    af::instanceOpened();   // the first starts the shared table builds; until effClose the tables stay
     p->master = master;
     const uint32_t seed = instanceSeed(p);
     p->engine.seed(seed);
@@ -431,6 +433,7 @@ AEffect* createPlugin(audioMasterCallback master) {
 // Nothing may throw into MPC: a failed creation reports "no plugin" instead.
 extern "C" __attribute__((visibility("default"))) AEffect* VSTPluginMain(audioMasterCallback master) {
     try {
+        af::sineTable();   // every slot's fallback, built here and never on the audio thread
         return createPlugin(master);
     } catch (...) {
         return nullptr;

@@ -347,6 +347,7 @@ int main() {
 
     harmonyTests();
     engineTests();
+    tablesTests();   // early: it starts, stops and restarts the shared builder itself, from no instance alive
     reverbTests();
     testBasics();
     testGetters();
