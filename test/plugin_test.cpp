@@ -337,10 +337,6 @@ void testStress() {
 
 long long aft::g_msPerEvent = 1000;
 
-namespace aft {
-void harmonyTests();     // harmony_test.cpp: the harmony brain on its own (scales, chords, memory)
-}
-
 int main() {
     using namespace aft;
     const std::string root = fixtureDir();

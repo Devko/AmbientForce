@@ -386,23 +386,36 @@ int Harmony::lowestHeld() const {
 }
 
 // Chord Off: the keys held, as played, the lowest as the root. More keys than a chord has notes:
-// the lowest and then the latest, so a key just pressed is always heard. The notes go into the
-// chord range by octaves, as buildChord's do (and a note landing on one already there is one).
+// the lowest and then the latest, so a key just pressed is always heard.
+// Into the chord range the chord moves as a whole, by octaves, as buildChord's do, so the lowest
+// key stays the root at the bottom. Keys spread wider than the range (over seven octaves) can't
+// move as one: the root goes in first, as low as it must, and every note still above the range
+// folds down by octaves into its top octave. That is above the root (which is then in the bottom
+// octave), so the root stays the lowest; a note landing on one already there is dropped.
 Chord Harmony::heldChord() const {
     Chord c;
     const int lo = lowestHeld();
     if (lo < 0) return c;
-    auto add = [&c](int note) {
-        note = foldNote(note);
-        for (int i = 0; i < c.n; ++i)
-            if (c.notes[i] == note) return;
-        c.notes[c.n++] = note;
-    };
-    add(lo);
-    for (int i = nHeld_ - 1; i >= 0 && c.n < kChordMax; --i)
-        if (held_[i] != lo) add(held_[i]);
+    int keys[kChordMax];
+    int n = 0;
+    keys[n++] = lo;
+    for (int i = nHeld_ - 1; i >= 0 && n < kChordMax; --i)
+        if (held_[i] != lo) keys[n++] = held_[i];
+    int hi = lo;
+    for (int i = 1; i < n; ++i)
+        if (keys[i] > hi) hi = keys[i];
+
+    int shift = 0;
+    while (lo + shift < kChordLowest) shift += 12;
+    while (hi + shift > kChordHighest && lo + shift - 12 >= kChordLowest) shift -= 12;
+    for (int i = 0; i < n; ++i) {
+        const int note = foldNote(keys[i] + shift);   // moves only the too-wide chord's top notes
+        bool there = false;
+        for (int j = 0; j < c.n; ++j) there = there || c.notes[j] == note;
+        if (!there) c.notes[c.n++] = note;
+    }
     sortNotes(c.notes, c.n);
-    c.root = foldNote(lo);
+    c.root = lo + shift;
     c.pcs = pcsOf(c.notes, c.n);
     return c;
 }

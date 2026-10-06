@@ -62,7 +62,10 @@ int mapInput(const HarmonyPatch& h, int note);
 
 // The chord on `root` (already mapped): its scale degrees stacked by the chord type, diatonic to
 // h.scale (Chromatic: the major scale on the root), voiced by h.voicing near the root. A root
-// outside 0..127: no chord.
+// outside the scale (As Played) borrows the stack of the nearest degree below it, moved up to
+// the root: a parallel chord, so a played key always gets a chord on itself (C# in C Major: the
+// C major triad moved up, C# F G#). The whole chord moves by octaves into
+// kChordLowest..kChordHighest, the root with it. A root outside 0..127: no chord.
 Chord buildChord(const HarmonyPatch& h, int root);
 
 // Voice leading: among the inversions and octave placements of `c` (= buildChord(h, root)), the

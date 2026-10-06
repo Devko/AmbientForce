@@ -2,6 +2,7 @@
 // leading, tunings and the harmony memory. Pure logic, so every expected number is worked out by
 // hand (see docs/plans/2026-10-06-m1-first-light.md, Task 3).
 #include "check.h"
+#include "host.h"
 #include "../dsp/harmony.h"
 
 #include <cmath>
@@ -599,6 +600,51 @@ void testMemory() {
         for (int i = 0; i < 24; ++i) m.noteOff(40 + i);
         CHECK(m.held() == 0 && m.lowestHeld() == -1);
         CHECK(m.current().root == 40);   // remembered (Forever)
+    }
+    // Chord Off near the edges: the keys move into 24..108 as a whole, by octaves, so the lowest
+    // key stays the root at the bottom.
+    {
+        auto held = [](std::initializer_list<int> keys) {
+            Harmony m;
+            m.set(patch(0, SC_MAJOR, CH_OFF));
+            for (int k : keys) m.noteOn(k);
+            return m.current();
+        };
+        const Chord a = held({20, 30});            // up an octave together
+        CHECK(notesAre(a, {32, 42}) && a.root == 32);
+        const Chord b = held({100, 120});          // down an octave together
+        CHECK(notesAre(b, {88, 108}) && b.root == 88);
+        // Wider than the range: the root goes in first (10 -> 34, the others with it to 124 and
+        // 144), then what is still above 108 folds down into the top octave, above the root.
+        const Chord w = held({10, 100, 120});
+        CHECK(notesAre(w, {34, 100, 108}) && w.root == 34);
+        // Two keys folding onto one note (both Es, 136 and 148, to 100): one note.
+        const Chord e = held({10, 112, 124});
+        CHECK(notesAre(e, {34, 100}) && e.root == 34);
+        // Every pair and triple of keys: the root at the bottom, on the lowest key's pitch class,
+        // ascending with nothing doubled, within range; and a chord that some whole-octave move
+        // fits into the range keeps its shape. (A span of 84 isn't always enough: keys 5 24 89
+        // can only move to 29 48 113.)
+        bool all = true;
+        for (int lo = 0; lo < 128; lo += 5)
+            for (int mid = lo + 1; mid < 128; mid += 9)
+                for (int hi = mid; hi < 128; hi += 13) {
+                    const Chord c = hi == mid ? held({mid, lo}) : held({hi, lo, mid});
+                    bool ok = c.n >= 1 && c.root == c.notes[0] && c.root % 12 == lo % 12;
+                    for (int i = 0; i < c.n && ok; ++i)
+                        ok = c.notes[i] >= kChordLowest && c.notes[i] <= kChordHighest &&
+                             (i == 0 || c.notes[i] > c.notes[i - 1]);
+                    bool fits = false;
+                    for (int s = -120; s <= 120; s += 12)
+                        fits = fits || (lo + s >= kChordLowest && hi + s <= kChordHighest);
+                    if (ok && fits) {
+                        const int shift = c.root - lo;
+                        ok = c.n == (hi == mid ? 2 : 3) && c.notes[1] == mid + shift && c.notes[c.n - 1] == hi + shift;
+                    }
+                    if (!ok && all) std::printf("  keys %d %d %d\n", lo, mid, hi);
+                    all = all && ok;
+                }
+        CHECK(all);
     }
 }
 

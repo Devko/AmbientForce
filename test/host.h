@@ -139,6 +139,7 @@ struct Turn {
 };
 
 void engineTests();      // engine_test.cpp: the engine on its own (the stub: sines, voices, release)
+void harmonyTests();     // harmony_test.cpp: the harmony brain on its own (scales, chords, memory)
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
 
 // Signal helpers (plugin_test.cpp).
