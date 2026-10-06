@@ -1,0 +1,9 @@
+{
+ "name": "AmbientForce",
+ "vendor": "Devko",
+ "uid": "AmFc",
+ "version": 1000,
+ "so": "ambientforce.so",
+ "params": "params.json",
+ "layout": "layout.conf"
+}

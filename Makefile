@@ -1,0 +1,257 @@
+# From SubForce Makefile (8846421), renamed.
+# AmbientForce: an ambient instrument as a VST2 instrument for MPC OS (Force / MPC standalone).
+# Builds on Linux or WSL. Native: g++ (tests, x86 bench). Device: arm-linux-gnueabihf-g++ 11 or newer
+# (libstdc++ is linked dynamically; MPC OS has it). Releases come from CI, built against glibc 2.31 so
+# they load on MPC OS 2.x and 3.x; a newer distribution's cross toolchain needs a newer glibc (3.x only).
+# Your own settings (FORCE, SSH_KEY, PY) go in local.mk, which git ignores.
+-include local.mk
+
+CXX      ?= g++
+# ARM_PREFIX: the device toolchain's prefix (also for strip, readelf and nm); empty for a native ARM
+# build (the release CI builds in arm32v7/gcc:11-bullseye, glibc 2.31, see .github/workflows/build.yml).
+# ARM_RUN: how ARM programs run here: qemu-user on x86, nothing on ARM.
+ARM_PREFIX ?= arm-linux-gnueabihf-
+ARM_CXX  ?= $(ARM_PREFIX)g++
+ARM_RUN  ?= qemu-arm -L /usr/arm-linux-gnueabihf
+BUILD    := build
+# FORCE: the device, root@<ip>, for bench-device and plugin-install. SSH_KEY: the private key for
+# it (empty: ssh's own defaults). PY: a Python 3 with Pillow, for skin, preview and plugin-package.
+FORCE    ?=
+SSH_KEY  ?=
+PY       ?= python3
+
+ifneq ($(filter bench-device plugin-install,$(MAKECMDGOALS)),)
+ifeq ($(strip $(FORCE)),)
+$(error set FORCE=root@<device-ip> (on the command line or in local.mk))
+endif
+endif
+
+# -n: ssh otherwise inherits make's stdin and hangs. No host-key checks: the Force's DHCP
+# address changes on every restart, so its key is never in known_hosts.
+SSH_OPTS := $(if $(strip $(SSH_KEY)),-i $(SSH_KEY) -o IdentitiesOnly=yes) -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+SSH      := ssh -n $(SSH_OPTS)
+
+MV       := third_party/mpc-vst-plugins
+SURF     := surface
+SURF_OUT := $(SURF)/build
+SKIN_DIR := $(SURF_OUT)/skin/Devko - VST - AmbientForce
+GEN      := $(SURF_OUT)/param_ids.h $(SURF_OUT)/factory_presets.h
+SKIN     := $(SURF_OUT)/skin.stamp
+
+SRC      := $(wildcard dsp/*.cpp) $(wildcard plugin/*.cpp)
+HDR      := $(wildcard dsp/*.h plugin/*.h)
+INC      := -I$(SURF_OUT) -Iplugin
+
+# -funsafe-math-optimizations: without it GCC won't use NEON for float vectors on ARMv7
+# (NEON flushes denormals, so it isn't IEEE-exact). Not -ffast-math: keep isfinite() honest.
+ARM_OPT  := -O3 -march=armv7-a -mtune=cortex-a17 -mfpu=neon-vfpv4 -mfloat-abi=hard \
+            -funsafe-math-optimizations -fno-math-errno -fno-tree-loop-distribute-patterns
+ARM_SO   := $(BUILD)/arm/ambientforce.so
+ARM_SO_STAGES := $(BUILD)/arm/ambientforce_stages.so
+ARM_BENCH := $(BUILD)/arm/afbench
+
+.PHONY: all surface skin test test-arm test-arm-pgo bench arm-plugin arm-bench arm-bench-stages bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
+# A recipe that fails leaves no half-written target behind for the next make to trust.
+.DELETE_ON_ERROR:
+# The stage-timing build too: a -DAF_STAGE_TIMING break shows here, not at bench time.
+all: test arm-plugin $(BUILD)/ambientforce_stages.so
+
+# --- generated --------------------------------------------------------------------------------
+# surface.py: params.json, layout.conf, vst.json and build/param_ids.h (the C++ side). Needs only
+# python3, so tests and the .so build anywhere. It also checks the layout (keys, options, when=,
+# Q-Link sets, geometry) and every factory preset before writing anything.
+surface: $(GEN)
+# The preset folders themselves too: their times change when a preset is deleted.
+# The fonts too: the layout check measures labels with them.
+$(GEN) &: $(SURF)/surface.py presets/Factory $(wildcard presets/Factory/*) $(wildcard presets/Factory/*/*.afp) \
+          $(wildcard $(SURF)/fonts/*.ttf)   # one run writes both
+	python3 $(SURF)/surface.py
+
+# The skin (TUI.json + PNGs) and the plugin-list entry: sd88me's generator, Pillow and a host gcc.
+# Then surface/skin_polish.py redraws the knob strips, trigger buttons and stepper arrows (same names
+# and sizes) from build/skin_style.json; it checks the skin first and fails the build on a mismatch.
+# SHADOW_TITLE_FONT = TITLE_FONT in surface.py.
+skin: $(SKIN)
+$(SKIN): $(GEN) $(MV)/tools/gen_vst.py $(MV)/tools/shadow_skin.py $(MV)/tools/skin_assets.py $(MV)/tools/shadow_art.c \
+         $(MV)/tools/params.py $(wildcard $(MV)/tools/vendor/force-shadow/*/*) $(SURF)/skin_polish.py $(wildcard $(SURF)/fonts/*.ttf)
+	mkdir -p $(SURF_OUT)
+	gcc -O2 -I$(MV)/tools/vendor/force-shadow/tools -o $(SURF_OUT)/shadow_art $(MV)/tools/shadow_art.c -lm
+	cd $(SURF) && SHADOW_TITLE_FONT=fonts/TitilliumWeb-Bold.ttf $(PY) ../$(MV)/tools/gen_vst.py vst.json
+	$(PY) $(SURF)/skin_polish.py "$(SKIN_DIR)/Plugin Skins" --layout $(SURF)/layout.conf --style $(SURF_OUT)/skin_style.json
+	touch $@
+
+# Skin previews (PNG per page) for checking the layout without a device.
+preview: $(SKIN)
+	$(PY) $(MV)/tools/studio.py preview "$(SKIN_DIR)/Plugin Skins" -o $(SURF_OUT)/page_%d.png
+
+# --- native -----------------------------------------------------------------------------------
+# The whole plugin through its VST2 entry points, under ASan/UBSan; any undefined behaviour
+# fails the run (UBSan otherwise reports and carries on).
+test: $(BUILD)/plugin_test
+	$(BUILD)/plugin_test
+
+TESTS    := $(wildcard test/*_test.cpp)
+$(BUILD)/plugin_test: $(TESTS) $(wildcard test/*.h) $(SRC) $(HDR) $(GEN) | $(BUILD)
+	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra -pthread \
+		$(INC) $(SRC) $(TESTS) -o $@
+
+# The same suite cross-compiled for the Force's CPU and run under qemu-user (no sanitizers):
+# catches 32-bit and ARM-only code paths (the FPSCR flush, NEON float code).
+test-arm: $(BUILD)/arm/plugin_test
+	$(ARM_RUN) $<
+
+$(BUILD)/arm/plugin_test: $(TESTS) $(wildcard test/*.h) $(SRC) $(HDR) $(GEN)
+	mkdir -p $(BUILD)/arm
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC) $(SRC) $(TESTS) -o $@
+
+# x86 numbers say nothing about the Force; this only checks the bench and the .so paths work
+# (the plain plugin, then the stage-timing build).
+bench: $(BUILD)/ambientforce.so $(BUILD)/ambientforce_stages.so $(BUILD)/afbench
+	$(BUILD)/afbench $(BUILD)/ambientforce.so -s 1 -c -1
+	$(BUILD)/afbench $(BUILD)/ambientforce_stages.so -s 1 -c -1
+
+X86_SO_CMD = $(CXX) -std=c++17 -O3 -fno-tree-loop-distribute-patterns -fPIC -fvisibility=hidden -fno-gnu-unique -Wall -Wextra -pthread $(INC) -shared -Wl,--no-undefined
+$(BUILD)/ambientforce.so: $(SRC) $(HDR) $(GEN) plugin/exports.map | $(BUILD)
+	$(X86_SO_CMD) -Wl,--version-script=plugin/exports.map $(SRC) -o $@
+$(BUILD)/ambientforce_stages.so: $(SRC) $(HDR) $(GEN) plugin/exports_stages.map | $(BUILD)
+	$(X86_SO_CMD) -Wl,--version-script=plugin/exports_stages.map -DAF_STAGE_TIMING $(SRC) -o $@
+
+$(BUILD)/afbench: tools/bench.cpp $(HDR) $(GEN) | $(BUILD)
+	$(CXX) -std=c++17 -O2 -Wall -Wextra $(INC) $< -ldl -o $@
+
+# Demo clips for listening without a device: the factory presets playing a phrase, rendered
+# through the plugin's own entry points into build/demos-out/*.wav (tools/demos.cpp).
+demos: $(BUILD)/demos
+	rm -rf $(BUILD)/demos-out && mkdir -p $(BUILD)/demos-out
+	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos $(BUILD)/demos-out
+# Level-matching: every factory preset's volume set so its demo phrase plays at PRESET_LUFS.
+PRESET_LUFS ?= -16
+preset-levels: $(BUILD)/demos
+	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos --match presets/Factory $(PRESET_LUFS)
+	python3 $(SURF)/surface.py
+$(BUILD)/demos: tools/demos.cpp $(SRC) $(HDR) $(GEN) | $(BUILD)
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(SRC) $< -o $@
+
+# --- device -----------------------------------------------------------------------------------
+# The .so MPC loads: only VSTPluginMain exported (a version script hides the C++ template
+# instantiations and typeinfo -fvisibility leaves; -fno-gnu-unique keeps it unloadable);
+# --no-undefined because an unresolved symbol otherwise only shows up as MPC crashing on load.
+ARM_SO_FLAGS = -std=c++17 $(ARM_OPT) -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -fno-gnu-unique -Wall -Wextra -Wno-psabi -pthread $(INC)
+ARM_SO_LINK  = -shared -Wl,--no-undefined -Wl,-soname,ambientforce.so -Wl,--version-script=plugin/exports.map
+ARM_SO_CMD   = $(ARM_CXX) $(ARM_SO_FLAGS) $(ARM_SO_LINK)
+
+# Profile-guided: on by default when ARM programs can run here (qemu-arm installed, as test-arm
+# needs, or a native ARM build); PGO=0 builds without. A copy of the plugin compiled with counters
+# is linked into tools/pgo_train.cpp, which plays phrases and the factory presets; then the .so is compiled from the same sources
+# with the same flags plus that profile, which tells the compiler which paths are hot.
+# -fprofile-partial-training keeps functions the trainer never ran optimised as usual. Objects
+# keep one path (dir_name.o) in both rounds: GCC names the profile files after it. A missing
+# profile fails the build instead of quietly building without.
+PGO      ?= auto
+ARM_RUNS := $(if $(strip $(ARM_RUN)),$(shell command -v $(firstword $(ARM_RUN)) 2>/dev/null),native)
+PGO_ON   := $(if $(filter auto,$(PGO)),$(if $(ARM_RUNS),1,0),$(PGO))
+PGO_DIR  := $(BUILD)/arm/pgo
+PGO_PROF := $(abspath $(PGO_DIR)/profile)
+PGO_OBJ  := $(PGO_DIR)/obj
+PGO_O    = $(PGO_OBJ)/$$(echo $$f | tr / _ | sed 's/\.cpp$$/.o/')
+
+# The .so is rebuilt when the way it is built changes (PGO on/off, flags), not only its sources.
+ARM_SO_STAMP := $(BUILD)/arm/so_flags
+$(ARM_SO_STAMP): FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(PGO_ON) $(ARM_SO_FLAGS)' | cmp -s - $@ || echo '$(PGO_ON) $(ARM_SO_FLAGS)' > $@
+FORCE:
+
+arm-plugin: $(ARM_SO)
+$(ARM_SO): $(SRC) $(HDR) $(GEN) tools/pgo_train.cpp plugin/exports.map $(ARM_SO_STAMP)
+	mkdir -p $(BUILD)/arm
+ifeq ($(PGO_ON),1)
+	rm -rf $(PGO_DIR) && mkdir -p $(PGO_OBJ) $(PGO_PROF)
+	for f in $(SRC); do $(ARM_CXX) $(ARM_SO_FLAGS) -fprofile-generate=$(PGO_PROF) -fprofile-update=prefer-atomic \
+		-c $$f -o $(PGO_O) || exit 1; done
+	$(ARM_CXX) $(ARM_SO_FLAGS) -fprofile-generate tools/pgo_train.cpp $(PGO_OBJ)/*.o -o $(PGO_DIR)/train
+	AF_DATA_DIR=$(PGO_DIR) AF_PRESET_ROOTS=$(PGO_DIR) $(ARM_RUN) $(PGO_DIR)/train
+	@n=$$(ls $(PGO_PROF)/*.gcda 2>/dev/null | wc -l); [ $$n -eq $(words $(SRC)) ] || \
+		{ echo "PGO: $$n of $(words $(SRC)) profiles written (PGO=0 builds without)"; exit 1; }
+	for f in $(SRC); do $(ARM_CXX) $(ARM_SO_FLAGS) -fprofile-use=$(PGO_PROF) -fprofile-partial-training -Werror=missing-profile \
+		-c $$f -o $(PGO_O) || exit 1; done
+	$(ARM_CXX) $(ARM_SO_FLAGS) $(ARM_SO_LINK) $(PGO_OBJ)/*.o -o $@
+	@echo "profile-guided build"
+else
+	$(ARM_SO_CMD) $(SRC) -o $@
+	@echo "plain build (PGO=$(PGO): $(firstword $(ARM_RUN)) $(if $(ARM_RUNS),found,not found))"
+endif
+	$(ARM_PREFIX)strip --strip-unneeded $@
+	@$(ARM_PREFIX)readelf -V $@ | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 | sed 's/^/needs /'
+	@n=$$($(ARM_PREFIX)nm -D --defined-only $@ | wc -l); echo "exported symbols: $$n"; \
+		[ $$n -eq 1 ] || { $(ARM_PREFIX)nm -D --defined-only $@; echo "only VSTPluginMain may be exported"; exit 1; }
+
+# The suite against the objects the shipped .so is linked from (profile-guided), under qemu.
+test-arm-pgo: $(ARM_SO)
+ifeq ($(PGO_ON),1)
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wno-psabi -pthread $(INC) $(TESTS) $(PGO_OBJ)/*.o -o $(BUILD)/arm/plugin_test_pgo
+	$(ARM_RUN) $(BUILD)/arm/plugin_test_pgo
+else
+	@echo "test-arm-pgo: the .so is a plain build here (PGO=$(PGO)); test-arm covers it"
+endif
+
+# The profiling build: the same plugin with timers between the render stages (dsp/stages.h)
+# and one more export, AmbientForceStageTimes, which afbench reads. Never shipped. A plain build
+# (not profile-guided): its times read a little higher than the shipped .so's.
+arm-bench-stages: $(ARM_SO_STAGES) $(ARM_BENCH)
+$(ARM_SO_STAGES): $(SRC) $(HDR) $(GEN) plugin/exports_stages.map $(ARM_SO_STAMP)
+	mkdir -p $(BUILD)/arm
+	$(ARM_CXX) $(ARM_SO_FLAGS) -shared -Wl,--no-undefined -Wl,-soname,ambientforce.so \
+		-Wl,--version-script=plugin/exports_stages.map -DAF_STAGE_TIMING $(SRC) -o $@
+	$(ARM_PREFIX)strip --strip-unneeded $@
+
+arm-bench: $(ARM_BENCH)
+$(ARM_BENCH): tools/bench.cpp $(HDR) $(GEN)
+	mkdir -p $(BUILD)/arm
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi $(INC) $< -ldl -o $@
+
+# Bench on the Force: copies the .so, its stage-timing build and the bench to /tmp, runs pinned
+# to core 1 (MPC's audio workers own cores 2-3) while MPC keeps running, then deletes them.
+# Touches nothing else on the device.
+#   make bench-device FORCE=root@<ip>
+BENCH_ARGS ?= -s 3
+bench-device: $(ARM_SO) $(ARM_SO_STAGES) $(ARM_BENCH)
+	scp -q $(SSH_OPTS) $(ARM_SO) $(ARM_SO_STAGES) $(ARM_BENCH) $(FORCE):/tmp/
+	$(SSH) $(FORCE) 'r=0; \
+		/tmp/afbench /tmp/ambientforce.so $(BENCH_ARGS) -c 1 || r=1; \
+		/tmp/afbench /tmp/ambientforce_stages.so $(BENCH_ARGS) -c 1 || r=1; \
+		rm -f /tmp/afbench /tmp/ambientforce.so /tmp/ambientforce_stages.so; exit $$r'
+
+# Release zip: plugin + skin + sd88me's installer (stops MPC, backs up and edits
+# MPC.settings, restarts MPC).
+PLUGIN_VERSION ?= 0.0.1
+plugin-package: $(ARM_SO) $(SKIN)
+	@# Everything shipped runs under BusyBox on the device: a CR in a script breaks it there.
+	@# grep: 1 = no CR found (good); 0 = found one; 2 = it couldn't read the scripts.
+	@grep -l "$$(printf '\r')" $(MV)/tools/release/*; r=$$?; [ $$r -eq 1 ] || { echo "error: CRLF in a shipped script, or no scripts"; exit 1; }
+	@# A newer toolchain's glibc: fine on the Force (MPC OS 3.x), not for a release (the catalog's limit is 2.32).
+	@g=$$(readelf -V $(ARM_SO) 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1); \
+		if [ -n "$$g" ] && [ "$$(printf '%s\n2.32\n' "$$g" | sort -V | tail -1)" != 2.32 ]; then \
+		echo "warning: this .so needs glibc $$g: it loads on MPC OS 3.x only, and the plugin catalog refuses it."; \
+		echo "         Release packages come from CI (glibc 2.31, docs/BUILDING.md#release-builds)."; fi
+	$(PY) $(MV)/tools/release.py --so $(ARM_SO) --skin "$(SKIN_DIR)" --entry $(SURF_OUT)/pluginlist-entry.xml \
+		--version $(PLUGIN_VERSION) --repo Devko/AmbientForce --license MIT \
+		--about "AmbientForce ambient instrument (preview, in development)." \
+		--requires "root SSH (MockbaMod); MPC OS 3.x for the pages" \
+		--user-data Presets --user-data preset_favorites.txt --user-data preset_recent.txt \
+		-o dist
+
+# Install on a device: stops MPC, backs up + edits MPC.settings, restarts MPC. Save the MPC
+# project first. Usage: make plugin-install FORCE=root@<ip>
+PKG_TMP := /tmp/afpkg
+plugin-install: plugin-package
+	rm -rf $(PKG_TMP) && mkdir -p $(PKG_TMP)
+	python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' dist/AmbientForce-$(PLUGIN_VERSION)-mpc-armv7.zip $(PKG_TMP)
+	tar -C $(PKG_TMP) -cf - AmbientForce-$(PLUGIN_VERSION) | ssh $(SSH_OPTS) $(FORCE) 'rm -rf /tmp/AmbientForce-$(PLUGIN_VERSION) && tar -C /tmp -xf -'
+	$(SSH) $(FORCE) 'sh /tmp/AmbientForce-$(PLUGIN_VERSION)/install.sh -y'
+
+$(BUILD):
+	mkdir -p $(BUILD)
+
+clean:
+	rm -rf $(BUILD) $(SURF_OUT)
