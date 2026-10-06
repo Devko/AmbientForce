@@ -826,6 +826,18 @@ struct Patch {
    ≤ 0.8913 (-1 dBFS) at every sample over 60 s. Repeat it with **Abyss at Decay 30**: its wet
    sits about 15 dB above the send's RMS.
 
+**Notes from the Ground and Bloom reviews:**
+- **Re-voicing a held chord:** call `bloom.play(new)` before `bloom.release(old)`, so common
+  notes carry on.
+- **Space off:** pass Bloom a send of 0 when the Space return is 0, Space is muted, or
+  bloomSpace is 0. Bloom then releases as Tail Voice, and the tail isn't lost into a silent
+  reverb.
+- **Muted Ground:** `Ground::sounding()` ignores mute. The engine skips a muted Ground itself.
+- **Levels arrive as gains:** Ground and Bloom take `level` as a gain. The patch map (Task 9)
+  squares the knob.
+- **Headroom:** Ground's partial sum carries a fixed headroom gain. Bloom's voice gain is 0.25.
+  Levels are matched in Task 10.
+
 **Notes from Task 2's review:**
 - **Space's `silent()` can stay false for minutes** (Abyss at long Decay). The CPU gate assumes
   Space always runs.

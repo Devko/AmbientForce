@@ -175,7 +175,7 @@ Echo and Space sends (on the MIX page).
 | Gravity | 0–30 s | Glide time to a new root. A drone that *leans* into the next chord |
 | Partials | Sub, Root, Fifth, Octave, **Color** | Each has its own level. Color picks m3 / M3 / 4th / m7 / 9th / 11th |
 | Register | −2 … +1 oct | |
-| **Beat** | 0–3 Hz | Detune set in **Hz, not cents**, so the beating rate is the same in every register. In Just tuning the partials are exact ratios, so the only beating is the beating you dial in |
+| **Beat** | 0–3 Hz | Detune set in **Hz, not cents**, so the beating rate is the same in every register. In Just tuning the partials are exact ratios over Ground's own root, so within Ground the only beating is the beating you dial in. Bloom's notes are just relative to the *key*: on chords off the tonic (ii, vi) Ground's fifth or third can sit a comma (~21 cents) away from Bloom's, a slow 1–3 Hz shimmer between the strata |
 | Breath | 0–1 | Slow swell of level and brightness, driven by the Swell source |
 | Cutoff, Body | LP; off → A → O → U | Body is a vowel/formant morph taken from PolyForce's vowel filter. It makes a drone into a choir |
 
