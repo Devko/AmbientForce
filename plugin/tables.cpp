@@ -42,7 +42,8 @@ std::atomic<int> live{0};   // plugin instances alive
 // In id order, each table published as soon as it is built; one already published (kept by a
 // release while instances were alive) stays as it is, since it may be being read. One that can't
 // be built (out of memory) leaves its slot on the sine. Nothing may escape a thread: that would
-// end MPC.
+// end MPC (std::terminate), so even the trace of a failure has its own catch: it allocates and
+// locks, and may throw too when memory is short.
 void run(Builder* b) {
     TableSet& set = sharedTables();
     for (int id = 0; id < TB_COUNT && !b->stop.load(std::memory_order_relaxed); ++id) {
@@ -51,7 +52,10 @@ void run(Builder* b) {
             std::unique_ptr<Wavetable> t(new Wavetable);
             if (buildTable(id, *t, &b->stop)) set.t[id].store(t.release(), std::memory_order_release);
         } catch (...) {
-            trace("tables: could not build %s, its slots play the sine", tableName(id));
+            try {
+                trace("tables: could not build %s, its slots play the sine", tableName(id));
+            } catch (...) {
+            }
         }
     }
 }
@@ -92,10 +96,16 @@ void ensureTablesBuilding() {
         sineTable();   // the fallback, built here and never on the audio thread
         b.thread = std::thread(run, &b);
         b.started.store(true, std::memory_order_release);
-    } catch (const std::system_error& e) {
-        trace("tables: no builder thread (%s), every slot plays the sine", e.what());
+    } catch (const std::system_error& e) {   // the traces in these catches have their own (run() says why)
+        try {
+            trace("tables: no builder thread (%s), every slot plays the sine", e.what());
+        } catch (...) {
+        }
     } catch (...) {
-        trace("tables: no builder thread, every slot plays the sine");
+        try {
+            trace("tables: no builder thread, every slot plays the sine");
+        } catch (...) {
+        }
     }
 }
 
@@ -103,7 +113,10 @@ void releaseTables() {
     try {
         release(builder());
     } catch (...) {
-        trace("tables: could not stop the builder");
+        try {
+            trace("tables: could not stop the builder");
+        } catch (...) {
+        }
     }
 }
 

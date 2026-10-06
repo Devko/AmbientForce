@@ -161,9 +161,9 @@ LifeModel choirAhOo() {
     return m;
 }
 
-// Reed Organ: free reeds blown by bellows. Reedy and steady: the odd harmonics, the even ones a
-// trace (-16 dB), -6 dB per octave with a soft cut far up; no decay while the bellows blow, only
-// a little beating (0.5-1.2 Hz) between the reeds of a rank.
+// Reed Organ: free reeds blown by bellows. Reedy and steady: mostly odd harmonics, the evens ~16 dB
+// down, -6 dB per octave with a soft cut far up; no decay while the bellows blow, only a little
+// beating (0.5-1.2 Hz) between the reeds of a rank.
 LifeModel reedOrgan() {
     LifeModel m;
     m.length = 10.0;
@@ -367,7 +367,8 @@ bool buildTable(int id, Wavetable& out, const std::atomic<bool>* cancel) {
 }
 
 const Wavetable& sineTable() {
-    // Never destroyed: an audio thread may still be reading it while the process exits.
+    // Lives for the process, by design: never destroyed, as an audio thread may still be reading it
+    // while the process exits. An unload of the module leaves its 18 KB behind.
     static const Wavetable* const sine = [] {
         std::unique_ptr<Wavetable> t(new Wavetable);
         buildTable(TB_SINE, *t);

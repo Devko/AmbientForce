@@ -24,6 +24,18 @@ using Clock = std::chrono::steady_clock;
 
 double secondsSince(Clock::time_point t) { return std::chrono::duration<double>(Clock::now() - t).count(); }
 
+// The test's twiddles for a power-of-two n, computed once per size (main thread only).
+const std::vector<cd>& twiddles(size_t n) {
+    static std::vector<cd> w[16];
+    size_t k = 0;
+    while ((size_t{1} << k) < n) ++k;
+    if (w[k].size() != n / 2) {
+        w[k].resize(n / 2);
+        for (size_t i = 0; i < n / 2; ++i) w[k][i] = std::polar(1.0, -2.0 * M_PI * static_cast<double>(i) / static_cast<double>(n));
+    }
+    return w[k];
+}
+
 // The test's own FFT (plain radix-2, forward), so a slip in the builder's can't hide itself.
 void fft(std::vector<cd>& a) {
     const size_t n = a.size();
@@ -33,8 +45,7 @@ void fft(std::vector<cd>& a) {
         j ^= bit;
         if (i < j) std::swap(a[i], a[j]);
     }
-    std::vector<cd> w(n / 2);
-    for (size_t k = 0; k < n / 2; ++k) w[k] = std::polar(1.0, -2.0 * M_PI * static_cast<double>(k) / static_cast<double>(n));
+    const std::vector<cd>& w = twiddles(n);
     for (size_t len = 2; len <= n; len <<= 1)
         for (size_t i = 0; i < n; i += len)
             for (size_t k = 0; k < len / 2; ++k) {
@@ -61,9 +72,12 @@ double rmsOf(const af::Wavetable& t, int frame) {
     return std::sqrt(s / af::kTableSize);
 }
 
-// The power-weighted mean harmonic number of the full-band level. Power, not amplitude: the 16-bit
-// rounding floor, spread over 1023 bins, would otherwise outweigh the faint partials of a
-// near-sine frame and wobble the mean.
+// The power-weighted mean harmonic number of the full-band level. Power, not amplitude, for two
+// reasons. The 16-bit rounding floor, spread over 1023 bins, would otherwise outweigh the faint
+// partials of a near-sine frame. And Felt Piano's beating on h >= 3, there by design, makes an
+// amplitude-weighted mean wobble upwards by up to 5.5e-4 harmonics late in the life (frames
+// 195-210), where those partials are faint but their weight in that mean is not. The power-
+// weighted mean follows the brightness of the tone as it decays, which is what check 3 is about.
 double centroid(const af::Wavetable& t, int frame) {
     const std::vector<double> p = power(t, frame, 0);
     double s = 0.0, w = 0.0;
@@ -122,17 +136,15 @@ void testShapes(const std::vector<af::Wavetable>& tables) {
     }
 }
 
-// Check 1: every level k carries nothing above harmonic 1024 >> k (level 0: nothing on Nyquist).
-// Frames 0, 1, 63, 128, 254 and 255 of each table: the ends and the middle of a life, both of a
-// pair that shares an inverse FFT, and fast enough under ASan.
+// Check 1: every frame of every table, at every level k, carries nothing above harmonic 1024 >> k
+// (level 0: nothing on Nyquist).
 void testBandLimits(const std::vector<af::Wavetable>& tables) {
-    std::printf("== tables: band limits per mip level (frames 0, 1, 63, 128, 254, 255)\n");
-    const int frames[] = {0, 1, 63, 128, 254, 255};
+    std::printf("== tables: band limits per mip level, every frame\n");
+    const Clock::time_point t0 = Clock::now();
     for (int id = 0; id < af::TB_COUNT; ++id) {
         const af::Wavetable& t = tables[static_cast<size_t>(id)];
         double worst = -400.0;
-        for (int f : frames) {
-            if (f >= t.frames) continue;
+        for (int f = 0; f < t.frames; ++f) {
             for (int k = 0; k < af::kMipLevels; ++k) {
                 const size_t top = static_cast<size_t>(std::min(af::kMaxHarmonic - 1, af::kMaxHarmonic >> k));
                 const std::vector<double> p = power(t, f, k);
@@ -147,6 +159,7 @@ void testBandLimits(const std::vector<af::Wavetable>& tables) {
         std::printf("  %-16s worst %.0f dB\n", af::tableName(id), worst);
         CHECK(worst < -80.0);
     }
+    std::printf("  (%.1f s)\n", secondsSince(t0));
 }
 
 // Check 2: a lifetime table carries timbre, not level: frames 0, 128 and 255 within 0.5 dB of each
@@ -166,7 +179,8 @@ void testEqualRms(const std::vector<af::Wavetable>& tables) {
 }
 
 // Check 3: Felt Piano darkens frame by frame (its upper harmonics die first), Sine Bloom brightens
-// from a pure sine. "Monotonic" to within the 16-bit rounding (1e-4 harmonics).
+// from a pure sine, both by the power-weighted centroid (centroid() says why). "Monotonic" to
+// within the 16-bit rounding (1e-4 harmonics).
 void testLifeCurves(const std::vector<af::Wavetable>& tables) {
     std::printf("== tables: the life curves\n");
     for (int id : {af::TB_FELT_PIANO, af::TB_SINE_BLOOM}) {
@@ -193,7 +207,15 @@ void testLifeCurves(const std::vector<af::Wavetable>& tables) {
 }
 
 // Checks 4 and 5: a fresh TableSet reads the sine everywhere; a published table is what get()
-// returns; the shared builder publishes all 12 within 30 s, the same data as building here.
+// returns; the shared builder publishes all 12 within 30 s on x86 under ASan, the same data as
+// building here. Under qemu (ARM builds) the limit is 120 s: emulation is ~10 times slower, here
+// 10 s alongside the checks above, and CI runs it in an emulated container on small machines.
+#if defined(__arm__)
+constexpr double kBuilderLimit = 120.0;
+#else
+constexpr double kBuilderLimit = 30.0;
+#endif
+
 void testHandoff(const std::vector<af::Wavetable>& built, Clock::time_point started) {
     std::printf("== tables: the builder thread and the handoff\n");
     af::TableSet s;
@@ -211,7 +233,7 @@ void testHandoff(const std::vector<af::Wavetable>& built, Clock::time_point star
         for (int id = 0; id < af::TB_COUNT; ++id) n += shared.t[id].load(std::memory_order_acquire) != nullptr;
         return n;
     };
-    while (published() < af::TB_COUNT && secondsSince(started) < 30.0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    while (published() < af::TB_COUNT && secondsSince(started) < kBuilderLimit) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     const double took = secondsSince(started);
     std::printf("  the builder published %d of %d tables in %.1f s\n", published(), af::TB_COUNT, took);
     CHECK(published() == af::TB_COUNT);
@@ -238,21 +260,33 @@ void testHandoff(const std::vector<af::Wavetable>& built, Clock::time_point star
     CHECK(same);   // built twice (here and on the builder thread): identical
 }
 
-// The unload: releaseTables() (what the builder's owner does when the module goes) while the
-// builder is 20 ms into Felt Piano, which takes 0.13 s under ASan and 0.5 s under qemu. It gives
-// up within a pair of frames, every slot reads the sine again, and a cancelled build reports
-// false with nothing built. (The module unload itself was tried by hand: see plugin/tables.cpp.)
+// Waits (up to 30 s) until the shared builder has published Felt Piano, the first table.
+void waitForFirstTable() {
+    const Clock::time_point t0 = Clock::now();
+    while (!af::sharedTables().t[af::TB_FELT_PIANO].load(std::memory_order_acquire) && secondsSince(t0) < kBuilderLimit)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+}
+
+// The unload: releaseTables() (what the builder's owner does when the module goes) with no
+// instance alive, just after the builder published Felt Piano and started on Celesta (0.13 s
+// under ASan, 0.5 s under qemu). It gives up within a pair of frames, Felt Piano is unpublished
+// (its slot reads the sine again) and freed (were it only unpublished, LeakSanitizer would report
+// it lost at exit), and a cancelled build reports false with nothing built. (The module unload
+// itself was tried by hand: see plugin/tables.cpp.)
 void testRelease() {
     std::printf("== tables: stopping the builder (the unload)\n");
     CHECK(af::liveInstances() == 0);   // no instance alive: the release frees the tables
+    af::TableSet& shared = af::sharedTables();
     af::ensureTablesBuilding();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    waitForFirstTable();
+    CHECK(shared.t[af::TB_FELT_PIANO].load(std::memory_order_acquire) != nullptr);
     const Clock::time_point t0 = Clock::now();
     af::releaseTables();
     const double took = secondsSince(t0);
     std::printf("  released in %.1f ms\n", 1e3 * took);
     CHECK(took < 0.05);
-    af::TableSet& shared = af::sharedTables();
+    CHECK(shared.t[af::TB_FELT_PIANO].load(std::memory_order_acquire) == nullptr);
+    CHECK(&shared.get(af::TB_FELT_PIANO) == &af::sineTable());
     bool sine = true;
     for (int id = 0; id < af::TB_COUNT; ++id)
         sine = sine && !shared.t[id].load(std::memory_order_acquire) && &shared.get(id) == &af::sineTable();
@@ -274,9 +308,7 @@ std::vector<const af::Wavetable*> testReleaseLive() {
     {
         Host h;   // VSTPluginMain starts the builder
         CHECK(af::liveInstances() == 1);
-        const Clock::time_point t0 = Clock::now();
-        while (!shared.t[af::TB_FELT_PIANO].load(std::memory_order_acquire) && secondsSince(t0) < 30.0)
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        waitForFirstTable();
         const Clock::time_point t1 = Clock::now();
         af::releaseTables();
         const double took = secondsSince(t1);
