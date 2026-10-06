@@ -12,8 +12,12 @@
 //     at 0.1, 16 at 1); BP is the band output, whose peak matches LP's resonant peak
 //   x envelope x velocity -> pan (equal power) -> the dry and the send
 // Unison 2: a second pair, the two detuned by -Detune/2 and +Detune/2 cents, each at 1/sqrt 2 (the
-// same loudness as one), in the SVF's two lanes. Width spreads a chord's notes, lowest to highest,
-// over +-0.6 Width and each voice's two halves +-0.4 Width around it.
+// same loudness as one), in the SVF's two lanes. The second starts a quarter of a cycle after the
+// first (B by the same time), so at Detune 0 the two sit in quadrature and sound exactly as loud as
+// unison 1 whatever the seed. The breath is the same in both lanes, so it goes in at 1 / (g0 + g1)
+// (the halves' gains): coherent, as loud as unison 1's. Switching unison glides the second half in
+// or out over 3 ms (its gain, place and detune), never at once. Width spreads a chord's notes,
+// lowest to highest, over +-0.6 Width and each voice's two halves +-0.4 Width around it.
 //
 // The envelope: Swell rises in amplitude along an S-curve, 0.5 - 0.5 cos(pi t / swell), so it is
 // half way (-6 dB) at half the time; sustain 1; Release falls exponentially, -60 dB over Release,
@@ -21,10 +25,15 @@
 //
 // The tail handoff (CONCEPT.md 8), Tail Space with Release longer than kHandoffS: once released,
 // a voice's dry follows its release times a cos^2 fade from 1 to 0 over kHandoffS, while its send
-// is its release times boost = min(4, sqrt(Release / kHandoffS)), the boost ramping in over
-// 0.2 s. Over the handoff's last 0.2 s the send fades out too (cos^2), so it never steps when the
-// voice goes. The voice is free at kHandoffS. The engine holds Space's decay at Release or longer
-// while Tail is Space, so the reverb carries on the tail the voice let go.
+// carries the same energy into Space as the whole release would have with Tail Voice. The send is
+// the release times a boost that ramps from 1 to B over 0.2 s, and over the handoff's last 0.2 s
+// it fades out too (cos^2), so it never steps when the voice goes; B is what makes that send's
+// energy equal the whole release's (worked out in set() when Release changes; at most 4). An
+// exponential release spends most of its energy early (Release 10: 87% in the first 1.5 s), so B
+// stays small: 1.10 at Release 10, 1.50 at 30 (the plan's sqrt(Release / kHandoffS), 2.58 and
+// 4, sent 6.9 and 8.3 dB too much). The voice is free at kHandoffS. The engine holds
+// Space's decay at Release or longer while Tail is Space, so the reverb carries on the tail the
+// voice let go.
 //
 // Voices and owners:
 // - A note takes a free voice, else the quietest releasing one, else the oldest. A voice taken
@@ -50,8 +59,8 @@
 // The cost, as ARM instructions per 128-sample block with all six voices sounding on a lifetime
 // table (the device's flags, counted under qemu): unison 1 about 98k with Mix (128 a voice and
 // sample: A's read 74, the breath, SVF, pan and gains 38, the control steps and the bus the rest),
-// 125k with FM; unison 2 160k, FM 213k. By PolyForce's calibration (about 1 ns an instruction on
-// the device) that is 3.4% / 4.3% of a block at unison 1 and 5.5% / 7.3% at unison 2, against
+// 123k with FM; unison 2 155k, FM 204k. By PolyForce's calibration (about 1 ns an instruction on
+// the device) that is 3.4% / 4.2% of a block at unison 1 and 5.3% / 7.0% at unison 2, against
 // Bloom's 4% (CONCEPT.md 11): if the device bench agrees, unison 2 is the first cap to fall.
 //
 // Real-time rules: everything lives in fixed arrays. Nothing allocates, locks or throws.
@@ -125,8 +134,9 @@ public:
                 float spaceSend, int n);
     // Voices in use: sounding (attack, sustain, release, a steal's fade) or waiting to start.
     int active() const;
-    // The largest factor the tail handoff puts on a voice's send now (the boost, as it ramps in and
-    // out); 1 when no voice is handing off.
+    // The largest factor the tail handoff puts on a voice's send now, over its release curve: the
+    // energy-matched boost as it ramps in (1 to B over 0.2 s) and fades out (the last 0.2 s);
+    // 1 when no voice is handing off.
     float handoffBoost() const;
     VoiceView voice(int i) const;
 
@@ -161,7 +171,9 @@ private:
 
         double pitch = 0.0;      // tuned, fractional MIDI
         float incA[2] = {}, incB[2] = {};
-        f2 pan[2] = {};          // each half's (L, R) gains, unison's 1/sqrt 2 in them
+        float uni = 0.0f;        // the second half's presence, 0..1: gliding to Unison's 0 or 1 over 3 ms
+        f2 pan[2] = {};          // each half's (L, R) gains, its share of the voice (1/sqrt 2 at unison 2) in them
+        float bk = 1.0f;         // the breath's gain in each lane: 1 / (g0 + g1)
         // Each half's dry gains and its send beyond the dry (handoffs): at the step's start (the
         // last step's end) and its end. A step moves them in a straight line from one to the other.
         f2 P0[2] = {}, P[2] = {}, S0[2] = {}, S[2] = {};
@@ -200,8 +212,8 @@ private:
     void letGo(Voice& v);                 // its owners are gone: cancel its start, or release it
     void steal(Voice& v);
     void begin(Voice& v);                 // the waiting note starts now
-    void tune(Voice& v);                  // increments and the breath's band-pass from v.pitch
-    void placePan(Voice& v);
+    void tune(Voice& v);                  // increments (the halves' detune by v.uni) and the breath's band-pass
+    void placePan(Voice& v);              // the halves' gains and places, by Width and v.uni
     int strumWait(int k, int n) const;
     void control(int m);                  // a control step of m samples: starts, envelopes, gains
     void filterFor(int m);                // the filter's coefficients across the next m samples
@@ -215,10 +227,10 @@ private:
     HarmonyPatch h_;
     uint32_t seed_ = 1;
     uint32_t rng_ = 1;                    // the breath's white noise
-    uint32_t phaseRng_ = 1;               // unison's second half starts at a random phase
     uint64_t played_ = 0;                 // notes played so far: each voice's age
     float attackRate_ = 0.0f;             // the attack's progress per sample
     float releaseLog2_ = 0.0f;            // log2 of the release's factor per sample
+    float boost_ = 0.0f;                  // the handoff's B for this Release (0: not worked out yet)
     float lv_ = 0.0f, lvT_ = 0.0f;        // the level at the last step's end, and where it goes
     float send_ = 0.0f;                   // the last render's spaceSend
     bool panDirty_ = true;

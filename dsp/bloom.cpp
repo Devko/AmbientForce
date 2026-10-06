@@ -35,6 +35,41 @@ f2 equalPower(float p, float gain) {
     return f2{sinCycle(t + 0.25f) * gain, sinCycle(t) * gain};
 }
 
+// The handoff's send over its release curve at t seconds into it: the boost ramping from 1 to B,
+// then the fade-out.
+float sendShape(float t, float boost) {
+    return (1.0f + (boost - 1.0f) * std::min(1.0f, t * (1.0f / kBoostInS))) *
+           cos2((t - (Bloom::kHandoffS - kSendOutS)) * (1.0f / kSendOutS));
+}
+
+// The handoff's B for a release of releaseS: the send over the handoff, the release times
+// sendShape(), then carries the energy of the whole release (to -60 dB) as Tail Voice sends it.
+// With x = B - 1 that energy is a + 2 b x + c x^2: a, b and c the release's power times f^2, r f^2
+// and r^2 f^2 over the handoff (r the ramp 0..1, f the fade-out), here by the midpoint rule in
+// 300 steps of 5 ms. At most 4. The whole release's energy is always the larger (it holds the
+// handoff's 1.5 s and more), so x >= 0.
+float handoffBoostFor(float releaseS) {
+    const double k = 2.0 * 6.90775527898 / releaseS;   // the power falls as exp(-k t): -60 dB at releaseS
+    const double whole = (1.0 - 1e-6) / k;
+    constexpr int kSteps = 300;
+    const double dt = static_cast<double>(Bloom::kHandoffS) / kSteps, q = std::exp(-k * dt);
+    double e = std::exp(-0.5 * k * dt), a = 0.0, b = 0.0, c = 0.0;
+    for (int i = 0; i < kSteps; ++i, e *= q) {
+        const float t = static_cast<float>((i + 0.5) * dt);
+        const double r = std::min(1.0f, t * (1.0f / kBoostInS));
+        const double f = cos2((t - (Bloom::kHandoffS - kSendOutS)) * (1.0f / kSendOutS));
+        const double w = e * f * f;
+        a += w;
+        b += w * r;
+        c += w * r * r;
+    }
+    a *= dt;
+    b *= dt;
+    c *= dt;
+    const double x = (std::sqrt(b * b + c * std::max(0.0, whole - a)) - b) / c;
+    return static_cast<float>(std::min(4.0, 1.0 + x));
+}
+
 bool zero2(f2 x) { return x[0] == 0.0f && x[1] == 0.0f; }
 
 // acc + p0 y[0] (+ p1 y[1]): each SVF lane (a unison half) into its pan. NEON multiplies by a lane
@@ -69,8 +104,6 @@ void Bloom::seed(uint32_t s) {
 void Bloom::reseed() {
     rng_ = seed_ * 0x9E3779B1u + 0x85EBCA6Bu;
     if (rng_ == 0) rng_ = 0x85EBCA6Bu;   // xorshift's one stuck state
-    phaseRng_ = seed_ * 0xC2B2AE35u + 0x27D4EB2Fu;
-    if (phaseRng_ == 0) phaseRng_ = 0x27D4EB2Fu;
     for (int i = 0; i < kVoices; ++i) v_[i].scan.seed(seed_ * 16u + static_cast<uint32_t>(i));
 }
 
@@ -98,6 +131,7 @@ void Bloom::set(const BloomPatch& p, const HarmonyPatch& h) {
     panDirty_ = panDirty_ || q.width != p_.width || q.unison != p_.unison;
     const bool refilter =
         q.cutoffHz != p_.cutoffHz || q.reso != p_.reso || q.filterMode != p_.filterMode || fT_.g == 0.0f;
+    if (q.releaseS != p_.releaseS || boost_ == 0.0f) boost_ = handoffBoostFor(q.releaseS);
     p_ = q;
     h_ = h;
     h_.strumS = clampParam(h.strumS, 0.0f, 10.0f, 0.0f);
@@ -245,7 +279,7 @@ void Bloom::letGo(Voice& v) {
     if (p_.tail == TL_SPACE && p_.releaseS > kHandoffS) {
         v.stage = ST_HANDOFF;
         v.th = 0.0f;
-        v.boost = std::min(4.0f, std::sqrt(p_.releaseS / kHandoffS));
+        v.boost = boost_;
     } else {
         v.stage = ST_RELEASE;
     }
@@ -305,9 +339,10 @@ void Bloom::moveTo(const Chord& c, float vel) {
 
 void Bloom::tune(Voice& v) {
     const double hz = 440.0 * std::exp2((v.pitch - 69.0) / 12.0);
-    const double c = hz / kRate, d = std::exp2(p_.detuneCents / 2400.0), o = std::exp2(static_cast<double>(p_.bOctave));
-    // Worked out here once, for every render to share.
-    const double a0 = p_.unison == 2 ? c / d : c, a1 = c * d;
+    const double c = hz / kRate, o = std::exp2(static_cast<double>(p_.bOctave));
+    // Worked out here once, for every render to share. The first half goes down by half the detune
+    // as the second comes in (uni 0..1); the second is always up by half (unheard at uni 0).
+    const double a0 = c * std::exp2(-v.uni * p_.detuneCents / 2400.0), a1 = c * std::exp2(p_.detuneCents / 2400.0);
     v.incA[0] = static_cast<float>(a0);
     v.incA[1] = static_cast<float>(a1);
     v.incB[0] = static_cast<float>(a0 * o);
@@ -324,14 +359,13 @@ void Bloom::tune(Voice& v) {
 }
 
 void Bloom::placePan(Voice& v) {
-    const float w = p_.width, at = kChordSpread * w * v.spread;
-    if (p_.unison == 2) {
-        v.pan[0] = equalPower(at - kUnisonSpread * w, kInvSqrt2);
-        v.pan[1] = equalPower(at + kUnisonSpread * w, kInvSqrt2);
-    } else {
-        v.pan[0] = equalPower(at, 1.0f);
-        v.pan[1] = splat2(0.0f);
-    }
+    // The second half at uni / sqrt 2 and the first at what keeps their power 1 (the halves drift
+    // apart in phase, so their powers add), each moving out from the voice's place as it comes in.
+    const float w = p_.width, at = kChordSpread * w * v.spread, apart = kUnisonSpread * w * v.uni;
+    const float g1 = v.uni * kInvSqrt2, g0 = std::sqrt(1.0f - g1 * g1);
+    v.pan[0] = equalPower(at - apart, g0);
+    v.pan[1] = g1 > 0.0f ? equalPower(at + apart, g1) : splat2(0.0f);
+    v.bk = 1.0f / (g0 + g1);   // the same breath in both lanes adds up coherently
 }
 
 void Bloom::begin(Voice& v) {
@@ -356,15 +390,18 @@ void Bloom::begin(Voice& v) {
     v.velStep = 0.0f;
     v.th = 0.0f;
     v.spread = v.nextSpread;
+    v.uni = p_.unison == 2 ? 1.0f : 0.0f;
     v.pitch = tunedPitch(h_, v.note);
     tune(v);
     placePan(v);
-    // A and B in step (the Couple modes hear their phases); the second half elsewhere.
-    const float ph = lifeosc::rand01(phaseRng_);
+    // A and B in step (the Couple modes hear their phases). The second half a quarter of A's cycle
+    // later, B by the same time (a quarter of a cycle at its octave), so it is the first half
+    // delayed: at Detune 0 the two are in quadrature, as loud together as one.
+    const double later = 0.25 * std::exp2(static_cast<double>(p_.bOctave));
     v.oa[0].reset(0.0f);
     v.ob[0].reset(0.0f);
-    v.oa[1].reset(ph);
-    v.ob[1].reset(ph);
+    v.oa[1].reset(0.25f);
+    v.ob[1].reset(static_cast<float>(later - std::floor(later)));
     v.svf.clear();
     v.bpIc1 = v.bpIc2 = 0.0f;
 }
@@ -384,7 +421,15 @@ void Bloom::control(int m) {
         }
         v.live = v.stage != ST_FREE;
         if (!v.live) continue;
-        if (panDirty_) placePan(v);
+        const float ut = p_.unison == 2 ? 1.0f : 0.0f;
+        if (v.uni != ut) {   // the second half glides in or out over 3 ms: its gain, place and detune
+            const float du = static_cast<float>(m) * (1.0f / kStealSamples);
+            v.uni = ut > v.uni ? std::min(ut, v.uni + du) : std::max(ut, v.uni - du);
+            tune(v);
+            placePan(v);
+        } else if (panDirty_) {
+            placePan(v);
+        }
         float dry = 1.0f, extra = 0.0f;
         bool ends = false;
         switch (v.stage) {
@@ -407,8 +452,7 @@ void Bloom::control(int m) {
                 v.th += dt;
                 ends = v.th >= kHandoffS || v.env < kFloor;
                 dry = cos2(v.th * (1.0f / kHandoffS));
-                v.sendMul = (1.0f + (v.boost - 1.0f) * std::min(1.0f, v.th * (1.0f / kBoostInS))) *
-                            cos2((v.th - (kHandoffS - kSendOutS)) * (1.0f / kSendOutS));
+                v.sendMul = sendShape(v.th, v.boost);
                 extra = v.sendMul - dry;
                 break;
             }
@@ -502,7 +546,7 @@ void Bloom::voiceLoop(Voice& v, const float* a0, const float* a1, int o, int m) 
     const SvfUpdate cu{splat2(a1_), splat2(a2_), splat2(a3_)};
     const f2 cm[3] = {splat2(fNow_.m[0]), splat2(fNow_.m[1]), splat2(fNow_.m[2])};
     float ic1 = v.bpIc1, ic2 = v.bpIc2;
-    const float b1 = v.bpA1, b2 = v.bpA2, b3 = v.bpA3, bk = Breath ? p_.breath * v.bpNorm : 0.0f;
+    const float b1 = v.bpA1, b2 = v.bpA2, b3 = v.bpA3, bk = Breath ? p_.breath * v.bpNorm * v.bk : 0.0f;
     f2* bus = bus_ + o;
     f2* sx = sendX_ + o;
     const float* nz = noise_ + o;
@@ -550,11 +594,19 @@ void Bloom::voiceLoop(Voice& v, const float* a0, const float* a1, int o, int m) 
 
 void Bloom::renderVoice(Voice& v, const Wavetable& ta, const Wavetable& tb, int o, int m) {
     float a0[kChunk], a1[kChunk], scratch[2 * kChunk];
-    const bool uni = p_.unison == 2;
+    // The second half is heard while its gains, at either end of the step, are: unison 2, and the
+    // steps that glide it in or out. Else it is only skipped along, so that it comes back in at
+    // the same quarter cycle from the first (at Detune 0, where they share a pitch).
+    const bool uni = !zero2(v.P0[1]) || !zero2(v.P[1]) || !zero2(v.S0[1]) || !zero2(v.S[1]);
     const int cp = p_.couple;
     const float amt = p_.coupleAmt, blend = p_.blend;
     renderCoupled(v.oa[0], ta, v.incA[0], v.ob[0], tb, v.incB[0], v.pos, cp, amt, blend, a0, scratch, m);
-    if (uni) renderCoupled(v.oa[1], ta, v.incA[1], v.ob[1], tb, v.incB[1], v.pos, cp, amt, blend, a1, scratch, m);
+    if (uni) {
+        renderCoupled(v.oa[1], ta, v.incA[1], v.ob[1], tb, v.incB[1], v.pos, cp, amt, blend, a1, scratch, m);
+    } else {
+        v.oa[1].skip(ta, v.incA[1], v.pos, m);
+        v.ob[1].skip(tb, v.incB[1], v.pos, m);
+    }
     const bool breath = p_.breath > 0.0f;
     const bool send = sendOn_ && (!zero2(v.S0[0]) || !zero2(v.S[0]) || !zero2(v.S0[1]) || !zero2(v.S[1]));
     switch ((uni ? 8 : 0) + (breath ? 4 : 0) + (glide_ ? 2 : 0) + (send ? 1 : 0)) {

@@ -279,65 +279,87 @@ void testMoveTo() {
     CHECK(maxStep(r.L) < 0.05f);
 }
 
-// Check 5: the tail handoff. Release 10 s, Tail Space: the voice is free 1.5 s after its release,
-// its send carries more than Tail Voice's from 0.2 to 1.5 s, and never steps. Tail Voice keeps
-// the voice for the whole 10 s.
+// What one note's release did, from the moment it was released.
+struct Released {
+    long freeAt = -1;         // samples until active() was 0
+    float boost = 0.0f;       // handoffBoost() 0.5 s in
+    float boostMax = 0.0f;
+    int least9 = 99;          // the fewest voices sounding over the first 9 s
+    double sendEnergy = 0.0;  // the send's, L and R, from the release on
+    double sendRms = 0.0;     // 0.2..1.5 s in
+    double dryLate = 0.0;     // the dry's RMS 1.4..1.5 s in
+    float stepBefore = 0.0f;  // the send's largest step: over the 0.3 s before the release,
+    float stepAfter = 0.0f;   // after it,
+    float stepLast = 0.0f;    // and from 1.45 s in on
+    bool silentAfter16 = false;
+};
+Released releaseOne(float releaseS, int tail, double seconds) {
+    Bloom b;
+    b.seed(5);
+    af::BloomPatch p = plain();
+    p.releaseS = releaseS;
+    p.tail = tail;
+    b.set(p, af::HarmonyPatch{});
+    b.play(chordOf({60}), 60, 1.0f);
+    Run r;
+    render(b, r, samples(0.5));
+    const size_t rel = r.L.size();
+    b.release(60);
+    Released x;
+    render(b, r, samples(seconds), [&](size_t at) {
+        const size_t t = at + kBlk - rel;
+        if (x.freeAt < 0 && b.active() == 0) x.freeAt = static_cast<long>(t);
+        if (t <= static_cast<size_t>(samples(0.5))) x.boost = b.handoffBoost();
+        x.boostMax = std::max(x.boostMax, b.handoffBoost());
+        if (t <= static_cast<size_t>(samples(9.0))) x.least9 = std::min(x.least9, b.active());
+    });
+    for (size_t i = rel; i < r.SL.size(); ++i)
+        x.sendEnergy += static_cast<double>(r.SL[i]) * r.SL[i] + static_cast<double>(r.SR[i]) * r.SR[i];
+    x.sendRms = rms(r.SL, rel + samples(0.2), rel + samples(1.5));
+    x.dryLate = rms(r.L, rel + samples(1.4), rel + samples(1.5));
+    x.stepBefore = maxStep(r.SL, rel - static_cast<size_t>(samples(0.3)), rel);
+    x.stepAfter = maxStep(r.SL, rel, r.SL.size());
+    x.stepLast = maxStep(r.SL, rel + static_cast<size_t>(samples(1.45)), r.SL.size());
+    const size_t gone = rel + static_cast<size_t>(samples(1.6));
+    x.silentAfter16 = gone < r.L.size() && peak(r.L, gone) == 0.0f && peak(r.SL, gone) == 0.0f;
+    return x;
+}
+
+// Check 5: the tail handoff. With Tail Space the voice is free 1.5 s after its release and its
+// send carries the same energy into Space as Tail Voice's whole release does (+-1 dB: CONCEPT.md
+// 8), at Release 2, 10 and 30 s, never stepping. At Release 10 its send from 0.2 to 1.5 s is still
+// the larger, and its dry is all but gone at 1.5 s; Tail Voice keeps the voice for the whole 10 s.
 void testHandoff() {
     std::printf("== bloom: tail handoff\n");
-    double sendRms[2] = {}, dryLate[2] = {};
-    for (int tail : {af::TL_SPACE, af::TL_VOICE}) {
-        Bloom b;
-        b.seed(5);
-        af::BloomPatch p = plain();
-        p.releaseS = 10.0f;
-        p.tail = tail;
-        b.set(p, af::HarmonyPatch{});
-        b.play(chordOf({60}), 60, 1.0f);
-        Run r;
-        render(b, r, samples(0.5));
-        const size_t rel = r.L.size();
-        b.release(60);
-        long freeAt = -1;
-        float boostAt05 = 0.0f, boostMax = 0.0f;
-        int least = 99;
-        const int len = tail == af::TL_SPACE ? samples(2.0) : samples(9.0);
-        render(b, r, len, [&](size_t at) {
-            const size_t t = at + kBlk - rel;
-            if (freeAt < 0 && b.active() == 0) freeAt = static_cast<long>(t);
-            if (t <= static_cast<size_t>(samples(0.5))) boostAt05 = b.handoffBoost();
-            boostMax = std::max(boostMax, b.handoffBoost());
-            least = std::min(least, b.active());
-        });
-        const int k = tail == af::TL_SPACE ? 0 : 1;
-        sendRms[k] = rms(r.SL, rel + samples(0.2), rel + samples(1.5));
-        dryLate[k] = rms(r.L, rel + samples(1.4), rel + samples(1.5));
-        if (tail == af::TL_SPACE) {
-            const double want = std::min(4.0, std::sqrt(10.0 / 1.5));
-            std::printf("  Space: free after %.3f s, boost at 0.5 s %.3f (%.3f asked)\n", freeAt / 44100.0, boostAt05, want);
-            CHECK(freeAt > samples(1.4) && freeAt <= samples(1.6));
-            CHECK(std::fabs(boostAt05 - want) < 0.01);
-            CHECK(boostMax <= want + 1e-4);
-            const size_t gone = rel + static_cast<size_t>(samples(1.6));
-            CHECK(peak(r.L, gone) == 0.0f && peak(r.SL, gone) == 0.0f);
-            // The send never steps: after the release it grows by the boost at most (2.58), and
-            // over the last 50 ms before the voice goes it has faded to a fraction of the sustain's
-            // (the release and the boost alone would leave it at 0.92 of it, cut).
-            const float before = maxStep(r.SL, rel - static_cast<size_t>(samples(0.3)), rel);
-            const float after = maxStep(r.SL, rel, r.SL.size());
-            const float last = maxStep(r.SL, rel + static_cast<size_t>(samples(1.45)), r.SL.size());
-            std::printf("  send's largest step %.4f after the release, %.4f before, %.4f in the last 50 ms\n", after, before, last);
-            CHECK(after <= 2.6f * before);
-            CHECK(last <= 0.2f * before);
-        } else {
-            std::printf("  Voice: at least %d voice sounding for 9 s; boost %.3f\n", least, boostMax);
-            CHECK(least >= 1);
-            CHECK(boostMax == 1.0f);
+    for (float releaseS : {2.0f, 10.0f, 30.0f}) {
+        const Released space = releaseOne(releaseS, af::TL_SPACE, 2.0);
+        const Released voice = releaseOne(releaseS, af::TL_VOICE, releaseS + 0.2);
+        const double energy = 10.0 * std::log10(space.sendEnergy / voice.sendEnergy);
+        std::printf("  Release %4.1f: Space free after %.3f s, boost %.3f, send energy %+.2f dB of Voice's;"
+                    " Voice free after %.3f s\n",
+                    releaseS, space.freeAt / 44100.0, space.boost, energy, voice.freeAt / 44100.0);
+        CHECK(space.freeAt > samples(1.4) && space.freeAt <= samples(1.6));
+        CHECK(space.silentAfter16);
+        CHECK(std::fabs(energy) <= 1.0);
+        CHECK(space.boost >= 1.0f && space.boost <= 4.0f && space.boostMax <= space.boost + 1e-6f);
+        CHECK(voice.boostMax == 1.0f);
+        CHECK(voice.freeAt > samples(0.9 * releaseS) && voice.freeAt <= samples(releaseS + 0.1));
+        // The send never steps: after the release it grows by the boost at most, and over the
+        // last 50 ms before the voice goes it has faded to a fraction of the sustain's (without
+        // the fade-out it would stop from 0.4 of it at Release 10).
+        std::printf("    send's largest step %.4f after the release, %.4f before, %.4f in the last 50 ms\n",
+                    space.stepAfter, space.stepBefore, space.stepLast);
+        CHECK(space.stepAfter <= 1.05f * space.boost * space.stepBefore);
+        CHECK(space.stepLast <= 0.2f * space.stepBefore);
+        if (releaseS == 10.0f) {
+            std::printf("    send RMS 0.2..1.5 s: Space %.4f, Voice %.4f; dry 1.4..1.5 s: Space %.5f, Voice %.4f;"
+                        " Voice: at least %d voice for 9 s\n",
+                        space.sendRms, voice.sendRms, space.dryLate, voice.dryLate, voice.least9);
+            CHECK(space.sendRms > voice.sendRms);
+            CHECK(space.dryLate < 0.05 * voice.dryLate);
+            CHECK(voice.least9 >= 1);
         }
     }
-    std::printf("  send RMS 0.2..1.5 s: Space %.4f, Voice %.4f; dry 1.4..1.5 s: Space %.5f, Voice %.4f\n",
-                sendRms[0], sendRms[1], dryLate[0], dryLate[1]);
-    CHECK(sendRms[0] > sendRms[1]);
-    CHECK(dryLate[0] < 0.05 * dryLate[1]);
 }
 
 // Check 6: Swell 2 s: at 1 s the voice is half way, -6 dB under its sustain (+-1.5 dB); at 0.5 s
@@ -523,6 +545,68 @@ void testTone() {
     CHECK(allFinite(breathy));
 }
 
+// Unison. Switched while a chord sounds, 2 to 1 and back, the second half glides out and in: no
+// step bigger than the steady sound's (a half dropped at once stepped 0.148 against 0.022). At
+// Detune 0 the halves sit a quarter cycle apart, as loud as unison 1 (+-0.5 dB) whatever the seed,
+// and the breath, the same in both halves, is as loud at unison 2 as at 1.
+void testUnison() {
+    std::printf("== bloom: unison\n");
+    {
+        Bloom b;
+        b.seed(13);
+        af::BloomPatch p = plain();
+        p.unison = 2;
+        p.width = 0.6f;
+        b.set(p, af::HarmonyPatch{});
+        b.play(chordOf({60, 64, 67}), 60, 1.0f);
+        Run r;
+        render(b, r, samples(0.5));
+        const size_t one = r.L.size();
+        p.unison = 1;
+        b.set(p, af::HarmonyPatch{});
+        render(b, r, samples(0.3));
+        const size_t two = r.L.size();
+        p.unison = 2;
+        b.set(p, af::HarmonyPatch{});
+        render(b, r, samples(0.3));
+        const auto step = [&](size_t from, size_t to) {
+            return std::max(maxStep(r.L, from, to), maxStep(r.R, from, to));
+        };
+        const size_t ms20 = static_cast<size_t>(samples(0.02));
+        const float steady = std::max(step(one - 10 * ms20, one), step(one + 5 * ms20, two));
+        const float out = step(one, one + ms20), in = step(two, two + ms20);
+        std::printf("  2 -> 1: largest step %.4f, 1 -> 2: %.4f (steady %.4f)\n", out, in, steady);
+        CHECK(out <= 1.5f * steady && in <= 1.5f * steady);
+        CHECK(b.active() == 3);
+    }
+    const auto level = [](int unison, uint32_t seed, float breath, double hz) {
+        Bloom b;
+        b.seed(seed);
+        af::BloomPatch p = plain();
+        p.unison = unison;
+        p.detuneCents = 0.0f;
+        p.breath = breath;
+        b.set(p, af::HarmonyPatch{});
+        b.play(chordOf({60}), 60, 1.0f);
+        Run r;
+        render(b, r, samples(0.6));
+        const size_t from = static_cast<size_t>(samples(0.1));
+        return hz > 0.0 ? magnitude(r.L, hz, from) : rms(r.L, from);
+    };
+    double worst = 0.0;
+    for (uint32_t seed : {1u, 2u, 3u, 7u, 42u})
+        worst = std::max(worst, std::fabs(db(level(2, seed, 0.0f, 0.0) / level(1, seed, 0.0f, 0.0))));
+    // The breath alone, away from the tone (a sine): its band at 1.5 and 0.75 times the note.
+    const auto breath = [&](int unison) {
+        const double a = level(unison, 3, 1.0f, 1.5 * kC4), c = level(unison, 3, 1.0f, 0.75 * kC4);
+        return std::sqrt(a * a + c * c);
+    };
+    const double breathDb = db(breath(2) / breath(1));
+    std::printf("  Detune 0: unison 2 within %.3f dB of unison 1 over five seeds; breath %+.3f dB\n", worst, breathDb);
+    CHECK(worst <= 0.5);
+    CHECK(std::fabs(breathDb) <= 0.5);
+}
+
 // Width: 0 puts everything in the middle (L = R); unison 2 at width 1 spreads its halves apart.
 // Mute and Level 0 are silence, and voices still come free under them.
 void testWidthAndMute() {
@@ -665,6 +749,7 @@ void bloomTests() {
     testStability();
     testOwners();
     testTone();
+    testUnison();
     testWidthAndMute();
     testDeterminism();
     testNoAllocation();
