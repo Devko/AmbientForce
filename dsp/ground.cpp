@@ -20,6 +20,15 @@ constexpr float kF2 = 0.63f;             // the second formant under the first (
 // 5.6 dB.
 constexpr float kBodyDry = 0.3f, kBodyWet = 2.0f;
 constexpr float kBreathDb = 3.0f, kBreathOct = 1.0f;   // Breath's swing at 1, either way
+// The partials' sum, scaled so the loudest Ground there is peaks under 1.5: every partial at 1
+// adds up to 5 times one partial's peak where they meet in phase, Breath adds 3 dB at its crest,
+// Body its formants. Measured with every partial at 1, level 1, Breath 1, Beat 3 (so the partials
+// pass through every alignment) and Width 0, over every table, Body 0, 1/3 and 1, three Color
+// intervals and two Tones, 20 s each: the loudest is Square at Body 1 with an 11th, 1.49 (11.9
+// before this scale), and the loudest lifetime table Tape Strings, 1.34. The default drone (level
+// 0.7, Breath 0) then plays at about -22 dBFS RMS (-19 on Square, -24.5 on Saw); Task 10's level
+// matching sets the presets. -18 dB, a power of two, so the scale is exact.
+constexpr float kHeadroom = 0.125f;
 constexpr float kInvRate = 1.0f / kRate;
 
 // The first two formants (Hz) of a, o and u.
@@ -83,8 +92,8 @@ void Ground::set(const GroundPatch& p, const HarmonyPatch& h) {
     for (int i = 0; i < kParts; ++i) {
         float l, r;
         panGains(width * kPan[i], l, r);
-        gainL_[i] = level[i] * l;
-        gainR_[i] = level[i] * r;
+        gainL_[i] = kHeadroom * level[i] * l;
+        gainR_[i] = kHeadroom * level[i] * r;
     }
     // What of the distance to the goal a full chunk keeps: exp(-t / tau), tau = gravity / 3.
     glideKeep_ = gravity_ > 0.0f ? std::exp(-3.0 * kChunk / (static_cast<double>(gravity_) * kRate)) : 0.0;
@@ -112,7 +121,11 @@ void Ground::reset() {
     if (r == 0) r = 0x7F4A7C15u;                       // xorshift's one stuck state
     xorshift(r);
     scan_.seed(seed_);
-    for (TableOsc& o : osc_) o.reset(lifeosc::rand01(r));
+    linear_[0].reset(lifeosc::rand01(r));    // the partials in order: Sub, Root, Fifth, Octave, Color
+    hermite_[0].reset(lifeosc::rand01(r));
+    hermite_[1].reset(lifeosc::rand01(r));
+    linear_[1].reset(lifeosc::rand01(r));
+    linear_[2].reset(lifeosc::rand01(r));
     breathPhase_ = lifeosc::rand01(r);
     target_ = -1;
     pitch_ = goal_ = 0.0;
@@ -127,6 +140,8 @@ void Ground::stop() {
     fresh_ = true;
     fadeDb_ = kFloorDb;
     gain_ = wet_ = 0.0f;
+    old_ = nullptr;
+    tableFade_ = 0;
     toneSvf_.clear();
     f1Svf_.clear();
     f2Svf_.clear();
@@ -140,7 +155,7 @@ void Ground::render(const TableSet& tables, float* outL, float* outR, float* sen
 }
 
 // One control step, then its n samples.
-void Ground::chunk(const Wavetable& t, float* outL, float* outR, float* sendL, float* sendR, float spaceSend, int n) {
+void Ground::chunk(const Wavetable& want, float* outL, float* outR, float* sendL, float* sendR, float spaceSend, int n) {
     const float dt = static_cast<float>(n) * kInvRate;
 
     // Gravity: the remaining distance shrinks by exp(-dt / tau) a step, in semitones.
@@ -179,7 +194,20 @@ void Ground::chunk(const Wavetable& t, float* outL, float* outR, float* sendL, f
     const float w1 = std::min(1.0f, 3.0f * body_), w0 = fromSilence ? w1 : wet_;
     wet_ = w1;
 
-    if (g0 == 0.0f && g1 == 0.0f) {   // level 0 or muted: nothing to hear, nothing rendered
+    // Each partial's pitch: its ratio over the root, and Beat's offset in Hz.
+    const float rootHz = noteHz(static_cast<float>(pitch_));
+    float inc[kParts];
+    for (int i = 0; i < kParts; ++i) inc[i] = std::max(ratio_[i] * rootHz + beat_ * kBeat[i], 0.0f) * kInvRate;
+
+    if (g0 == 0.0f && g1 == 0.0f) {   // level 0 or muted: nothing to hear, nothing read
+        table0_ = &want;
+        old_ = nullptr;
+        tableFade_ = 0;
+        linear_[0].skip(want, inc[PT_SUB], pos, n);
+        hermite_[0].skip(want, inc[PT_ROOT], pos, n);
+        hermite_[1].skip(want, inc[PT_FIFTH], pos, n);
+        linear_[1].skip(want, inc[PT_OCTAVE], pos, n);
+        linear_[2].skip(want, inc[PT_COLOR], pos, n);
         for (int i = 0; i < kParts; ++i) {
             curL_[i] = gainL_[i];
             curR_[i] = gainR_[i];
@@ -191,18 +219,51 @@ void Ground::chunk(const Wavetable& t, float* outL, float* outR, float* sendL, f
         return;
     }
 
-    // The partials, summed and panned. A partial at level 0 isn't rendered (it keeps its phase).
-    const float rootHz = noteHz(static_cast<float>(pitch_));
+    // The table: a new one fades in over kTableFade samples, the oscillators as they were at the
+    // switch reading the old one under it in step; from silence the new one is simply there. A
+    // second change waits for the fade under way to end.
+    if (fromSilence) {
+        table0_ = &want;
+        old_ = nullptr;
+        tableFade_ = 0;
+    } else if (!old_ && &want != table0_) {
+        old_ = table0_;
+        table0_ = &want;
+        tableFade_ = kTableFade;
+        std::copy(hermite_, hermite_ + 2, oldHermite_);
+        std::copy(linear_, linear_ + 3, oldLinear_);
+    }
+    const Wavetable* const from = old_;
+    float fade[kChunk];
+    if (from) {
+        const float done = static_cast<float>(kTableFade - tableFade_);
+        for (int j = 0; j < n; ++j) fade[j] = std::min(1.0f, (done + static_cast<float>(j + 1)) * (1.0f / kTableFade));
+        tableFade_ -= n;
+        if (tableFade_ <= 0) {
+            tableFade_ = 0;
+            old_ = nullptr;
+        }
+    }
+
+    // The partials, summed and panned. A partial at level 0 isn't read: it is skipped along.
     const float inv = 1.0f / static_cast<float>(n);
-    float accL[kChunk] = {}, accR[kChunk] = {}, x[kChunk];
-    for (int i = 0; i < kParts; ++i) {
+    float accL[kChunk] = {}, accR[kChunk] = {}, x[kChunk], y[kChunk];
+    const Wavetable& t = *table0_;
+    auto partial = [&](auto& osc, auto& old, int i) {
         const float l1 = gainL_[i], r1 = gainR_[i];
         const float l0 = fromSilence ? l1 : curL_[i], r0 = fromSilence ? r1 : curR_[i];
         curL_[i] = l1;
         curR_[i] = r1;
-        if (l0 == 0.0f && r0 == 0.0f && l1 == 0.0f && r1 == 0.0f) continue;
-        const float hz = ratio_[i] * rootHz + beat_ * kBeat[i];
-        osc_[i].render(t, std::max(hz, 0.0f) * kInvRate, pos, x, n);
+        if (l0 == 0.0f && r0 == 0.0f && l1 == 0.0f && r1 == 0.0f) {
+            osc.skip(t, inc[i], pos, n);
+            if (from) old.skip(*from, inc[i], pos, n);
+            return;
+        }
+        osc.render(t, inc[i], pos, x, n);
+        if (from) {
+            old.render(*from, inc[i], pos, y, n);
+            for (int j = 0; j < n; ++j) x[j] = y[j] + fade[j] * (x[j] - y[j]);
+        }
         const float dl = (l1 - l0) * inv, dr = (r1 - r0) * inv;
         float gl = l0, gr = r0;
         for (int j = 0; j < n; ++j) {
@@ -211,7 +272,12 @@ void Ground::chunk(const Wavetable& t, float* outL, float* outR, float* sendL, f
             accL[j] += gl * x[j];
             accR[j] += gr * x[j];
         }
-    }
+    };
+    partial(linear_[0], oldLinear_[0], PT_SUB);
+    partial(hermite_[0], oldHermite_[0], PT_ROOT);
+    partial(hermite_[1], oldHermite_[1], PT_FIFTH);
+    partial(linear_[1], oldLinear_[1], PT_OCTAVE);
+    partial(linear_[2], oldLinear_[2], PT_COLOR);
 
     // The filters' targets: Tone, and Body's formants (a, then a -> o -> u).
     const f2 toneG[1] = {splat2(svfG(cutoff))};

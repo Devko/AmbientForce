@@ -1,6 +1,6 @@
 // Ground (dsp/ground.h): the just partials, the register, beating in Hz, gravity, the fade, the
-// gains, no steps when the patch jumps, Body and Breath under stress, determinism. Needs no plugin:
-// make test-module M=ground runs it on its own.
+// gains, no steps when the patch or the table changes, Body and Breath under stress, the headroom,
+// determinism. Needs no plugin: make test-module M=ground runs it on its own.
 #include "check.h"
 #include "signal.h"
 #include "../dsp/ground.h"
@@ -26,7 +26,7 @@ const af::TableSet& tables() {
     static af::TableSet set;
     static bool built = false;
     if (!built) {
-        for (int id : {af::TB_SINE, af::TB_SAW, af::TB_CELLO_TASTO}) {
+        for (int id : {af::TB_SINE, af::TB_SAW, af::TB_SQUARE, af::TB_CELLO_TASTO, af::TB_CHOIR_AH_OO}) {
             CHECK(af::buildTable(id, t[id]));
             set.t[id].store(&t[id], std::memory_order_release);
         }
@@ -240,16 +240,12 @@ void testPartials() {
 }
 
 // Check 2: Beat is in Hz. With Root and Fifth on a saw, Root's 3rd harmonic and Fifth's 2nd meet,
-// and their sum's envelope beats there at the rate the offsets give, the same in register 2 and 3.
-//
-// The plan asks for 1.0 Hz at Beat 1.0, but with its offsets (Root -0.5, Fifth +0.5 Hz per Hz of
-// Beat) the 3rd harmonic of the Root moves -1.5 Hz and the 2nd of the Fifth +1.0 Hz: they beat at
-// 2.5 Hz. Ground keeps the plan's offsets, so this checks the 2.5 Hz they give. (The offsets
-// scaled by 0.4 would make this beat run at Beat itself.)
+// and their sum's envelope beats there at Beat, 1.0 Hz, the same in register 2 and 3. (Root moves
+// -0.2 Hz and Fifth +0.2 per Hz of Beat: their harmonics there -0.6 and +0.4.)
 void testBeat() {
     std::printf("== ground: beat in Hz\n");
-    const double want = std::fabs(2.0 * af::Ground::kBeat[af::Ground::PT_FIFTH] - 3.0 * af::Ground::kBeat[af::Ground::PT_ROOT]);
-    CHECK(std::fabs(want - 2.5) < 1e-9);
+    const double want = 1.0;
+    CHECK(std::fabs(2.0 * af::Ground::kBeat[af::Ground::PT_FIFTH] - 3.0 * af::Ground::kBeat[af::Ground::PT_ROOT] - want) < 1e-6);
     double rates[2];
     for (int r = 0; r < 2; ++r) {
         af::GroundPatch p = steady(af::TB_SAW, 1.0f, 1.0f);
@@ -465,7 +461,9 @@ void testNoSteps() {
     CHECK(jump <= 3.0f * steadyStep);   // ramps over a chunk; a step would be ~30x
 }
 
-// Check 6: Tone at both ends, Body 1 and Breath 1 for a minute: finite and at most 4.
+// Check 6: Tone at both ends, Body 1 and Breath 1 for a minute: finite and at most 4. Then the
+// headroom: the loudest Ground found (every table, Body, Color and Tone tried with every partial at
+// 1, level 1, Breath 1, Beat 3 and Width 0: Square, Body 1, an 11th) peaks under 1.5.
 void testStability() {
     std::printf("== ground: stability\n");
     for (float cutoff : {40.0f, 16000.0f}) {
@@ -493,22 +491,112 @@ void testStability() {
         CHECK(finite);
         CHECK(pk <= 4.0f);
     }
-    // Everything at full (not a check on the level, only that it stays finite): for the engine's
-    // gain staging.
     af::GroundPatch p;
+    p.table = af::TB_SQUARE;
     p.level = 1.0f;
     p.sub = p.root = p.fifth = p.octave = p.color = 1.0f;
     p.colorInterval = af::CI_ELEVENTH;
-    p.body = 1.0f / 3.0f;
+    p.body = 1.0f;
     p.breath = 1.0f;
+    p.breathHz = 0.5f;
+    p.beatHz = 3.0f;
     p.width = 0.0f;
+    p.fadeS = 0.05f;
     af::Ground g;
-    g.seed(10);
+    g.seed(1);
     g.set(p, af::HarmonyPatch{});
     g.setTarget(43);
     const Out o = play(g, 20 * kSec);
-    std::printf("  every partial at 1, level 1: peak %.3f, RMS %.1f dBFS\n", peak(o.L), db(rms(o.L, 10 * kSec)));
+    const float top = std::max(peak(o.L), peak(o.R));
+    std::printf("  the loudest found (Square, Body 1, every partial at 1, level 1, Breath 1): peak %.3f\n", top);
     CHECK(allFinite(o.L) && allFinite(o.R));
+    CHECK(top <= 1.5f && top > 1.0f);
+    // The default drone, for the engine's gain staging.
+    af::GroundPatch d;
+    d.breath = 0.0f;
+    d.fadeS = 0.05f;
+    af::Ground dg;
+    dg.seed(1);
+    dg.set(d, af::HarmonyPatch{});
+    dg.setTarget(43);
+    const Out od = play(dg, 4 * kSec);
+    std::printf("  the default drone (Breath 0): RMS %.1f dBFS, peak %.3f\n", db(rms(od.L, kSec)), peak(od.L, kSec));
+}
+
+// A new table fades in over 20 ms. Switched where the old table and the new differ most, the
+// drone steps no further than it moves anyway; up to the switch it is the old table's twin,
+// sample for sample, half way through the fade it is neither, and 50 ms on it is the new one's
+// twin. Twins: the same seed and patch but for the table, so the same phases and positions.
+template <class Switch>
+void tableSwitch(const char* name, const af::TableSet& set, const af::GroundPatch& pg, Switch doSwitch,
+                 const af::GroundPatch& pa, const af::GroundPatch& pb) {
+    af::Ground g, ta, tb;
+    for (af::Ground* x : {&g, &ta, &tb}) x->seed(21);
+    g.set(pg, af::HarmonyPatch{});
+    ta.set(pa, af::HarmonyPatch{});
+    tb.set(pb, af::HarmonyPatch{});
+    for (af::Ground* x : {&g, &ta, &tb}) x->setTarget(45);
+    auto left = [](af::Ground& x, const af::TableSet& s, int n) {
+        Buf L(static_cast<size_t>(n)), R(L.size()), sL(L.size()), sR(L.size());
+        for (int i = 0; i < n; i += kHostBlock) {
+            const size_t at = static_cast<size_t>(i);
+            x.render(s, &L[at], &R[at], &sL[at], &sR[at], 0.5f, std::min(kHostBlock, n - i));
+        }
+        return L;
+    };
+    const Buf g0 = left(g, set, kSec), a0 = left(ta, tables(), kSec), b0 = left(tb, tables(), kSec);
+    bool twin = g0 == a0;
+    const size_t half = a0.size() / 2;
+    const float steadyStep = std::max(maxStep(a0, half), maxStep(b0, half));
+    float apart = 0.0f;
+    for (size_t i = half; i < a0.size(); ++i) apart = std::max(apart, std::fabs(a0[i] - b0[i]));
+    // The switch lands where the two tables are far apart, where a step would be largest.
+    float lg = g0.back(), la = a0.back(), lb = b0.back();
+    for (int k = 0; k < 2 * kSec / kHostBlock && std::fabs(la - lb) < 0.6f * apart; ++k) {
+        const Buf gx = left(g, set, kHostBlock), ax = left(ta, tables(), kHostBlock);
+        twin = twin && gx == ax;
+        lg = gx.back();
+        la = ax.back();
+        lb = left(tb, tables(), kHostBlock).back();
+    }
+    CHECK(twin);
+    CHECK(std::fabs(la - lb) >= 0.6f * apart && std::fabs(la - lb) > 5.0f * steadyStep);   // a step would show
+    doSwitch(g);
+    const Buf g1 = left(g, set, kSec / 10), a1 = left(ta, tables(), kSec / 10), b1 = left(tb, tables(), kSec / 10);
+    const float jump = std::max(maxStep(g1), std::fabs(g1[0] - lg));
+    float midA = 0.0f, midB = 0.0f, end = 0.0f;
+    for (size_t i = 220; i < 660; ++i) {   // 5..15 ms
+        midA = std::max(midA, std::fabs(g1[i] - a1[i]));
+        midB = std::max(midB, std::fabs(g1[i] - b1[i]));
+    }
+    for (size_t i = kSec / 20; i < g1.size(); ++i) end = std::max(end, std::fabs(g1[i] - b1[i]));
+    std::printf("  %s: largest step %.5f steady, %.5f across the switch (the tables %.3f apart there); "
+                "mid-fade %.3f / %.3f off either; %.1e off the new one after 50 ms\n",
+                name, steadyStep, jump, std::fabs(la - lb), midA, midB, end);
+    CHECK(jump <= 3.0f * steadyStep);
+    CHECK(midA > 0.1f * apart && midB > 0.1f * apart);
+    CHECK(end < 1e-5f);
+}
+
+void testTableSwitch() {
+    std::printf("== ground: a table change fades\n");
+    af::GroundPatch a = steady(af::TB_CELLO_TASTO, 1.0f, 0.7f);
+    a.sub = 0.5f;
+    a.octave = 0.5f;
+    a.color = 0.5f;
+    a.level = 0.7f;
+    a.cutoffHz = 16000.0f;   // open: the Tone would soften a step over a few samples
+    af::GroundPatch b = a;
+    b.table = af::TB_CHOIR_AH_OO;
+    tableSwitch("Cello Tasto to Choir Ah-Oo", tables(), a, [&](af::Ground& g) { g.set(b, af::HarmonyPatch{}); }, a, b);
+
+    // A slot still on the sine when its table is published (the builder finishing mid-note).
+    static af::TableSet pending;   // Cello Tasto's slot empty: the sine
+    af::GroundPatch s = a;
+    s.table = af::TB_SINE;
+    tableSwitch("the sine to Cello Tasto, published", pending, a,
+                [&](af::Ground&) { pending.t[af::TB_CELLO_TASTO].store(&tables().get(af::TB_CELLO_TASTO), std::memory_order_release); },
+                s, a);
 }
 
 // The same seed, the same samples, with everything moving; another seed, others.
@@ -556,6 +644,7 @@ void groundTests() {
     testFade();
     testGains();
     testNoSteps();
+    testTableSwitch();
     testStability();
     testDeterminism();
 }

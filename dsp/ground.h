@@ -3,18 +3,25 @@
 // little and can hold forever. The engine decides what it follows (Listen); Ground only follows
 // setTarget().
 //
-// - Five partials, Sub, Root, Fifth, Octave and Color, each a TableOsc (Hermite) on the Ground
-//   table, all at one LifeScan position. Sub is an octave under the root and Octave one above.
-//   Under Just and Pythagorean the Fifth is 3/2 and Color its tuning's ratio for the interval
-//   (Just: m3 6/5, M3 5/4, 4th 4/3, m7 9/5, 9th 9/4, 11th 8/3; Pythagorean, its stacked fifths:
-//   32/27, 81/64, 4/3, 16/9, 9/4, 8/3); under Equal they are 7 and 3, 4, 5, 10, 14, 17 semitones.
-//   A partial at level 0 isn't rendered.
+// - Five partials, Sub, Root, Fifth, Octave and Color, all on the Ground table at one LifeScan
+//   position. Sub is an octave under the root and Octave one above. Under Just and Pythagorean
+//   the Fifth is 3/2 and Color its tuning's ratio for the interval (Just: m3 6/5, M3 5/4, 4th 4/3,
+//   m7 9/5, 9th 9/4, 11th 8/3; Pythagorean, its stacked fifths: 32/27, 81/64, 4/3, 16/9, 9/4,
+//   8/3); under Equal they are 7 and 3, 4, 5, 10, 14, 17 semitones.
+// - Root and Fifth, the interval the ear follows and the beat it hears, read with Hermite
+//   (TableOsc); Sub, Octave and Color, quieter by default, linearly (TableOscLinear), for half the
+//   reads (lifeosc.h: their images at worst -64 dB under a saw's fundamental, less on lifetime
+//   frames). A partial at level 0 isn't read; it is skipped along, so it comes back in step.
 // - The root: the target's pitch class in octave Register (C1 = 24, C2 = 36, C3 = 48), tuned by
-//   tunedPitch(). The target's own octave doesn't count: Register places it.
-// - Beat: partial i moves by beatHz * kBeat[i] in Hz, not cents, so the partials beat at the same
-//   rate in every register. A harmonic moves with its partial, k times as far as the fundamental:
-//   where Root's 3rd harmonic meets Fifth's 2nd they beat at |2 kBeat[Fifth] - 3 kBeat[Root]| =
-//   2.5 times beatHz. In Just the ratios are exact, so the beating dialled in is all there is.
+//   tunedPitch(). Only the pitch class counts: Register places the octave.
+// - Beat is the rate, in Hz, at which Root and Fifth beat where they meet: Root's 3rd harmonic
+//   against Fifth's 2nd. Each partial moves by beatHz * kBeat[i] in Hz, not cents, so the rate is
+//   the same in every register; a harmonic moves k times as far as its fundamental, so Root at
+//   -0.2 and Fifth at +0.2 meet at 2 (0.2) + 3 (0.2) = 1 times beatHz. The others keep the same
+//   shape (the plan's offsets, scaled by 0.4): Sub's 2nd against Root beats at 0.2 times it, Root's
+//   2nd against Octave at 0.3, Fifth's 4th against Octave's 3rd at 1.1: a few slower and similar
+//   rates around the one Beat sets. In Just the ratios are exact: the beating dialled in is all
+//   there is.
 // - Gravity: the root glides to a new target in semitones (log pitch), exponentially with time
 //   constant gravityS / 3, so it is 95% there after gravityS. Gravity 0 jumps. A target that
 //   starts the drone from silence is jumped to, never glided to.
@@ -29,10 +36,15 @@
 //   times breath.
 // - Width: partial i is panned to width * kPan[i], equal power (unity in the middle, as
 //   PolyForce pans).
+// - A new table (another one chosen, or the slot's table published over the sine it played
+//   until it was built) fades in over kTableFade samples (20 ms), both tables read only for that
+//   long: a switch never steps. The old one is read after the switch: published tables stay while
+//   the instance lives (plugin/tables.h).
 //
 // Levels: `level` is a gain, not the knob. The patch map squares the knob (the family's audio
-// taper), as it does for every level, so Ground doesn't. The send is taken after level, fade and
-// breath: level 0, mute or silence send nothing.
+// taper), as it does for every level, so Ground doesn't. The partials' sum is scaled by
+// kHeadroom (ground.cpp says how it was set). The send is taken after level, fade and breath:
+// level 0, mute or silence send nothing.
 //
 // Control rate: once per chunk of kChunk samples the glide, fade, LifeScan, breath, cutoff, body
 // and the partials' pitches take one step; the gains ramp across the chunk and the filters glide
@@ -40,11 +52,11 @@
 // control step of its own length.
 //
 // Cost, as ARM instructions per 128-sample block (qemu's count, the device's flags): every
-// partial on 60k, the default drone (four partials) 50k, Root alone 20k; Body adds 5.6k and
-// Breath 2.9k (it keeps the Tone's cutoff gliding). By PolyForce's ~1 ns an instruction that is
-// 2.1%, 1.7% and 0.7% of a block, over CONCEPT.md 11's 0.8%. Each partial is about 10k, most of
-// it the Hermite read of a frame pair; reading Sub, Octave and Color linearly (TableOscLinear)
-// would save about 12k. The device bench (Task 11) has the final word.
+// partial on 48.8k, the default drone (Sub, Root, Fifth, Octave) 42.8k, Root alone 21.2k; Body
+// adds 5.6k and Breath 2.8k (it keeps the Tone's cutoff gliding). Root and Fifth cost about 9.7k
+// each (Hermite over a pair of frames), Sub, Octave and Color 6.0k (linear); a table change reads
+// both tables for its 20 ms. By PolyForce's ~1 ns an instruction that is 1.7%, 1.5% and 0.7% of
+// a block, against CONCEPT.md 11's 0.8%; the device bench (Task 11) has the final word.
 //
 // Real-time rules: everything is fixed-size. Nothing allocates, locks or throws after the
 // constructor.
@@ -82,16 +94,18 @@ struct GroundPatch {
 class Ground {
 public:
     enum Partial : int { PT_SUB, PT_ROOT, PT_FIFTH, PT_OCTAVE, PT_COLOR, PT_COUNT };
-    // Hz per Hz of Beat, and the place in the stereo field per unit of Width, per partial.
-    static constexpr float kBeat[PT_COUNT] = {0.0f, -0.5f, 0.5f, -0.25f, 0.25f};
+    // Hz per Hz of Beat (Root against Fifth beats at exactly Beat), and the place in the stereo
+    // field per unit of Width, per partial.
+    static constexpr float kBeat[PT_COUNT] = {0.0f, -0.2f, 0.2f, -0.1f, 0.1f};
     static constexpr float kPan[PT_COUNT] = {0.0f, -0.3f, 0.3f, -0.6f, 0.6f};
+    static constexpr int kTableFade = 882;   // 20 ms: a new table fades in over this many samples
 
     Ground();
     // The random numbers (the scan's sway phase and smear, the oscillators' and the breath's start
     // phases), then reset(): the same seed and the same calls play the same samples.
     void seed(uint32_t s);
     void set(const GroundPatch& p, const HarmonyPatch& h);
-    // A MIDI note: its pitch class is what counts (Register gives the octave). -1 (any negative):
+    // A MIDI note: only its pitch class counts (Register places the octave). -1 (any negative):
     // stop, fading out.
     void setTarget(int rootNote);
     // Silent, no target, every phase back to where the seed puts it. The patch stays.
@@ -100,8 +114,8 @@ public:
     // (any n works; it is cut into control chunks). Silent: returns at once.
     void render(const TableSet& tables, float* outL, float* outR, float* sendL, float* sendR,
                 float spaceSend, int n);
-    // Fading in, held or fading out: on, whatever the level or mute (muted it costs only its
-    // control steps, and unmuted it is there again).
+    // Fading in, held or fading out. It ignores mute and level: muted it is still on (it costs only
+    // its control steps, and unmuted it is there again); the engine skips a muted Ground itself.
     bool sounding() const { return sounding_; }
 
     // For tests and the engine's Info: the target note (-1: none), and the root's pitch now and
@@ -113,7 +127,7 @@ public:
 private:
     double rootPitch(int note) const;   // the tuned pitch Register and the tuning put `note` at
     void stop();                        // the fade has reached -60: silent, ready to start afresh
-    void chunk(const Wavetable& t, float* outL, float* outR, float* sendL, float* sendR, float spaceSend, int n);
+    void chunk(const Wavetable& want, float* outL, float* outR, float* sendL, float* sendR, float spaceSend, int n);
 
     // The patch, kept in range.
     HarmonyPatch h_;
@@ -130,7 +144,15 @@ private:
     // State.
     uint32_t seed_ = 1;
     LifeScan scan_;
-    TableOsc osc_[PT_COUNT];
+    TableOsc hermite_[2];               // Root, Fifth
+    TableOscLinear linear_[3];          // Sub, Octave, Color
+    // A table change: the oscillators as they were at the switch go on reading the old table while
+    // it fades out.
+    TableOsc oldHermite_[2];
+    TableOscLinear oldLinear_[3];
+    const Wavetable* table0_ = nullptr; // the table played (faded to)
+    const Wavetable* old_ = nullptr;    // the table fading out; nullptr: none
+    int tableFade_ = 0;                 // samples of the fade still to go
     float curL_[PT_COUNT] = {}, curR_[PT_COUNT] = {};     // each partial's gains as the last chunk ended
     int target_ = -1;
     double pitch_ = 0.0, goal_ = 0.0;   // the root now and where it glides to (semitones)
