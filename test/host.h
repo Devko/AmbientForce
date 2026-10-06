@@ -143,6 +143,7 @@ void engineTests();      // engine_test.cpp: the engine on its own (the stub: si
 void reverbTests();      // reverb_test.cpp: the Reverb and Space on their own
 void harmonyTests();     // harmony_test.cpp: the harmony brain on its own (scales, chords, memory)
 void tablesTests();      // tables_test.cpp: the table library, the life models, the builder thread
+void lifeoscTests();     // lifeosc_test.cpp: the lifetime oscillator on its own (read, glide, sway, smear, couple)
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
 
 // Signal helpers (plugin_test.cpp; rms() and the module tests' own are in signal.h).
