@@ -16,6 +16,7 @@
 #include "patch_map.h"
 #include "state.h"
 #include "surface.h"
+#include "tables.h"
 #include "trace.h"
 #include "../dsp/engine.h"
 #include "../dsp/stages.h"
@@ -431,6 +432,7 @@ AEffect* createPlugin(audioMasterCallback master) {
 // Nothing may throw into MPC: a failed creation reports "no plugin" instead.
 extern "C" __attribute__((visibility("default"))) AEffect* VSTPluginMain(audioMasterCallback master) {
     try {
+        af::ensureTablesBuilding();   // the first instance starts the process-wide table builds
         return createPlugin(master);
     } catch (...) {
         return nullptr;

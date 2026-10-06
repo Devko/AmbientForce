@@ -337,6 +337,10 @@ void testStress() {
 
 long long aft::g_msPerEvent = 1000;
 
+namespace aft {
+void tablesTests();      // tables_test.cpp: the table library, the life models, the builder thread
+}
+
 int main() {
     using namespace aft;
     const std::string root = fixtureDir();
@@ -353,6 +357,7 @@ int main() {
     };
 
     engineTests();
+    tablesTests();   // before the first plugin instance: it times the builder thread from its start
     testBasics();
     testGetters();
     testPlay();
