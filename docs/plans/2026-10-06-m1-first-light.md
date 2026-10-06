@@ -721,8 +721,19 @@ public:
 
 ## Task 8: The engine, Listen modes, mix and output
 
-**Files:** rewrite `dsp/engine.h` and `dsp/engine.cpp` (replacing the stub); update `dsp/stages.h`
-and `test/engine_test.cpp`.
+**Files:** rewrite `dsp/engine.h` and `dsp/engine.cpp` (replacing the stub); update
+`dsp/stages.h` and `test/engine_test.cpp`. Also update:
+- `plugin/plugin.cpp`. Today `effMainsChanged(0)` and `effStopProcess` set `panic` and call
+  `reset()`. They now call `suspend()`, and processing resuming calls `resume()`. Both reach the
+  audio thread through atomics, like `panic`.
+- `test/plugin_test.cpp`. Its sound checks assume the stub: exact pitches, zero 0.5 s after
+  note-off, CC 123 → zero, suspend → zero in a block, the velocity ratio. Rewrite them for the
+  real engine:
+  - Silence checks use CC 120 or Cut.
+  - Pitch checks use Ground or Bloom alone with Space off.
+  - The suspend checks follow the On Stop rules below.
+
+(From Task 1's code review.)
 
 **Patch:**
 
@@ -827,7 +838,24 @@ struct Patch {
 ## Task 9: Parameters, pages, the patch map
 
 **Files:** modify `surface/surface.py`, `plugin/patch_map.cpp` and `plugin/patch_map.h`
-(display formats), and `test/plugin_test.cpp`.
+(display formats), `test/plugin_test.cpp`, `test/preset_test.cpp` and `surface/skin_polish.py`
+(its self-test).
+
+**Carried over from Task 1's reviews:**
+- **RANDOMIZE was removed** in Task 1, because volume was all there was to randomize. Bring it
+  back here with `rand_amt` (kind `ui`) only if it can be made musical:
+  - ranges per parameter that stay inside a sound (no Freeze, no Mute, no Hold, no table B on
+    FM at full);
+  - otherwise, leave it out and say so in ROADMAP's decisions.
+
+  If `rand_amt` returns, restore SubForce's check "Rand Amount is the surface's: not saved, not
+  reset by a preset".
+- **Restore SubForce's enum and popup checks** now that those parameters exist again: one option
+  per Q-Link detent; a tapped option lands exactly; the snapped value is pushed back to MPC; a
+  popup closes on pick.
+- **The skin_polish self-test's sub-page checks** come back now that there are several pages and
+  groups.
+- **Preview files are numbered from 0** (`page_0.png` …).
 
 **Parameters** (keys, names ≤13 characters and unique, curves, defaults), appended after `status`
 and `volume`:
