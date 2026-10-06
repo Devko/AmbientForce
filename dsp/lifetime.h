@@ -25,7 +25,9 @@ enum TableId : int { TB_FELT_PIANO, TB_CELESTA, TB_GLASS_HARMONICA, TB_CELLO_TAS
 
 const char* tableName(int id);             // "Felt Piano", ..., "Square"; "" out of range
 bool isLifetime(int id);                   // the first 8
-bool buildTable(int id, Wavetable& out);   // load time, not real time: allocates, ~1e8 flops
+// Load time, not real time: allocates, ~1e8 flops. `cancel`, if given, is looked at between pairs
+// of frames: once it is set the build gives up and returns false, `out` untouched.
+bool buildTable(int id, Wavetable& out, const std::atomic<bool>* cancel = nullptr);
 // One frame, built on its first call (a thread-safe static, never destroyed): the fallback of
 // every slot. Call it once before audio starts (ensureTablesBuilding does), so the audio thread
 // never builds it.

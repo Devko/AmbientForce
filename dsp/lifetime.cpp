@@ -305,7 +305,9 @@ double timeOf(int frame, double length) {
     return length * std::pow(static_cast<double>(frame) / (kLifeFrames - 1), kLifeCurve);
 }
 
-void buildLife(int id, Wavetable& t) {
+bool cancelled(const std::atomic<bool>* cancel) { return cancel && cancel->load(std::memory_order_relaxed); }
+
+bool buildLife(int id, Wavetable& t, const std::atomic<bool>* cancel) {
     const LifeModel m = kModels[id]();
     const std::vector<Partial> ps = partials(m, id);
     std::vector<double> amp(kMaxHarmonic, 0.0);
@@ -314,10 +316,12 @@ void buildLife(int id, Wavetable& t) {
     t.data.reserve(static_cast<size_t>(kLifeFrames) * kFrameStride);
     t.scale.reserve(kLifeFrames);
     for (int f = 0; f < kLifeFrames; f += 2) {   // two frames per inverse FFT
+        if (cancelled(cancel)) return false;
         spectrumAt(m, ps, timeOf(f, m.length), amp, a);
         spectrumAt(m, ps, timeOf(f + 1, m.length), amp, b);
         fb.add(t, a, &b);
     }
+    return true;
 }
 
 // --- the digital waves: the exact Fourier series (PolyForce's), band-limited per level like any table
@@ -348,12 +352,15 @@ const char* tableName(int id) { return id >= 0 && id < TB_COUNT ? kNames[id] : "
 
 bool isLifetime(int id) { return id >= 0 && id < TB_SINE; }
 
-bool buildTable(int id, Wavetable& out) {
-    if (id < 0 || id >= TB_COUNT) return false;
+bool buildTable(int id, Wavetable& out, const std::atomic<bool>* cancel) {
+    if (id < 0 || id >= TB_COUNT || cancelled(cancel)) return false;
     Wavetable t;
     t.name = kNames[id];
-    if (isLifetime(id)) buildLife(id, t);
-    else buildDigital(id, t);
+    if (isLifetime(id)) {
+        if (!buildLife(id, t, cancel)) return false;
+    } else {
+        buildDigital(id, t);   // one frame: not worth a look at `cancel`
+    }
     t.id = newTableId();
     out = std::move(t);
     return true;

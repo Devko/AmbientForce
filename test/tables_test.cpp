@@ -1,12 +1,13 @@
 // The table library (dsp/wavetable.*, dsp/lifetime.*, plugin/tables.*): names, band limits per
-// mip level, equal RMS across a life, the life curves, size, determinism, and the builder
-// thread's handoff to the audio side.
+// mip level, equal RMS across a life, the life curves, size, determinism, the builder thread's
+// handoff to the audio side, and its release at unload.
 #include "check.h"
 #include "../dsp/lifetime.h"
 #include "../dsp/wavetable.h"
 #include "../plugin/tables.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <complex>
@@ -236,12 +237,38 @@ void testHandoff(const std::vector<af::Wavetable>& built, Clock::time_point star
     CHECK(same);   // built twice (here and on the builder thread): identical
 }
 
+// The unload: releaseTables() (what the builder's owner does when the module goes) while the
+// builder is 20 ms into Felt Piano, which takes 0.13 s under ASan and 0.5 s under qemu. It gives
+// up within a pair of frames, every slot reads the sine again, and a cancelled build reports
+// false with nothing built. (The module unload itself was tried by hand: see plugin/tables.cpp.)
+void testRelease() {
+    std::printf("== tables: stopping the builder (the unload)\n");
+    af::ensureTablesBuilding();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const Clock::time_point t0 = Clock::now();
+    af::releaseTables();
+    const double took = secondsSince(t0);
+    std::printf("  released in %.1f ms\n", 1e3 * took);
+    CHECK(took < 0.05);
+    af::TableSet& shared = af::sharedTables();
+    bool sine = true;
+    for (int id = 0; id < af::TB_COUNT; ++id)
+        sine = sine && !shared.t[id].load(std::memory_order_acquire) && &shared.get(id) == &af::sineTable();
+    CHECK(sine);
+
+    std::atomic<bool> cancel{true};
+    af::Wavetable t;
+    CHECK(!af::buildTable(af::TB_FELT_PIANO, t, &cancel) && t.frames == 0 && t.data.empty());
+    CHECK(!af::buildTable(af::TB_SAW, t, &cancel) && t.frames == 0);
+}
+
 } // namespace
 
 void tablesTests() {
-    const Clock::time_point started = Clock::now();
-    af::ensureTablesBuilding();   // the builder works alongside the builds below
     testNames();
+    testRelease();
+    const Clock::time_point started = Clock::now();
+    af::ensureTablesBuilding();   // starts over after the release; works alongside the builds below
 
     std::vector<af::Wavetable> built(af::TB_COUNT);
     std::printf("  built in");
