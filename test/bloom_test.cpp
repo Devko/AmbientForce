@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 #include <vector>
 
 #if defined(__SANITIZE_ADDRESS__)
@@ -50,7 +51,7 @@ af::Chord chordOf(std::initializer_list<int> notes) {
     af::Chord c;
     for (int n : notes) {
         c.notes[c.n++] = n;
-        c.pcs = static_cast<uint16_t>(c.pcs | 1u << (n % 12));
+        if (n >= 0) c.pcs = static_cast<uint16_t>(c.pcs | 1u << (n % 12));   // -1: a note play() skips
     }
     c.root = c.n ? c.notes[0] : -1;
     return c;
@@ -146,31 +147,42 @@ void testChord() {
     CHECK(maxStep(r.L) < 0.05f);
 }
 
-// Check 2: strum 0.6 s over three notes: they start at 0, 0.3 and 0.6 s (+-1 block: the first block
-// whose end finds a voice sounding holds its first non-zero sample). A start still waiting when its
-// owner lets go never happens.
+// Check 2: strum 0.6 s over three notes: they start at 0, 0.3 and 0.6 s, to the sample. Each note's
+// own sound is the chord's less the chord without it (play() skips a note out of range but keeps
+// the others' places, and on a sine with no breath a voice's sound is the same in any voice), so
+// its first non-zero sample is the first where the two differ: a sine from phase 0 is 0 on its
+// first sample, so that is one after the note's start. A start still waiting when its owner lets go
+// never happens.
 void testStrum() {
     std::printf("== bloom: strum\n");
     af::HarmonyPatch h;
     h.strumS = 0.6f;
     {
+        const auto take = [&](std::initializer_list<int> notes) {
+            Bloom b;
+            b.seed(2);
+            b.set(plain(), h);
+            b.play(chordOf(notes), 60, 1.0f);
+            Run r;
+            render(b, r, samples(0.8));
+            CHECK(b.checkInvariants());
+            return r.L;
+        };
+        const Buf all = take({60, 64, 67});
+        const Buf without[3] = {take({-1, 64, 67}), take({60, -1, 67}), take({60, 64, -1})};
+        long first[3];
+        for (int k = 0; k < 3; ++k) {
+            first[k] = -1;
+            for (size_t i = 0; i < all.size() && first[k] < 0; ++i)
+                if (all[i] != without[k][i]) first[k] = static_cast<long>(i);
+            CHECK(first[k] == samples(0.3 * k) + 1);
+        }
+        std::printf("  first non-zero samples %ld %ld %ld (starts 0, %d, %d)\n", first[0], first[1], first[2],
+                    samples(0.3), samples(0.6));
         Bloom b;
-        b.seed(2);
         b.set(plain(), h);
         b.play(chordOf({60, 64, 67}), 60, 1.0f);
         CHECK(b.active() == 3);   // all three voices taken at once, two of them waiting
-        const int notes[3] = {60, 64, 67};
-        long onset[3] = {-1, -1, -1};
-        Run r;
-        render(b, r, samples(0.8), [&](size_t at) {
-            for (int k = 0; k < 3; ++k) {
-                const int v = voiceOf(b, notes[k]);
-                if (onset[k] < 0 && v >= 0 && b.voice(v).env > 0.0f) onset[k] = static_cast<long>(at);
-            }
-        });
-        std::printf("  onsets %.4f %.4f %.4f s\n", onset[0] / 44100.0, onset[1] / 44100.0, onset[2] / 44100.0);
-        for (int k = 0; k < 3; ++k) CHECK(onset[k] >= 0 && std::labs(onset[k] - samples(0.3 * k)) < kBlk);
-        CHECK(b.active() == 3);
     }
     {
         Bloom b;
@@ -185,6 +197,7 @@ void testStrum() {
         render(b, r, samples(0.6), [&](size_t) { started = started || anyHas(b, 64) || anyHas(b, 67); });
         CHECK(!started);
         CHECK(b.active() == 1);   // 60, releasing
+        CHECK(b.checkInvariants());
     }
 }
 
@@ -238,6 +251,7 @@ void testSteal() {
     CHECK(v64 >= 0 && voiceOf(b, 78) == v64);
     CHECK(b.active() == 6);
     CHECK(maxStep(r.L) <= 0.25f);
+    CHECK(b.checkInvariants());
 }
 
 // Check 4: moveTo from C major to A minor: 60 and 64 sound on in their voices, untouched (no new
@@ -276,6 +290,7 @@ void testMoveTo() {
     b.releaseAll();
     render(b, r, kBlk);
     for (int i : {i60, i64, i67}) CHECK(b.voice(i).stage == Bloom::ST_RELEASE);
+    CHECK(b.checkInvariants());
     CHECK(maxStep(r.L) < 0.05f);
 }
 
@@ -360,6 +375,26 @@ void testHandoff() {
             CHECK(voice.least9 >= 1);
         }
     }
+    // With the send closed there is no Space to hand the tail to: Tail Space releases as Voice.
+    Bloom b;
+    b.seed(5);
+    af::BloomPatch p = plain();
+    p.releaseS = 10.0f;
+    p.tail = af::TL_SPACE;
+    b.set(p, af::HarmonyPatch{});
+    b.play(chordOf({60}), 60, 1.0f);
+    Run r;
+    render(b, r, samples(0.5), [](size_t) {}, 0.0f);
+    b.release(60);
+    const size_t rel = r.L.size();
+    float boost = 0.0f;
+    render(b, r, samples(2.0), [&](size_t) { boost = std::max(boost, b.handoffBoost()); }, 0.0f);
+    const int v = voiceOf(b, 60);
+    const double late = db(rms(r.L, rel + samples(1.9), rel + samples(2.0)) / rms(r.L, rel - samples(0.1), rel));
+    std::printf("  send 0: still releasing 2 s on (%.1f dB; Tail Voice's curve -11.7), boost %.3f\n", late, boost);
+    CHECK(v >= 0 && b.voice(v).stage == Bloom::ST_RELEASE);
+    CHECK(boost == 1.0f && peak(r.SL) == 0.0f);
+    CHECK(std::fabs(late + 11.7) < 1.0);   // -60 dB over 10 s, at 1.95 s
 }
 
 // Check 6: Swell 2 s: at 1 s the voice is half way, -6 dB under its sustain (+-1.5 dB); at 0.5 s
@@ -493,6 +528,15 @@ void testOwners() {
     CHECK(voiceOf(b, 64) == v && b.voice(v).stage == Bloom::ST_ATTACK && b.voice(v).env >= was);
     CHECK(b.active() == 4);
     CHECK(maxStep(r.L) < 0.05f);
+    CHECK(b.checkInvariants());
+    // Owners out of range count as -1: release(-1) lets go of what owner 1000 started.
+    b.releaseAll();
+    b.play(chordOf({72}), 1000, 1.0f);
+    render(b, r, samples(0.6));   // swelled in: a release from under -60 dB would end at once
+    b.release(-1);
+    render(b, r, kBlk);
+    CHECK(voiceOf(b, 72) >= 0 && b.voice(voiceOf(b, 72)).stage == Bloom::ST_RELEASE);
+    CHECK(b.checkInvariants());
 }
 
 // The analog prototypes' gains at r = f / cutoff, for Q: what the SVF should give well under
@@ -546,9 +590,10 @@ void testTone() {
 }
 
 // Unison. Switched while a chord sounds, 2 to 1 and back, the second half glides out and in: no
-// step bigger than the steady sound's (a half dropped at once stepped 0.148 against 0.022). At
-// Detune 0 the halves sit a quarter cycle apart, as loud as unison 1 (+-0.5 dB) whatever the seed,
-// and the breath, the same in both halves, is as loud at unison 2 as at 1.
+// step bigger than the steady sound's (a half dropped at once stepped 0.148 against 0.022). On rich
+// tables (Saw, Felt Piano): below 1 cent of Detune unison 2 is unison 1 exactly (two halves a fixed
+// phase apart would be a comb); at the default 8 cents it is as loud as unison 1 over 2 s (+-1 dB),
+// and the breath, the same in both halves, is as loud too (+-0.5 dB).
 void testUnison() {
     std::printf("== bloom: unison\n");
     {
@@ -579,32 +624,281 @@ void testUnison() {
         CHECK(out <= 1.5f * steady && in <= 1.5f * steady);
         CHECK(b.active() == 3);
     }
-    const auto level = [](int unison, uint32_t seed, float breath, double hz) {
+    // A chord on `table`, 2.5 s: L, R and the send.
+    const auto take = [](int table, int unison, float detune, float breath, float width = 0.6f) {
         Bloom b;
-        b.seed(seed);
+        b.seed(19);
         af::BloomPatch p = plain();
+        p.table = table;
         p.unison = unison;
-        p.detuneCents = 0.0f;
+        p.detuneCents = detune;
         p.breath = breath;
+        p.width = width;
         b.set(p, af::HarmonyPatch{});
-        b.play(chordOf({60}), 60, 1.0f);
+        b.play(chordOf({48, 55, 64}), 48, 1.0f);
         Run r;
-        render(b, r, samples(0.6));
-        const size_t from = static_cast<size_t>(samples(0.1));
-        return hz > 0.0 ? magnitude(r.L, hz, from) : rms(r.L, from);
+        render(b, r, samples(2.5));
+        return r;
     };
-    double worst = 0.0;
-    for (uint32_t seed : {1u, 2u, 3u, 7u, 42u})
-        worst = std::max(worst, std::fabs(db(level(2, seed, 0.0f, 0.0) / level(1, seed, 0.0f, 0.0))));
-    // The breath alone, away from the tone (a sine): its band at 1.5 and 0.75 times the note.
+    const auto power = [](const Run& r) {   // L and R over the last 2 s
+        const size_t from = static_cast<size_t>(samples(0.5));
+        const double l = rms(r.L, from), rr = rms(r.R, from);
+        return std::sqrt(0.5 * (l * l + rr * rr));
+    };
+    for (int table : {af::TB_SAW, af::TB_FELT_PIANO}) {
+        const Run one = take(table, 1, 8.0f, 0.0f), zero = take(table, 2, 0.0f, 0.0f), low = take(table, 2, 0.9f, 0.0f);
+        const bool same = zero.L == one.L && zero.R == one.R && zero.SL == one.SL && low.L == one.L;
+        const double at8 = db(power(take(table, 2, 8.0f, 0.0f)) / power(one));
+        std::printf("  %s: Detune 0 and 0.9 %s unison 1; 8 cents %+.2f dB of it over 2 s\n",
+                    table == af::TB_SAW ? "Saw" : "Felt Piano", same ? "are exactly" : "differ from", at8);
+        CHECK(same);
+        CHECK(std::fabs(at8) <= 1.0);
+    }
+    // The breath alone, away from the tones (sines), at width 0: its bands at 1.25 and 0.75 times
+    // the root.
     const auto breath = [&](int unison) {
-        const double a = level(unison, 3, 1.0f, 1.5 * kC4), c = level(unison, 3, 1.0f, 0.75 * kC4);
+        const Run r = take(af::TB_SINE, unison, 8.0f, 1.0f, 0.0f);
+        const size_t from = static_cast<size_t>(samples(0.5));
+        const double f = 130.8127827, a = magnitude(r.L, 1.25 * f, from), c = magnitude(r.L, 0.75 * f, from);
         return std::sqrt(a * a + c * c);
     };
     const double breathDb = db(breath(2) / breath(1));
-    std::printf("  Detune 0: unison 2 within %.3f dB of unison 1 over five seeds; breath %+.3f dB\n", worst, breathDb);
-    CHECK(worst <= 0.5);
+    std::printf("  breath at unison 2 %+.3f dB of unison 1's\n", breathDb);
     CHECK(std::fabs(breathDb) <= 0.5);
+}
+
+// L and R together: their RMS over [from, to).
+double stereoRms(const Run& r, size_t from, size_t to) {
+    const double l = rms(r.L, from, to), rr = rms(r.R, from, to);
+    return std::sqrt(0.5 * (l * l + rr * rr));
+}
+
+// A note pressed again while it hands its tail to Space swells again in its voice from where it
+// is. The default patch (Felt Piano, Tail Space, Release 6, Swell 2.5): pressed again 150 ms after
+// its release the dry dips no more than 1 dB (a fresh voice from zero under the fading one dipped
+// 11.8 dB), and the note keeps its one voice. A key pressed 12 times, 150 ms apart, keeps to one
+// voice; Harmony's C -> Am -> C within 1.5 s takes 67 up again in its voice from where it was.
+void testPressedAgain() {
+    std::printf("== bloom: pressed again\n");
+    {
+        Bloom b;
+        b.seed(14);
+        b.set(af::BloomPatch{}, af::HarmonyPatch{});
+        b.play(chordOf({60}), 60, 1.0f);
+        Run r;
+        render(b, r, samples(3.0));
+        b.release(60);
+        render(b, r, samples(0.15));
+        const int v = voiceOf(b, 60);
+        CHECK(v >= 0 && b.voice(v).stage == Bloom::ST_HANDOFF);
+        const size_t at = r.L.size(), w = static_cast<size_t>(samples(0.02));
+        b.play(chordOf({60}), 60, 1.0f);
+        render(b, r, samples(0.6));
+        CHECK(b.active() == 1 && voiceOf(b, 60) == v);
+        CHECK(b.checkInvariants());
+        const double before = stereoRms(r, at - w, at);
+        double least = 1e9;
+        for (size_t t = at; t + w <= at + static_cast<size_t>(samples(0.5)); t += w / 2)
+            least = std::min(least, stereoRms(r, t, t + w));
+        // No click either, in the dry or the send (whose handoff boost goes back to 1 over 3 ms).
+        const size_t ms300 = static_cast<size_t>(samples(0.3));
+        const float dry = maxStep(r.L, at - ms300, at), send = maxStep(r.SL, at - ms300, at);
+        const float dryAt = maxStep(r.L, at - w, at + w), sendAt = maxStep(r.SL, at - w, at + w);
+        std::printf("  pressed again 150 ms into the handoff: dips %.2f dB, %d voice; steps %.4f / %.4f (dry / send, "
+                    "%.4f / %.4f before)\n",
+                    db(least / before), b.active(), dryAt, sendAt, dry, send);
+        CHECK(db(least / before) > -1.0);
+        CHECK(dryAt <= 1.5f * dry && sendAt <= 1.5f * send);
+    }
+    {
+        // Late in the handoff (1.2 s: the dry down to 0.1, the send still at its boost) the send
+        // falls back to the dry over 3 ms, slower than a low sine moves: its largest step stays
+        // under the steady send's (0.8 of it; over one 32-sample control step it went over 1.2).
+        Bloom b;
+        b.seed(14);
+        af::BloomPatch p = plain();   // a sine: steady steps small against a step in the send
+        p.tail = af::TL_SPACE;
+        p.swellS = 2.5f;              // so that, pressed again, it stays about as loud for a while
+        b.set(p, af::HarmonyPatch{});
+        b.play(chordOf({36}), 36, 1.0f);
+        Run r;
+        render(b, r, samples(3.0));
+        b.release(36);
+        render(b, r, samples(1.2));
+        const size_t at = r.L.size(), w = static_cast<size_t>(samples(0.01));
+        b.play(chordOf({36}), 36, 1.0f);
+        render(b, r, samples(0.1));
+        const float send = maxStep(r.SL, at - 10 * w, at), sendAt = maxStep(r.SL, at, at + w);
+        std::printf("  pressed again 1.2 s into the handoff: send's step %.5f (%.5f before)\n", sendAt, send);
+        CHECK(sendAt <= 1.2f * send);
+        CHECK(b.active() == 1 && b.checkInvariants());
+    }
+    {
+        Bloom b;
+        b.seed(15);
+        b.set(af::BloomPatch{}, af::HarmonyPatch{});
+        Run r;
+        int most = 0, first = -1;
+        bool same = true;
+        for (int k = 0; k < 12; ++k) {
+            b.play(chordOf({60}), 60, 1.0f);
+            render(b, r, samples(0.075), [&](size_t) { most = std::max(most, b.active()); });
+            const int v = voiceOf(b, 60);
+            if (first < 0) first = v;
+            same = same && v == first;
+            b.release(60);
+            render(b, r, samples(0.075), [&](size_t) { most = std::max(most, b.active()); });
+            CHECK(b.checkInvariants());
+        }
+        std::printf("  12 presses 150 ms apart: %d voice at most, %s\n", most,
+                    same ? "always the same" : "not the same");
+        CHECK(most == 1 && same);
+    }
+    {
+        Bloom b;
+        b.seed(16);
+        b.set(af::BloomPatch{}, af::HarmonyPatch{});
+        b.moveTo(chordOf({60, 64, 67}), 0.8f);
+        Run r;
+        render(b, r, samples(3.0));
+        const int i67 = voiceOf(b, 67);
+        b.moveTo(chordOf({60, 64, 69}), 0.8f);
+        render(b, r, samples(0.5));
+        CHECK(i67 >= 0 && b.voice(i67).stage == Bloom::ST_HANDOFF);
+        const float was = i67 >= 0 ? b.voice(i67).env : 0.0f;
+        b.moveTo(chordOf({60, 64, 67}), 0.8f);
+        render(b, r, kBlk);
+        const float now = i67 >= 0 ? b.voice(i67).env : 0.0f;
+        std::printf("  C -> Am -> C: 67 back in its voice at %.3f (its release had %.3f, its dry %.3f)\n", now, was,
+                    was * 0.75f);
+        CHECK(voiceOf(b, 67) == i67 && b.voice(i67).stage == Bloom::ST_ATTACK);
+        CHECK(now >= 0.74f * was);   // the handoff's dry fade at 0.5 s, cos^2(pi / 6) = 0.75, folded in
+        CHECK(b.active() == 4);      // and 69 handing off
+        CHECK(b.checkInvariants());
+    }
+}
+
+// Re-voicing a held chord, play(new) before release(old): the notes the chords share carry on
+// untouched in their voices, 4 voices for C E G -> E G B. The other way round they swell again in
+// their voices, 4 as well.
+void testRevoice() {
+    std::printf("== bloom: re-voicing\n");
+    for (int playFirst = 1; playFirst >= 0; --playFirst) {
+        Bloom b;
+        b.seed(17);
+        b.set(af::BloomPatch{}, af::HarmonyPatch{});
+        b.play(chordOf({60, 64, 67}), 60, 1.0f);
+        Run r;
+        render(b, r, samples(3.0));
+        const int e = voiceOf(b, 64), g = voiceOf(b, 67);
+        if (playFirst) {
+            b.play(chordOf({64, 67, 71}), 64, 1.0f);
+            b.release(60);
+        } else {
+            b.release(60);
+            b.play(chordOf({64, 67, 71}), 64, 1.0f);
+        }
+        render(b, r, kBlk);
+        std::printf("  %s: %d voices\n", playFirst ? "play, then release" : "release, then play", b.active());
+        CHECK(b.active() == 4);
+        CHECK(voiceOf(b, 64) == e && voiceOf(b, 67) == g);
+        if (playFirst) CHECK(b.voice(e).stage == Bloom::ST_SUSTAIN && b.voice(g).stage == Bloom::ST_SUSTAIN);
+        CHECK(b.checkInvariants());
+    }
+}
+
+// A new Table (or Table B) while a chord sounds fades in over 20 ms in every voice: no step bigger
+// than the steady sound's on either side. Low notes, whose waves move little from one sample to the
+// next: switched at once, the sound steps as far as the two waves differ at that phase.
+void testTableChange() {
+    std::printf("== bloom: table change\n");
+    for (int which = 0; which < 2; ++which) {
+        Bloom b;
+        b.seed(20);
+        af::BloomPatch p = plain();
+        p.table = af::TB_SINE;
+        p.tableB = af::TB_SINE;
+        p.blend = which == 1 ? 0.6f : 0.0f;
+        b.set(p, af::HarmonyPatch{});
+        b.play(chordOf({36, 40, 43}), 36, 1.0f);
+        Run r;
+        render(b, r, samples(0.5));
+        const size_t at = r.L.size();
+        (which == 0 ? p.table : p.tableB) = af::TB_FELT_PIANO;
+        b.set(p, af::HarmonyPatch{});
+        render(b, r, samples(0.3));
+        const size_t ms30 = static_cast<size_t>(samples(0.03));
+        const float steady = std::max(maxStep(r.L, at - 10 * ms30, at), maxStep(r.L, at + 2 * ms30, r.L.size()));
+        const float around = maxStep(r.L, at, at + ms30);
+        std::printf("  %s: largest step %.4f around the change (steady %.4f)\n", which == 0 ? "Table" : "Table B",
+                    around, steady);
+        CHECK(around <= 1.5f * steady);
+        CHECK(b.checkInvariants());
+    }
+}
+
+// Odd input: NaN, infinities and values out of range everywhere. Nothing goes non-finite, the
+// state holds, and a sane patch plays as ever afterwards.
+void testOddInput() {
+    std::printf("== bloom: odd input\n");
+    const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+    Bloom b;
+    b.seed(18);
+    af::BloomPatch p;
+    p.level = 2.0f;
+    p.cutoffHz = nan;
+    p.reso = inf;
+    p.filterMode = 7;
+    p.table = -3;
+    p.pos = {nan, inf, -inf, nan};
+    p.tableB = 99;
+    p.bOctave = -9;
+    p.blend = nan;
+    p.couple = 42;
+    p.coupleAmt = inf;
+    p.unison = 9;
+    p.detuneCents = inf;
+    p.swellS = nan;
+    p.releaseS = -inf;
+    p.velSens = nan;
+    p.breath = inf;
+    p.tail = 5;
+    p.width = -nan;
+    af::HarmonyPatch h;
+    h.key = 99;
+    h.tuning = -4;
+    h.strumS = nan;
+    b.set(p, h);
+    af::Chord c;
+    c.n = 99;
+    const int notes[af::kChordMax] = {-5, 200, 60, 64, 128, 67};
+    std::copy(notes, notes + af::kChordMax, c.notes);
+    b.play(c, 1000, nan);
+    CHECK(b.checkInvariants());
+    std::vector<float> L(300, 0.0f), R(300, 0.0f), SL(300, 0.0f), SR(300, 0.0f);
+    bool finite = true;
+    const auto run = [&](float send, int n) {
+        b.render(tables(), L.data(), R.data(), SL.data(), SR.data(), send, n);
+        finite = finite && allFinite(L) && allFinite(R) && allFinite(SL) && allFinite(SR);
+    };
+    run(nan, 300);
+    run(inf, 0);
+    run(-inf, -4);
+    b.release(-7);
+    b.moveTo(c, inf);
+    run(0.5f, 300);
+    b.release(500);
+    b.releaseAll();
+    run(-1.0f, 300);
+    CHECK(b.checkInvariants());
+    CHECK(finite);
+    CHECK(b.active() <= Bloom::kVoices);
+    b.set(plain(), af::HarmonyPatch{});
+    b.play(chordOf({60}), 60, 1.0f);
+    Run r;
+    render(b, r, samples(0.3));
+    CHECK(allFinite(r.L) && rms(r.L, static_cast<size_t>(samples(0.2))) > 0.05);
+    CHECK(b.checkInvariants());
 }
 
 // Width: 0 puts everything in the middle (L = R); unison 2 at width 1 spreads its halves apart.
@@ -750,6 +1044,10 @@ void bloomTests() {
     testOwners();
     testTone();
     testUnison();
+    testPressedAgain();
+    testRevoice();
+    testTableChange();
+    testOddInput();
     testWidthAndMute();
     testDeterminism();
     testNoAllocation();

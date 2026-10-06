@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 namespace af {
 
@@ -72,6 +73,42 @@ float handoffBoostFor(float releaseS) {
 
 bool zero2(f2 x) { return x[0] == 0.0f && x[1] == 0.0f; }
 
+// The second half's presence Unison and Detune ask for: below 1 cent unison 2 plays as unison 1.
+float uniFor(const BloomPatch& p) { return p.unison == 2 && p.detuneCents >= 1.0f ? 1.0f : 0.0f; }
+
+constexpr int kGlideMix = FM_COUNT;   // voiceLoop's Mode while the filter glides: the general mix
+
+// One SVF step (dsp/svf.h's SvfState::tick) with only the output the mode needs, where tick() mixes
+// all three: LP the low-pass v2, BP the band v1, HP v0 - k v1 - v2.
+template <int Mode>
+AF_INLINE f2 svfOut(SvfState& s, f2 v0, const SvfUpdate& a, f2 k) {
+    const f2 v3 = v0 - s.ic2;
+    const f2 v1 = a.a1 * s.ic1 + a.a2 * v3;
+    const f2 v2 = s.ic2 + a.a2 * s.ic1 + a.a3 * v3;
+    s.ic1 = v1 + v1 - s.ic1;
+    s.ic2 = v2 + v2 - s.ic2;
+    if constexpr (Mode == FM_LP) return v2;
+    else if constexpr (Mode == FM_BP) return v1;
+    else return v0 - k * v1 - v2;
+}
+
+// f(std::true_type) or f(std::false_type), f(the mode as a type): run-time choices to template
+// arguments.
+template <class F>
+AF_INLINE void pick(bool b, F f) {
+    if (b) f(std::true_type{});
+    else f(std::false_type{});
+}
+template <class F>
+AF_INLINE void pickMode(int mode, F f) {
+    switch (mode) {
+        case FM_LP: f(std::integral_constant<int, FM_LP>{}); break;
+        case FM_BP: f(std::integral_constant<int, FM_BP>{}); break;
+        case FM_HP: f(std::integral_constant<int, FM_HP>{}); break;
+        default: f(std::integral_constant<int, kGlideMix>{}); break;
+    }
+}
+
 // acc + p0 y[0] (+ p1 y[1]): each SVF lane (a unison half) into its pan. NEON multiplies by a lane
 // in place; built from the lanes, the compiler moves them about first.
 AF_INLINE f2 panIn(f2 acc, f2 p0, f2 y) {
@@ -134,7 +171,7 @@ void Bloom::set(const BloomPatch& p, const HarmonyPatch& h) {
     if (q.releaseS != p_.releaseS || boost_ == 0.0f) boost_ = handoffBoostFor(q.releaseS);
     p_ = q;
     h_ = h;
-    h_.strumS = clampParam(h.strumS, 0.0f, 10.0f, 0.0f);
+    h_.strumS = clampParam(h.strumS, 0.0f, 2.0f, 0.0f);   // HarmonyPatch's range
 
     attackRate_ = 1.0f / (p_.swellS * kRate);
     releaseLog2_ = -kLog2Thousand / (p_.releaseS * kRate);
@@ -169,6 +206,8 @@ void Bloom::reset() {
     a3_ = u.a3[0];
     glide_ = false;
     panDirty_ = true;
+    tabA_ = tabB_ = oldA_ = oldB_ = nullptr;
+    tableFade_ = 0;
 }
 
 // --- owners and voices ------------------------------------------------------------------------
@@ -185,13 +224,13 @@ void Bloom::clearOwners(Voice& v) {
 
 Bloom::Voice* Bloom::holding(int note) {
     for (Voice& v : v_)
-        if (held(v) && (v.next >= 0 ? v.next : v.note) == note) return &v;
+        if (held(v) && heldNote(v) == note) return &v;
     return nullptr;
 }
 
 Bloom::Voice* Bloom::releasing(int note) {
     for (Voice& v : v_)
-        if (v.next < 0 && v.stage == ST_RELEASE && v.note == note) return &v;
+        if (v.next < 0 && (v.stage == ST_RELEASE || v.stage == ST_HANDOFF) && v.note == note) return &v;
     return nullptr;
 }
 
@@ -276,7 +315,8 @@ void Bloom::letGo(Voice& v) {
         return;
     }
     if (v.stage != ST_ATTACK && v.stage != ST_SUSTAIN) return;
-    if (p_.tail == TL_SPACE && p_.releaseS > kHandoffS) {
+    // Only with a send open is there a Space to hand the tail to (send_: the last render's).
+    if (p_.tail == TL_SPACE && p_.releaseS > kHandoffS && send_ > 0.0f) {
         v.stage = ST_HANDOFF;
         v.th = 0.0f;
         v.boost = boost_;
@@ -311,7 +351,7 @@ void Bloom::moveTo(const Chord& c, float vel) {
         return false;
     };
     for (Voice& v : v_)
-        if (held(v) && !in(v.next >= 0 ? v.next : v.note)) {
+        if (held(v) && !in(heldNote(v))) {
             clearOwners(v);
             letGo(v);
         }
@@ -369,8 +409,17 @@ void Bloom::placePan(Voice& v) {
 }
 
 void Bloom::begin(Voice& v) {
-    if (v.retrig && v.stage == ST_RELEASE && v.note == v.next) {
-        // Swells again from where the release has it: the S-curve's point at that level.
+    if (v.retrig && (v.stage == ST_RELEASE || v.stage == ST_HANDOFF) && v.note == v.next) {
+        // Swells again from where its release has it: the S-curve's point at that level. A
+        // handoff's dry fade is folded into the level (the dry goes on from where it is), and what
+        // its send had beyond the dry fades out over 3 ms, from where it is too.
+        if (v.stage == ST_HANDOFF) {
+            const float dry = cos2(v.th * (1.0f / kHandoffS));
+            v.rest = v.env * (v.sendMul - dry) + v.rest * static_cast<float>(v.restLeft) * (1.0f / kStealSamples);
+            v.restLeft = kStealSamples;
+            v.env *= dry;
+            v.sendMul = 1.0f;
+        }
         v.stage = ST_ATTACK;
         v.x = std::acos(clampf(1.0f - 2.0f * v.env, -1.0f, 1.0f)) * (1.0f / kPi);
         v.vel = v.nextVel;
@@ -389,14 +438,18 @@ void Bloom::begin(Voice& v) {
     v.vel = v.velNow = v.nextVel;
     v.velStep = 0.0f;
     v.th = 0.0f;
+    v.sendMul = 1.0f;
+    v.rest = 0.0f;
+    v.restLeft = 0;
+    v.fading = false;   // it starts on the new tables
     v.spread = v.nextSpread;
-    v.uni = p_.unison == 2 ? 1.0f : 0.0f;
+    v.uni = uniFor(p_);
     v.pitch = tunedPitch(h_, v.note);
     tune(v);
     placePan(v);
     // A and B in step (the Couple modes hear their phases). The second half a quarter of A's cycle
     // later, B by the same time (a quarter of a cycle at its octave), so it is the first half
-    // delayed: at Detune 0 the two are in quadrature, as loud together as one.
+    // delayed: its sum with the first never depends on the seed.
     const double later = 0.25 * std::exp2(static_cast<double>(p_.bOctave));
     v.oa[0].reset(0.0f);
     v.ob[0].reset(0.0f);
@@ -421,7 +474,7 @@ void Bloom::control(int m) {
         }
         v.live = v.stage != ST_FREE;
         if (!v.live) continue;
-        const float ut = p_.unison == 2 ? 1.0f : 0.0f;
+        const float ut = uniFor(p_);
         if (v.uni != ut) {   // the second half glides in or out over 3 ms: its gain, place and detune
             const float du = static_cast<float>(m) * (1.0f / kStealSamples);
             v.uni = ut > v.uni ? std::min(ut, v.uni + du) : std::max(ut, v.uni - du);
@@ -430,7 +483,14 @@ void Bloom::control(int m) {
         } else if (panDirty_) {
             placePan(v);
         }
-        float dry = 1.0f, extra = 0.0f;
+        // dry: the handoff's fade on the dry; rest: the send beyond the dry, as a level like env
+        // (a handoff's, or what one left when it swelled again, fading out over 3 ms).
+        float dry = 1.0f, rest = 0.0f;
+        if (v.restLeft > 0) {
+            v.restLeft = std::max(0, v.restLeft - m);
+            rest = v.rest * static_cast<float>(v.restLeft) * (1.0f / kStealSamples);
+            if (v.restLeft == 0) v.rest = 0.0f;
+        }
         bool ends = false;
         switch (v.stage) {
             case ST_ATTACK:
@@ -453,7 +513,7 @@ void Bloom::control(int m) {
                 ends = v.th >= kHandoffS || v.env < kFloor;
                 dry = cos2(v.th * (1.0f / kHandoffS));
                 v.sendMul = sendShape(v.th, v.boost);
-                extra = v.sendMul - dry;
+                rest += v.env * (v.sendMul - dry);
                 break;
             }
             default:   // ST_STEAL
@@ -479,18 +539,21 @@ void Bloom::control(int m) {
             }
             v.loud = v.stealLoud * f;
         } else {
-            const float g = ends ? 0.0f : kVoiceGain * (1.0f - sens + sens * v.velNow) * v.env * lv_;
+            const float g = ends ? 0.0f : kVoiceGain * (1.0f - sens + sens * v.velNow) * lv_;
             for (int h = 0; h < 2; ++h) {
-                v.P[h] = v.pan[h] * splat2(g * dry);
-                v.S[h] = v.pan[h] * splat2(g * extra);
+                v.P[h] = v.pan[h] * splat2(g * v.env * dry);
+                v.S[h] = v.pan[h] * splat2(g * rest);
             }
-            v.loud = g * dry;
+            v.loud = g * v.env * dry;
         }
         if (ends) {
             v.stage = ST_FREE;   // this step still renders its fade to 0
             v.note = -1;
             v.env = 0.0f;
             v.sendMul = 1.0f;
+            v.rest = 0.0f;
+            v.restLeft = 0;
+            v.retrig = false;   // a note waiting to swell again here now starts afresh
         }
         v.pos = v.scan.step(p_.pos, dt);
     }
@@ -536,7 +599,7 @@ void Bloom::filterFor(int m) {
 
 // One voice's m samples from o: its two halves (a0, a1) plus the breath through the SVF (the two
 // lanes), panned into the dry bus and, in a handoff, the send beyond it.
-template <bool Unison, bool Breath, bool Glide, bool Send>
+template <bool Unison, bool Breath, int Mode, bool Send>
 void Bloom::voiceLoop(Voice& v, const float* a0, const float* a1, int o, int m) {
     const f2 inv = splat2(1.0f / static_cast<float>(m));
     f2 p0 = v.P0[0], p1 = v.P0[1], s0 = v.S0[0], s1 = v.S0[1];
@@ -544,7 +607,7 @@ void Bloom::voiceLoop(Voice& v, const float* a0, const float* a1, int o, int m) 
     const f2 ds0 = (v.S[0] - s0) * inv, ds1 = (v.S[1] - s1) * inv;
     SvfState svf = v.svf;
     const SvfUpdate cu{splat2(a1_), splat2(a2_), splat2(a3_)};
-    const f2 cm[3] = {splat2(fNow_.m[0]), splat2(fNow_.m[1]), splat2(fNow_.m[2])};
+    const f2 k = splat2(fNow_.k);
     float ic1 = v.bpIc1, ic2 = v.bpIc2;
     const float b1 = v.bpA1, b2 = v.bpA2, b3 = v.bpA3, bk = Breath ? p_.breath * v.bpNorm * v.bk : 0.0f;
     f2* bus = bus_ + o;
@@ -562,12 +625,12 @@ void Bloom::voiceLoop(Voice& v, const float* a0, const float* a1, int o, int m) 
             x += splat2(v1 * bk);
         }
         f2 y;
-        if constexpr (Glide) {
+        if constexpr (Mode == kGlideMix) {
             const SvfUpdate u{splat2(ga1_[i]), splat2(ga2_[i]), splat2(ga3_[i])};
             const f2 mm[3] = {splat2(gm_[0][i]), splat2(gm_[1][i]), splat2(gm_[2][i])};
             y = svf.tick(x, u, mm);
         } else {
-            y = svf.tick(x, cu, cm);
+            y = svfOut<Mode>(svf, x, cu, k);
         }
         p0 += dp0;
         if constexpr (Unison) {
@@ -592,8 +655,10 @@ void Bloom::voiceLoop(Voice& v, const float* a0, const float* a1, int o, int m) 
     v.bpIc2 = std::fabs(ic2) < 1e-20f ? 0.0f : ic2;
 }
 
-void Bloom::renderVoice(Voice& v, const Wavetable& ta, const Wavetable& tb, int o, int m) {
+void Bloom::renderVoice(Voice& v, int o, int m, const float* fade) {
     float a0[kChunk], a1[kChunk], scratch[2 * kChunk];
+    const Wavetable& ta = *tabA_;
+    const Wavetable& tb = *tabB_;
     // The second half is heard while its gains, at either end of the step, are: unison 2, and the
     // steps that glide it in or out. Else it is only skipped along, so that it comes back in at
     // the same quarter cycle from the first (at Detune 0, where they share a pitch).
@@ -607,26 +672,33 @@ void Bloom::renderVoice(Voice& v, const Wavetable& ta, const Wavetable& tb, int 
         v.oa[1].skip(ta, v.incA[1], v.pos, m);
         v.ob[1].skip(tb, v.incB[1], v.pos, m);
     }
+    if (fade && v.fading) {   // new tables: the old pair under the new one, fading out
+        float was[kChunk];
+        const Wavetable& oa = *oldA_;
+        const Wavetable& ob = *oldB_;
+        renderCoupled(v.oldA[0], oa, v.incA[0], v.oldB[0], ob, v.incB[0], v.pos, cp, amt, blend, was, scratch, m);
+        for (int i = 0; i < m; ++i) a0[i] = was[i] + fade[i] * (a0[i] - was[i]);
+        if (uni) {
+            renderCoupled(v.oldA[1], oa, v.incA[1], v.oldB[1], ob, v.incB[1], v.pos, cp, amt, blend, was, scratch, m);
+            for (int i = 0; i < m; ++i) a1[i] = was[i] + fade[i] * (a1[i] - was[i]);
+        } else {
+            v.oldA[1].skip(oa, v.incA[1], v.pos, m);
+            v.oldB[1].skip(ob, v.incB[1], v.pos, m);
+        }
+    }
     const bool breath = p_.breath > 0.0f;
     const bool send = sendOn_ && (!zero2(v.S0[0]) || !zero2(v.S[0]) || !zero2(v.S0[1]) || !zero2(v.S[1]));
-    switch ((uni ? 8 : 0) + (breath ? 4 : 0) + (glide_ ? 2 : 0) + (send ? 1 : 0)) {
-        case 0: voiceLoop<false, false, false, false>(v, a0, a1, o, m); break;
-        case 1: voiceLoop<false, false, false, true>(v, a0, a1, o, m); break;
-        case 2: voiceLoop<false, false, true, false>(v, a0, a1, o, m); break;
-        case 3: voiceLoop<false, false, true, true>(v, a0, a1, o, m); break;
-        case 4: voiceLoop<false, true, false, false>(v, a0, a1, o, m); break;
-        case 5: voiceLoop<false, true, false, true>(v, a0, a1, o, m); break;
-        case 6: voiceLoop<false, true, true, false>(v, a0, a1, o, m); break;
-        case 7: voiceLoop<false, true, true, true>(v, a0, a1, o, m); break;
-        case 8: voiceLoop<true, false, false, false>(v, a0, a1, o, m); break;
-        case 9: voiceLoop<true, false, false, true>(v, a0, a1, o, m); break;
-        case 10: voiceLoop<true, false, true, false>(v, a0, a1, o, m); break;
-        case 11: voiceLoop<true, false, true, true>(v, a0, a1, o, m); break;
-        case 12: voiceLoop<true, true, false, false>(v, a0, a1, o, m); break;
-        case 13: voiceLoop<true, true, false, true>(v, a0, a1, o, m); break;
-        case 14: voiceLoop<true, true, true, false>(v, a0, a1, o, m); break;
-        default: voiceLoop<true, true, true, true>(v, a0, a1, o, m); break;
-    }
+    const int mode = glide_ ? kGlideMix : p_.filterMode;
+    pick(uni, [&](auto u) {
+        pick(breath, [&](auto b) {
+            pickMode(mode, [&](auto f) {
+                pick(send, [&](auto s) {
+                    constexpr bool U = decltype(u)::value, B = decltype(b)::value, S = decltype(s)::value;
+                    voiceLoop<U, B, decltype(f)::value, S>(v, a0, a1, o, m);
+                });
+            });
+        });
+    });
 }
 
 void Bloom::render(const TableSet& tables, float* outL, float* outR, float* sendL, float* sendR, float spaceSend,
@@ -644,7 +716,9 @@ void Bloom::renderBlock(const TableSet& tables, float* outL, float* outR, float*
         any = any || v.stage != ST_FREE || v.next >= 0;
         sounding = sounding || v.stage != ST_FREE;
     }
-    if (!sounding) {   // nothing to glide from: the level, the filter and the send are where they go
+    const Wavetable* ta = &tables.get(p_.table);
+    const Wavetable* tb = &tables.get(p_.tableB);
+    if (!sounding || !tabA_) {   // nothing to glide or fade from: level, filter, send and tables are where they go
         lv_ = lvT_;
         fNow_ = fT_;
         const SvfUpdate u = SvfUpdate::of(splat2(fNow_.g), splat2(fNow_.k));
@@ -652,11 +726,29 @@ void Bloom::renderBlock(const TableSet& tables, float* outL, float* outR, float*
         a2_ = u.a2[0];
         a3_ = u.a3[0];
         send_ = spaceSend;
+        tabA_ = ta;
+        tabB_ = tb;
+        oldA_ = oldB_ = nullptr;
+        tableFade_ = 0;
+    } else if (tableFade_ == 0 && (ta != tabA_ || tb != tabB_)) {
+        // New tables fade in over kTableFade, every sounding voice's oscillators as they are now
+        // reading the old ones under them in step. A second change waits for this fade to end.
+        oldA_ = tabA_;
+        oldB_ = tabB_;
+        tabA_ = ta;
+        tabB_ = tb;
+        tableFade_ = kTableFade;
+        for (Voice& v : v_) {
+            v.fading = v.stage != ST_FREE;
+            if (!v.fading) continue;
+            for (int h = 0; h < 2; ++h) {
+                v.oldA[h] = v.oa[h];
+                v.oldB[h] = v.ob[h];
+            }
+        }
     }
     if (!any) return;
 
-    const Wavetable& ta = tables.get(p_.table);
-    const Wavetable& tb = tables.get(p_.tableB);
     std::fill(bus_, bus_ + n, splat2(0.0f));
     // Only a voice handing off (or fading out of a handoff for a steal) sends beyond its dry, and
     // a handoff starts between renders, never in one.
@@ -676,12 +768,26 @@ void Bloom::renderBlock(const TableSet& tables, float* outL, float* outR, float*
         const float lvWas = lv_;
         control(m);
         filterFor(m);
+        float fade[kChunk];   // the new tables' share, while they fade in
+        if (tableFade_ > 0) {
+            const float done = static_cast<float>(kTableFade - tableFade_);
+            for (int j = 0; j < m; ++j)
+                fade[j] = std::min(1.0f, (done + static_cast<float>(j + 1)) * (1.0f / kTableFade));
+        }
         if (lvWas > 0.0f || lv_ > 0.0f)
             for (Voice& v : v_)
                 if (v.live) {
-                    renderVoice(v, ta, tb, o, m);
+                    renderVoice(v, o, m, tableFade_ > 0 ? fade : nullptr);
                     heard = true;
                 }
+        if (tableFade_ > 0) {
+            tableFade_ -= m;
+            if (tableFade_ <= 0) {
+                tableFade_ = 0;
+                oldA_ = oldB_ = nullptr;
+                for (Voice& v : v_) v.fading = false;
+            }
+        }
         for (Voice& v : v_)
             if (v.next >= 0 && v.wait > 0) v.wait -= m;
         o += m;
@@ -731,6 +837,40 @@ float Bloom::handoffBoost() const {
             any = true;
         }
     return any ? b : 1.0f;
+}
+
+bool Bloom::checkInvariants() const {
+    const auto finite2 = [](f2 x) { return std::isfinite(x[0]) && std::isfinite(x[1]); };
+    for (int i = 0; i < kVoices; ++i) {
+        const Voice& v = v_[i];
+        const bool sounding = v.stage == ST_ATTACK || v.stage == ST_SUSTAIN;
+        if (v.stage < ST_FREE || v.stage > ST_STEAL) return false;
+        if (held(v) != (sounding || v.next >= 0)) return false;   // owners exactly while it holds a note
+        if (v.stage == ST_FREE) {
+            if (v.note != -1 || !zero2(v.P[0]) || !zero2(v.P[1]) || !zero2(v.S[0]) || !zero2(v.S[1])) return false;
+        } else if (v.note < 0 || v.note > 127) {
+            return false;
+        }
+        if (v.next >= 0) {
+            if (v.next > 127 || v.wait < 0) return false;
+            const bool swells = (v.stage == ST_RELEASE || v.stage == ST_HANDOFF) && v.note == v.next;
+            if (v.retrig ? !swells : !(v.stage == ST_FREE || v.stage == ST_STEAL)) return false;
+        } else if (v.retrig) {
+            return false;
+        }
+        if (!(v.env >= 0.0f && v.env <= 1.0f) || !(v.uni >= 0.0f && v.uni <= 1.0f)) return false;
+        if (v.stage == ST_ATTACK && !(v.x >= 0.0f && v.x < 1.0f)) return false;
+        if (v.stage == ST_STEAL && !(v.stealLeft > 0 && v.stealLeft <= kStealSamples)) return false;
+        if (v.stage == ST_HANDOFF && !(v.th >= 0.0f && v.th < kHandoffS && v.boost >= 1.0f && v.boost <= 4.0f))
+            return false;
+        if (v.restLeft < 0 || v.restLeft > kStealSamples || !std::isfinite(v.rest)) return false;
+        for (int h = 0; h < 2; ++h)
+            if (!finite2(v.P[h]) || !finite2(v.S[h])) return false;
+        if (held(v))   // no two voices hold one note
+            for (int j = i + 1; j < kVoices; ++j)
+                if (held(v_[j]) && heldNote(v_[j]) == heldNote(v)) return false;
+    }
+    return tableFade_ >= 0 && tableFade_ <= kTableFade && (tableFade_ == 0) == (oldA_ == nullptr);
 }
 
 Bloom::VoiceView Bloom::voice(int i) const {
