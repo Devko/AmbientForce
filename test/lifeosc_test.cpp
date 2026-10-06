@@ -1,5 +1,6 @@
 // The lifetime oscillator (dsp/lifeosc.h): pitch, aliasing, the position glide and the mip level
-// crossfade, Sway and Smear, the Couple modes, determinism and the phase over a long run.
+// crossfade, every read against a plain model of it, Sway and Smear, the Couple modes,
+// determinism and the phase over a long run.
 // Needs no plugin: make test-module M=lifeosc runs it on its own.
 #include "check.h"
 #include "signal.h"
@@ -7,6 +8,7 @@
 #include "../dsp/lifetime.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -249,6 +251,119 @@ void testMipCrossfade() {
     CHECK(err < 1e-3f);   // what's left: the references' pitches, 2e-6 apart (a step would leave up to `apart`)
 }
 
+// --- every read against a plain model of it ---------------------------------------------------
+//
+// The model reads one sample at a time, in doubles, from Wavetable::at: the position glides from
+// the last render's to this one's as documented (sample i of n at f0 + (f1 - f0) (i + 1) / n, the
+// ends pos x (frames - 1) as floats), the frame pair and the share come from it, each frame is
+// interpolated on its own (common.h's Hermite formula, or linear) and the two are crossfaded. The
+// one thing it takes from the oscillator is the phase's own definition: a 32-bit fraction of a
+// cycle stepping by inc x 2^32, read 2^-24 cycles finer with FM.
+
+double hermiteRef(double xm, double x0, double x1, double x2, double t) {
+    const double c1 = 0.5 * (x1 - xm);
+    const double c2 = xm - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
+    const double c3 = 0.5 * (x2 - xm) + 1.5 * (x0 - x1);
+    return ((c3 * t + c2) * t + c1) * t + x0;
+}
+
+// One sample at frame position f (0..frames - 1) and phase p, level `mip`.
+double modelSample(const af::Wavetable& t, int mip, double f, uint32_t p, bool hermite) {
+    const int bits = af::kMipBits[mip], len = af::mipLength(mip);
+    const uint32_t j = p >> (32 - bits), wrap = static_cast<uint32_t>(len - 1);
+    const double u = static_cast<double>(p & ((1u << (32 - bits)) - 1u)) / static_cast<double>(1u << (32 - bits));
+    auto frame = [&](int fr) {
+        auto at = [&](uint32_t i) { return static_cast<double>(t.at(fr, mip, static_cast<int>(i))); };
+        if (hermite) return hermiteRef(at((j - 1) & wrap), at(j), at(j + 1), at((j + 2) & wrap), u);
+        return at(j) + u * (at(j + 1) - at(j));
+    };
+    if (t.frames == 1) return frame(0);
+    const int a = std::min(static_cast<int>(std::floor(f)), t.frames - 2);
+    const double x = f - a;
+    return (1.0 - x) * frame(a) + x * frame(a + 1);
+}
+
+struct ModelRun {
+    double err[4] = {};     // the largest difference from the model, by kind
+    int kinds[4][2] = {};   // renders: [one frame, pair still, pair gliding, walk][FM]
+};
+
+// `renders` renders of random lengths from random positions and moves (stays, small moves,
+// frame crossings, jumps, the ends), at a random pitch, with and without FM, against the model.
+template <class Osc>
+void modelRuns(const af::Wavetable& t, bool hermite, uint32_t seed, int sequences, int renders, ModelRun& r) {
+    uint32_t rng = seed;
+    auto rand01 = [&] { return af::lifeosc::rand01(rng); };
+    const float frames1 = static_cast<float>(t.frames - 1);
+    std::vector<float> out(256), fm(256);
+    for (int q = 0; q < sequences; ++q) {
+        Osc o;
+        const float phase0 = rand01();
+        o.reset(phase0);
+        uint32_t ph = static_cast<uint32_t>(static_cast<uint64_t>(static_cast<double>(phase0) * 4294967296.0));
+        const float inc = 20.0f * std::pow(400.0f, rand01()) / af::kRate;   // 20 Hz .. 8 kHz
+        const int mip = af::mipFor(inc);
+        const uint32_t dph = static_cast<uint32_t>(inc * 4294967296.0f);
+        const bool withFm = (q & 1) != 0;
+        float last = rand01();
+        bool started = false;
+        for (int k = 0; k < renders; ++k) {
+            const int n = 1 + static_cast<int>(rand01() * 128.0f);
+            const float move = rand01();
+            float pos = last;
+            if (move < 0.2f) pos = last;                                                   // stays
+            else if (move < 0.45f) pos = af::clampf(last + 0.004f * (rand01() - 0.5f), 0.0f, 1.0f);   // within a pair, mostly
+            else if (move < 0.7f) pos = af::clampf(last + 0.04f * (rand01() - 0.5f), 0.0f, 1.0f);     // a few frames
+            else if (move < 0.85f) pos = rand01();                                         // a jump
+            else pos = move < 0.925f ? 0.0f : 1.0f;                                        // an end
+            for (int i = 0; i < n; ++i) fm[static_cast<size_t>(i)] = withFm ? 1.2f * (rand01() - 0.5f) : 0.0f;
+            o.render(t, inc, pos, out.data(), n, withFm ? fm.data() : nullptr);
+
+            const float f1 = pos * frames1, f0 = started ? last * frames1 : f1;
+            int kind = 0;
+            if (t.frames > 1) {
+                const int a0 = std::min(static_cast<int>(f0), t.frames - 2), a1 = std::min(static_cast<int>(f1), t.frames - 2);
+                const float x0 = f0 - static_cast<float>(a0);
+                kind = a0 != a1 ? 3 : f0 != f1 ? 2 : (x0 == 0.0f || x0 == 1.0f) ? 0 : 1;
+            }
+            ++r.kinds[kind][withFm ? 1 : 0];
+            for (int i = 0; i < n; ++i) {
+                const double f = f0 + (static_cast<double>(f1) - f0) * (i + 1) / n;
+                uint32_t p = ph;
+                if (withFm) p += static_cast<uint32_t>(static_cast<int32_t>(fm[static_cast<size_t>(i)] * 16777216.0f)) << 8;
+                ph += dph;
+                const double e = std::fabs(out[static_cast<size_t>(i)] - modelSample(t, mip, f, p, hermite));
+                r.err[kind] = std::max(r.err[kind], e);
+            }
+            last = pos;
+            started = true;
+        }
+    }
+}
+
+void testModel() {
+    std::printf("== lifeosc: every read against a plain model\n");
+    const auto t0 = std::chrono::steady_clock::now();
+    ModelRun h, l;
+    modelRuns<af::TableOsc>(table(af::TB_FELT_PIANO), true, 0x1234567u, 40, 50, h);
+    modelRuns<af::TableOscLinear>(table(af::TB_FELT_PIANO), false, 0x2345678u, 40, 50, l);
+    modelRuns<af::TableOsc>(table(af::TB_SAW), true, 0x3456789u, 4, 50, h);
+    modelRuns<af::TableOscLinear>(table(af::TB_SAW), false, 0x456789au, 4, 50, l);
+    const double ms = 1e3 * std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("  4400 renders in %.0f ms\n", ms);
+    for (const ModelRun* r : {&h, &l}) {
+        std::printf("  %s within: one frame %.1e, pair still %.1e, pair gliding %.1e, walk %.1e\n",
+                    r == &h ? "Hermite" : "linear", r->err[0], r->err[1], r->err[2], r->err[3]);
+        std::printf("    renders: one frame %d / %d, pair still %d / %d, pair gliding %d / %d, walk %d / %d (FM off / on)\n",
+                    r->kinds[0][0], r->kinds[0][1], r->kinds[1][0], r->kinds[1][1], r->kinds[2][0], r->kinds[2][1],
+                    r->kinds[3][0], r->kinds[3][1]);
+        bool all = true;
+        for (const auto& kind : r->kinds) all = all && kind[0] >= 50 && kind[1] >= 50;
+        CHECK(all);   // every kind, with and without FM, often
+        CHECK(*std::max_element(r->err, r->err + 4) < 1e-6);
+    }
+}
+
 // Check 4: Sway at depth 1 moves Age 0.5 over 0.25..0.75 and reaches both ends; at the top end
 // of the table it reflects, so it keeps moving instead of sitting on the last frame.
 void testSway() {
@@ -285,6 +400,22 @@ void testSway() {
     std::printf("  age 0.95: %.4f..%.4f, %.1f%% of the time on the last frame\n", elo, ehi, 100.0 * atEnd / steps);
     CHECK(elo >= 0.70f - 1e-4f && elo <= 0.71f && ehi <= 1.0f && ehi >= 0.999f);
     CHECK(atEnd < steps / 20);   // a clamp would hold it there 44% of the time
+
+    // Age 0.05: -0.20..0.30, the part before the start folded back the same way.
+    af::LifeScan z;
+    z.seed(3);
+    const af::LifePos r{0.05f, 1.0f, 0.5f, 0.0f};
+    float zlo = 1.0f, zhi = 0.0f;
+    int atStart = 0;
+    for (int i = 0; i < steps; ++i) {
+        const float v = z.step(r, kStepS);
+        zlo = std::min(zlo, v);
+        zhi = std::max(zhi, v);
+        atStart += v <= 0.001f ? 1 : 0;
+    }
+    std::printf("  age 0.05: %.4f..%.4f, %.1f%% of the time on the first frame\n", zlo, zhi, 100.0 * atStart / steps);
+    CHECK(zlo >= 0.0f && zlo <= 0.001f && zhi >= 0.30f - 1e-4f && zhi <= 0.30f + 1e-4f);
+    CHECK(atStart < steps / 20);
 
     // reset(phase) sets the sway's phase: two scans from different seeds, reset alike, agree.
     af::LifeScan a, b;
@@ -383,30 +514,76 @@ void testCouple() {
         o.reset();
         CHECK(b1 == play(o, table(af::TB_SQUARE), static_cast<float>(f2) / af::kRate, 0.5f, 4096, af::kChunk));
     }
-    {   // Mix at blend 0 doesn't render B: the same output, sample for sample, as rendering B and
-        // mixing none of it in. (The pitches are worked out once for both: the device build may
-        // divide by the rate in one place and multiply by its reciprocal in another, an ulp apart.)
-        const int n = 4096;
-        const float incA = static_cast<float>(f1) / af::kRate, incB = static_cast<float>(f2) / af::kRate;
-        const af::Wavetable &ta = table(af::TB_SINE_BLOOM), &tb = table(af::TB_SAW);
-        af::TableOsc a, as;
-        af::TableOscLinear b, bs;
+    {   // Mix at blend 0 doesn't read B but keeps it going: two sines in tune, one step at blend 0,
+        // then half of each. In step they add up to full scale; had B stood still for the step
+        // (0.32 cycles at 441 Hz) they would come to 0.54.
+        const float inc = 441.0f / af::kRate;
+        af::TableOsc a;
+        af::TableOscLinear b;
         a.reset();
         b.reset();
-        as.reset();
-        bs.reset();
-        Buf skipped(static_cast<size_t>(n)), full(static_cast<size_t>(n));
-        float scratch[2 * af::kChunk], bb[af::kChunk];
-        for (int i = 0; i < n; i += af::kChunk) {
-            af::renderCoupled(as, ta, incA, bs, tb, incB, 0.5f, af::CP_MIX, 0.7f, 0.0f, &skipped[static_cast<size_t>(i)],
-                              scratch, af::kChunk);
-            float* o = &full[static_cast<size_t>(i)];
-            b.render(tb, incB, 0.5f, bb, af::kChunk);
-            a.render(ta, incA, 0.5f, o, af::kChunk);
-            af::couple(af::CP_MIX, 0.7f, 0.0f, o, bb, o, af::kChunk);
-        }
-        CHECK(skipped == full);
-        CHECK(peak(skipped) > 0.5f);
+        Buf x(64 * af::kChunk);
+        float scratch[2 * af::kChunk];
+        for (int k = 0; k < 64; ++k)
+            af::renderCoupled(a, table(af::TB_SINE), inc, b, table(af::TB_SINE), inc, 0.5f, af::CP_MIX, 0.0f,
+                              k == 0 ? 0.0f : 0.5f, &x[static_cast<size_t>(k * af::kChunk)], scratch, af::kChunk);
+        std::printf("  Mix, blend 0 for a step, then 0.5: peak %.4f\n", peak(x, af::kChunk));
+        CHECK(std::fabs(peak(x, af::kChunk) - 1.0f) < 1e-3f);
+    }
+    {   // In every mode, the blend at 0.5, then at an end (0: B skipped at Mix; 1: A skipped in
+        // every mode) for 32 steps, then at 0.5 again, while both positions move and both pitches
+        // cross into the next mip level (step 40): sample for sample what rendering both
+        // throughout and coupling them at the blend gives. (The pitches are worked out once for
+        // both: the device build may divide by the rate in one place and multiply by its
+        // reciprocal in another, an ulp apart.)
+        const af::Wavetable& t = table(af::TB_SINE_BLOOM);
+        const float edge = af::kAliasLimit / 64.0f, incLo = edge * 0.99f, incHi = edge * 1.01f;
+        const float incA0 = incLo * 0.5f, incA1 = incHi * 0.5f;   // the level below's edge, an octave down
+        CHECK(af::mipFor(incA0) != af::mipFor(incA1) && af::mipFor(incLo) != af::mipFor(incHi));
+        bool same = true;
+        for (int mode = 0; mode < af::CP_COUNT; ++mode)
+            for (float end : {0.0f, 1.0f}) {
+                af::TableOsc a, as;
+                af::TableOscLinear b, bs;
+                a.reset();
+                b.reset();
+                as.reset();
+                bs.reset();
+                Buf skipped(96 * af::kChunk), full(96 * af::kChunk);
+                float scratch[2 * af::kChunk], bb[af::kChunk], fm[af::kChunk];
+                for (int k = 0; k < 96; ++k) {
+                    const float blend = k >= 32 && k < 64 ? end : 0.5f, pos = 0.3f + 0.002f * static_cast<float>(k);
+                    const float incA = k < 40 ? incA0 : incA1, incB = k < 40 ? incLo : incHi;
+                    float* o = &full[static_cast<size_t>(k * af::kChunk)];
+                    af::renderCoupled(as, t, incA, bs, t, incB, pos, mode, 0.7f, blend,
+                                      &skipped[static_cast<size_t>(k * af::kChunk)], scratch, af::kChunk);
+                    b.render(t, incB, pos, bb, af::kChunk);
+                    af::fmInput(0.7f, bb, fm, af::kChunk);
+                    a.render(t, incA, pos, o, af::kChunk, mode == af::CP_FM ? fm : nullptr);
+                    af::couple(mode, 0.7f, blend, o, bb, o, af::kChunk);
+                }
+                same = same && skipped == full && peak(skipped) > 0.3f;
+            }
+        CHECK(same);
+    }
+    {   // AM and Ring at amt 0 are Mix, sample for sample.
+        const Buf mix = coupled(af::CP_MIX, 0.0f, 0.3f, af::TB_SINE_BLOOM, f1, af::TB_SAW, f2, 4096);
+        CHECK(coupled(af::CP_AM, 0.0f, 0.3f, af::TB_SINE_BLOOM, f1, af::TB_SAW, f2, 4096) == mix);
+        CHECK(coupled(af::CP_RING, 0.0f, 0.3f, af::TB_SINE_BLOOM, f1, af::TB_SAW, f2, 4096) == mix);
+    }
+    {   // skip() leaves an oscillator where render() would: the phase, the level, the position.
+        const af::Wavetable& t = table(af::TB_SINE_BLOOM);
+        af::TableOscLinear r, s;
+        r.reset(0.2f);
+        s.reset(0.2f);
+        float x[af::kChunk], y[af::kChunk];
+        r.render(t, 0.003f, 0.1f, x, af::kChunk);
+        s.render(t, 0.003f, 0.1f, y, af::kChunk);
+        r.render(t, 0.02f, 0.6f, x, 17);   // another level, another position, an odd length
+        s.skip(t, 0.02f, 0.6f, 17);
+        r.render(t, 0.02f, 0.6f, x, af::kChunk);
+        s.render(t, 0.02f, 0.6f, y, af::kChunk);
+        CHECK(std::equal(x, x + af::kChunk, y));
     }
 }
 
@@ -493,25 +670,42 @@ void testEdges() {
     for (size_t i = 0; i < e1.size(); ++i) diff = std::max(diff, std::fabs(e1[i] - e2[i]));
     CHECK(diff < 1e-3f);
 
-    // A scan fed NaN (a rate, a time, a position) gives a position all the same, and recovers.
-    af::LifeScan s;
-    s.seed(9);
-    bool ok = true;
-    const float nan = std::nanf("");
-    for (const af::LifePos& p : {af::LifePos{nan, nan, nan, nan}, af::LifePos{0.5f, 1.0f, nan, 1.0f}})
-        for (float dt : {kStepS, nan, -1.0f}) {
-            const float v = s.step(p, dt);
-            ok = ok && v >= 0.0f && v <= 1.0f;
-        }
+    // A scan fed a NaN or an infinity (a rate, a time, a position, a phase) gives a position all
+    // the same, and keeps swaying afterwards.
+    const float nan = std::nanf(""), inf = INFINITY;
     const af::LifePos sane{0.5f, 1.0f, 0.5f, 1.0f};
-    float lo = 1.0f, hi = 0.0f;
-    for (int i = 0; i < 4000; ++i) {
-        const float v = s.step(sane, kStepS);
-        lo = std::min(lo, v);
-        hi = std::max(hi, v);
+    auto swaysOn = [&](af::LifeScan& s) {
+        float lo = 1.0f, hi = 0.0f;
+        for (int i = 0; i < 4000; ++i) {
+            const float v = s.step(sane, kStepS);
+            lo = std::min(lo, v);
+            hi = std::max(hi, v);
+        }
+        return lo < 0.3f && hi > 0.7f;
+    };
+    for (const af::LifePos& p : {af::LifePos{nan, nan, nan, nan}, af::LifePos{0.5f, 1.0f, nan, 1.0f},
+                                 af::LifePos{inf, inf, inf, inf}, af::LifePos{0.5f, 1.0f, -inf, 1.0f}})
+        for (float dt : {kStepS, nan, -1.0f, inf, -inf}) {
+            af::LifeScan s;
+            s.seed(9);
+            const float v = s.step(p, dt);
+            CHECK(v >= 0.0f && v <= 1.0f);
+            CHECK(swaysOn(s));
+        }
+    for (float phase : {nan, inf, -inf}) {
+        af::LifeScan s;
+        s.seed(9);
+        s.reset(phase);
+        CHECK(swaysOn(s));
     }
-    CHECK(ok);
-    CHECK(lo < 0.3f && hi > 0.7f);   // still swaying
+
+    // An oscillator reset to a phase that isn't a number starts at 0.
+    for (float phase : {nan, inf, -inf}) {
+        af::TableOsc p, q;
+        p.reset(phase);
+        q.reset(0.0f);
+        CHECK(play(p, table(af::TB_SINE), 0.01f, 0.0f, 256) == play(q, table(af::TB_SINE), 0.01f, 0.0f, 256));
+    }
 }
 
 } // namespace
@@ -521,6 +715,7 @@ void lifeoscTests() {
     testAliasing();
     testGlide();
     testMipCrossfade();
+    testModel();
     testSway();
     testSmear();
     testCouple();
