@@ -4,6 +4,7 @@
 // blocks, events with deltaFrames, 0..1 params), records what the plugin pushes back
 // (audioMasterAutomate, audioMasterUpdateDisplay) and serves transport time.
 #include "check.h"
+#include "signal.h"
 #include "../plugin/vst2.h"
 #include "../plugin/patch_map.h"
 
@@ -139,10 +140,10 @@ struct Turn {
 };
 
 void engineTests();      // engine_test.cpp: the engine on its own (the stub: sines, voices, release)
+void reverbTests();      // reverb_test.cpp: the Reverb and Space on their own
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
 
-// Signal helpers (plugin_test.cpp).
-double rms(const std::vector<float>& x, size_t from = 0, size_t to = 0);
+// Signal helpers (plugin_test.cpp; rms() and the module tests' own are in signal.h).
 double pitchHz(const std::vector<float>& x, size_t from = 0, size_t to = 0);   // rising zero crossings
 // The amplitude of the `hz` component of x (44.1 kHz): a Hann-windowed correlation.
 double toneAmp(const std::vector<float>& x, double hz);

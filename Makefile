@@ -50,7 +50,7 @@ ARM_SO   := $(BUILD)/arm/ambientforce.so
 ARM_SO_STAGES := $(BUILD)/arm/ambientforce_stages.so
 ARM_BENCH := $(BUILD)/arm/afbench
 
-.PHONY: all surface skin test test-arm test-arm-pgo bench arm-plugin arm-bench arm-bench-stages bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
+.PHONY: all surface skin test test-arm test-arm-pgo test-module test-module-arm bench arm-plugin arm-bench arm-bench-stages bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
 # A recipe that fails leaves no half-written target behind for the next make to trust.
 .DELETE_ON_ERROR:
 # The stage-timing build too: a -DAF_STAGE_TIMING break shows here, not at bench time.
@@ -103,6 +103,22 @@ test-arm: $(BUILD)/arm/plugin_test
 $(BUILD)/arm/plugin_test: $(TESTS) $(wildcard test/*.h) $(SRC) $(HDR) $(GEN)
 	mkdir -p $(BUILD)/arm
 	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC) $(SRC) $(TESTS) -o $@
+
+# One dsp suite on its own, quicker to iterate on (EffectForce's): make test-module M=reverb builds
+# test/reverb_test.cpp with every dsp/*.cpp under ASan/UBSan; test-module-arm the same for the
+# device's CPU under qemu-arm. Suites that drive the plugin (engine, preset) need make test.
+M ?=
+MOD_SRC = test/module_main.cpp test/$(M)_test.cpp $(wildcard dsp/*.cpp)
+test-module: | $(BUILD)
+	@[ -n "$(M)" ] || { echo "usage: make test-module M=<suite>"; exit 1; }
+	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra \
+		-DMODULE_TESTS=$(M)Tests $(INC) $(MOD_SRC) -o $(BUILD)/$(M)_test
+	$(BUILD)/$(M)_test
+test-module-arm:
+	@[ -n "$(M)" ] || { echo "usage: make test-module-arm M=<suite>"; exit 1; }
+	mkdir -p $(BUILD)/arm
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -DMODULE_TESTS=$(M)Tests $(INC) $(MOD_SRC) -o $(BUILD)/arm/$(M)_test
+	$(ARM_RUN) $(BUILD)/arm/$(M)_test
 
 # x86 numbers say nothing about the Force; this only checks the bench and the .so paths work
 # (the plain plugin, then the stage-timing build).
@@ -187,9 +203,12 @@ endif
 		[ $$n -eq 1 ] || { $(ARM_PREFIX)nm -D --defined-only $@; echo "only VSTPluginMain may be exported"; exit 1; }
 
 # The suite against the objects the shipped .so is linked from (profile-guided), under qemu.
+# AF_PGO_OBJECTS: the checks that pin exact output bits to one compilation (the Reverb's fingerprints)
+# say so and skip; the profile moves the compiler's fusing of float operations with every change of the
+# code, and CI's GCC 11 fuses differently from GCC 13 anyway.
 test-arm-pgo: $(ARM_SO)
 ifeq ($(PGO_ON),1)
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wno-psabi -pthread $(INC) $(TESTS) $(PGO_OBJ)/*.o -o $(BUILD)/arm/plugin_test_pgo
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wno-psabi -pthread -DAF_PGO_OBJECTS=1 $(INC) $(TESTS) $(PGO_OBJ)/*.o -o $(BUILD)/arm/plugin_test_pgo
 	$(ARM_RUN) $(BUILD)/arm/plugin_test_pgo
 else
 	@echo "test-arm-pgo: the .so is a plain build here (PGO=$(PGO)); test-arm covers it"

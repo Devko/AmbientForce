@@ -17,6 +17,7 @@ and Pillow for the skin):
 ```sh
 make test          # the suite under ASan/UBSan
 make test-arm      # the same suite for the Force's CPU, under qemu-arm
+make test-module M=reverb   # one dsp suite on its own (quicker), under ASan/UBSan
 make arm-plugin    # build/arm/ambientforce.so, profile-guided
 make skin preview  # the skin, and every page as surface/build/page_*.png
 ```

@@ -37,13 +37,6 @@ std::string fixtureDir() {
     return dir;
 }
 
-double rms(const std::vector<float>& x, size_t from, size_t to) {
-    if (to == 0 || to > x.size()) to = x.size();
-    double s = 0.0;
-    for (size_t i = from; i < to; ++i) s += static_cast<double>(x[i]) * x[i];
-    return to > from ? std::sqrt(s / static_cast<double>(to - from)) : 0.0;
-}
-
 double pitchHz(const std::vector<float>& x, size_t from, size_t to) {
     if (to == 0 || to > x.size()) to = x.size();
     double first = -1.0, last = 0.0;
@@ -353,6 +346,7 @@ int main() {
     };
 
     engineTests();
+    reverbTests();
     testBasics();
     testGetters();
     testPlay();
