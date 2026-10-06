@@ -45,16 +45,36 @@ constexpr Stack kStacks[CH_COUNT] = {
     {3, {0, 2, 4}},      // Spread
 };
 
-// The tunings as ratios above the tonic, per semitone. Just: 5-limit, the ratios of the
-// harmonic series' first few partials, so a held fifth or third doesn't beat. Pythagorean:
-// everything from stacked 3:2 fifths, pure fifths and sharp thirds.
-struct Ratio {
-    int num, den;
-};
-constexpr Ratio kJust[12] = {{1, 1}, {16, 15}, {9, 8},  {6, 5}, {5, 4},  {4, 3},
-                             {45, 32}, {3, 2}, {8, 5}, {5, 3}, {9, 5}, {15, 8}};
-constexpr Ratio kPythagorean[12] = {{1, 1},     {256, 243}, {9, 8},    {32, 27}, {81, 64}, {4, 3},
-                                    {729, 512}, {3, 2},     {128, 81}, {27, 16}, {16, 9},  {243, 128}};
+// The tunings as semitones above the tonic, per semitone: 12·log2 of each ratio, worked out once
+// (to double precision) rather than on the audio thread. Just: 5-limit, the ratios of the
+// harmonic series' first few partials, so a held fifth or third doesn't beat; 1, 16/15, 9/8,
+// 6/5, 5/4, 4/3, 45/32, 3/2, 8/5, 5/3, 9/5, 15/8. Pythagorean: everything from stacked 3:2
+// fifths, pure fifths and sharp thirds; 1, 256/243, 9/8, 32/27, 81/64, 4/3, 729/512, 3/2,
+// 128/81, 27/16, 16/9, 243/128.
+constexpr double kJustSemis[12] = {0.0,
+                                   1.1173128526977776,
+                                   2.0391000173077485,
+                                   3.1564128700055258,
+                                   3.863137138648348,
+                                   4.9804499913461262,
+                                   5.9022371559560964,
+                                   7.0195500086538738,
+                                   8.136862861351652,
+                                   8.8435871299944733,
+                                   10.1759628786594,
+                                   10.882687147302223};
+constexpr double kPythagoreanSemis[12] = {0.0,
+                                          0.90224995673062913,
+                                          2.0391000173077485,
+                                          2.9413499740383773,
+                                          4.078200034615497,
+                                          4.9804499913461262,
+                                          6.1173000519232454,
+                                          7.0195500086538738,
+                                          7.921799965384503,
+                                          9.0586500259616223,
+                                          9.9608999826922524,
+                                          11.097750043269372};
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 int pitchClass(int note) { return (note % 12 + 12) % 12; }   // of negative numbers too
@@ -103,12 +123,20 @@ int foldNote(int note) {
     return note;
 }
 
-// A sorted chord into the chord range by whole octaves, keeping its shape: every voicing spans
-// far less than the seven octaves in between. The root moves with it.
-void fit(Chord& c) {
+// The whole octaves that move notes lo..hi into the chord range, the lowest first: up until lo
+// is in, then down while hi is above the range and lo can follow. Notes that span more than the
+// range (only keys held, never a voicing) are left with lo in its bottom octave and the top above.
+int octaveShift(int lo, int hi) {
     int shift = 0;
-    while (c.notes[0] + shift < kChordLowest) shift += 12;
-    while (c.notes[c.n - 1] + shift > kChordHighest) shift -= 12;
+    while (lo + shift < kChordLowest) shift += 12;
+    while (hi + shift > kChordHighest && lo + shift - 12 >= kChordLowest) shift -= 12;
+    return shift;
+}
+
+// A sorted chord into the chord range by whole octaves, keeping its shape (every voicing spans
+// far less than the seven octaves in between). The root moves with it.
+void fit(Chord& c) {
+    const int shift = octaveShift(c.notes[0], c.notes[c.n - 1]);
     for (int i = 0; i < c.n; ++i) c.notes[i] += shift;
     c.root += shift;
 }
@@ -262,15 +290,11 @@ int voiceLeadCost(const Chord& prev, const Chord& candidate) {
     return cost / 2;
 }
 
-// The candidates keep the voicing's character. `c` as built comes first (so it wins a full tie);
-// then each inversion of the chord's close voicing, voiced by h's rule (Open: every second tone
-// of the inversion up an octave; Drop 2: its second-highest down an octave; Close: as it is),
-// each in place, an octave down and an octave up. Spread never inverts: its root stays at the
-// bottom, so its candidates are the whole shape moved by octaves. Only candidates within the
-// chord range and without a doubled note count (an inversion can land on a tone the stack
-// already has an octave up, as the whole-tone Seventh's root). The least cost wins; a tie goes to
-// the lowest note nearest prev's lowest, so the chord doesn't wander up or down the keyboard;
-// then to the earlier candidate.
+// (The contract is in harmony.h.) The close voicing is rebuilt from h and c's root by the same
+// code as buildChord's, so its first inversion voiced by h is c as built. Candidates with a
+// doubled note are skipped: an inversion can land on a tone the stack already has an octave up,
+// as the whole-tone Seventh's root does. The tie on the lowest note keeps the chord from
+// wandering up or down the keyboard.
 Chord leadFrom(const HarmonyPatch& h, const Chord& prev, const Chord& c) {
     const int cn = clampi(c.n, 0, kChordMax);
     if (prev.n <= 0 || cn == 0 || c.root < 0) return c;
@@ -310,6 +334,8 @@ Chord leadFrom(const HarmonyPatch& h, const Chord& prev, const Chord& c) {
         consider(c.notes, cn);
         return best;
     }
+    // The first inversion in place is c as built again (unless fit() moved c); it ties with
+    // itself and changes nothing.
     for (int r = 0; r < n; ++r) {
         int voiced[kChordMax];
         consider(voiced, applyVoicing(voicing, inv, n, voiced));
@@ -324,34 +350,34 @@ Chord leadFrom(const HarmonyPatch& h, const Chord& prev, const Chord& c) {
 double tunedPitch(const HarmonyPatch& h, int note) {
     const int tuning = clampi(h.tuning, 0, TU_COUNT - 1);
     if (tuning == TU_EQUAL) return note;
-    const int pc = pitchClass(note - keyOf(h));   // semitones above the tonic below the note
-    const Ratio& r = (tuning == TU_JUST ? kJust : kPythagorean)[pc];
-    return static_cast<double>(note - pc) + 12.0 * std::log2(static_cast<double>(r.num) / r.den);
+    // Semitones above the tonic at or below the note (which can be below MIDI 0: key B, note 5).
+    const int pc = pitchClass(note - keyOf(h));
+    return static_cast<double>(note - pc) + (tuning == TU_JUST ? kJustSemis : kPythagoreanSemis)[pc];
 }
 
 // --- the memory ---------------------------------------------------------------------------
 
 void Harmony::set(const HarmonyPatch& h) { patch_ = h; }
 
-void Harmony::noteOn(int mappedNote) {
-    if (mappedNote < 0 || mappedNote > 127) return;   // a dropped note
+void Harmony::noteOn(int key, int mapped) {
+    if (key < 0 || key > 127 || mapped < 0 || mapped > 127) return;   // not a key, or a dropped note
     for (int i = 0; i < nHeld_; ++i)
-        if (held_[i] == mappedNote) return;   // already down: a double note-on changes nothing
+        if (held_[i].key == key) return;   // already down: a repeated note-on changes nothing
     if (nHeld_ == kHeldMax) return;
-    held_[nHeld_++] = mappedNote;
+    held_[nHeld_++] = {key, mapped};
     releasedBeats_ = 0.0;
-    if (clampi(patch_.chord, 0, CH_COUNT - 1) == CH_OFF) {
+    if (chordTypeOf(patch_) == CH_OFF) {
         change(heldChord());
         return;
     }
-    const Chord c = buildChord(patch_, mappedNote);
+    const Chord c = buildChord(patch_, mapped);
     change(patch_.leading && current_.root >= 0 ? leadFrom(patch_, current_, c) : c);
 }
 
-void Harmony::noteOff(int mappedNote) {
+void Harmony::noteOff(int key) {
     int w = 0;
     for (int i = 0; i < nHeld_; ++i)
-        if (held_[i] != mappedNote) held_[w++] = held_[i];
+        if (held_[i].key != key) held_[w++] = held_[i];
     if (w == nHeld_) return;   // not a key that is down
     nHeld_ = w;
     // Fingers leave a chord one by one: only the last key up counts, and the chord stays as it
@@ -381,14 +407,15 @@ void Harmony::clear() {
 int Harmony::lowestHeld() const {
     int lo = -1;
     for (int i = 0; i < nHeld_; ++i)
-        if (lo < 0 || held_[i] < lo) lo = held_[i];
+        if (lo < 0 || held_[i].note < lo) lo = held_[i].note;
     return lo;
 }
 
-// Chord Off: the keys held, as played, the lowest as the root. More keys than a chord has notes:
-// the lowest and then the latest, so a key just pressed is always heard.
+// Chord Off: the notes held, as played, the lowest as the root; two keys on one note give it once.
+// More notes than a chord has: the lowest and then the latest, so a key just pressed is always
+// heard.
 // Into the chord range the chord moves as a whole, by octaves, as buildChord's do, so the lowest
-// key stays the root at the bottom. Keys spread wider than the range (over seven octaves) can't
+// note stays the root at the bottom. Notes spread wider than the range (over seven octaves) can't
 // move as one: the root goes in first, as low as it must, and every note still above the range
 // folds down by octaves into its top octave. That is above the root (which is then in the bottom
 // octave), so the root stays the lowest; a note landing on one already there is dropped.
@@ -396,20 +423,21 @@ Chord Harmony::heldChord() const {
     Chord c;
     const int lo = lowestHeld();
     if (lo < 0) return c;
-    int keys[kChordMax];
+    int notes[kChordMax];
     int n = 0;
-    keys[n++] = lo;
-    for (int i = nHeld_ - 1; i >= 0 && n < kChordMax; --i)
-        if (held_[i] != lo) keys[n++] = held_[i];
+    notes[n++] = lo;
+    for (int i = nHeld_ - 1; i >= 0 && n < kChordMax; --i) {
+        bool there = false;
+        for (int j = 0; j < n; ++j) there = there || notes[j] == held_[i].note;
+        if (!there) notes[n++] = held_[i].note;
+    }
     int hi = lo;
     for (int i = 1; i < n; ++i)
-        if (keys[i] > hi) hi = keys[i];
+        if (notes[i] > hi) hi = notes[i];
 
-    int shift = 0;
-    while (lo + shift < kChordLowest) shift += 12;
-    while (hi + shift > kChordHighest && lo + shift - 12 >= kChordLowest) shift -= 12;
+    const int shift = octaveShift(lo, hi);
     for (int i = 0; i < n; ++i) {
-        const int note = foldNote(keys[i] + shift);   // moves only the too-wide chord's top notes
+        const int note = foldNote(notes[i] + shift);   // moves only the too-wide chord's top notes
         bool there = false;
         for (int j = 0; j < c.n; ++j) there = there || c.notes[j] == note;
         if (!there) c.notes[c.n++] = note;

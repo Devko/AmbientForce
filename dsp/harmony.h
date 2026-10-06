@@ -87,10 +87,13 @@ double tunedPitch(const HarmonyPatch& h, int note);
 
 // The harmony memory: what Ground and Bloom (Harmony mode) follow.
 //
-// A key going down sets the chord: the chord on that key (the latest key wins), voice-led from
-// the chord before when Leading is on. With Chord Off the chord is the keys held, as played.
-// Keys going up change nothing until the last one: then the chord stays for Memory bars (4/4,
-// at the tempo advance() is given), forever, or (Memory Off) not at all.
+// A key going down sets the chord: the chord on that key's mapped note (the latest key wins),
+// voice-led from the chord before when Leading is on. With Chord Off the chord is the notes held,
+// as played. Keys going up change nothing until the last one: then the chord stays for Memory
+// bars (4/4, at the tempo advance() is given), forever, or (Memory Off) not at all.
+//
+// Keys and notes are kept apart: Snap and Degrees can map two keys to one note, and that note is
+// held until both keys are up.
 class Harmony {
 public:
     static constexpr int kHeldMax = 16;   // keys remembered; more are ignored until some go up
@@ -98,21 +101,27 @@ public:
     // The chord settings take effect from the next key (the chord kept isn't re-voiced); Memory
     // at the next advance(), counting from the last release.
     void set(const HarmonyPatch& h);
-    void noteOn(int mappedNote);                // a key down (after mapping)
-    void noteOff(int mappedNote);
+    // A key (0..127) down, with the note mapInput() made of it; mapped -1 (dropped) is ignored.
+    // The same key down again changes nothing, even mapped elsewhere.
+    void noteOn(int key, int mapped);
+    void noteOff(int key);
     void advance(double seconds, double bpm);   // runs the memory's timer
     void clear();                               // forget the chord and the keys (reset, Stop with Cut)
     const Chord& current() const { return current_; }   // root -1: nothing (never played, or forgotten)
-    int lowestHeld() const;                     // -1: no key down
-    int held() const { return nHeld_; }
+    int lowestHeld() const;                     // the lowest mapped note held; -1: no key down
+    int held() const { return nHeld_; }         // keys down (two on one note count as two)
     uint32_t version() const { return version_; }       // +1 whenever current() changes
 
 private:
-    Chord heldChord() const;                    // Chord Off: the keys held
+    struct Key {
+        int key, note;   // the key, and the note it was mapped to when it went down
+    };
+
+    Chord heldChord() const;                    // Chord Off: the notes held
     void change(const Chord& c);                // current_ = c, counting a change
 
     HarmonyPatch patch_;
-    int      held_[kHeldMax] = {};              // keys down, oldest first
+    Key      held_[kHeldMax] = {};              // keys down, oldest first
     int      nHeld_ = 0;
     Chord    current_;
     double   releasedBeats_ = 0.0;              // since the last key went up

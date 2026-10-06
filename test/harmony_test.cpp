@@ -45,6 +45,13 @@ uint16_t pcsOf(std::initializer_list<int> pcs) {
     return m;
 }
 
+// The pitch classes of a chord's notes, worked out here rather than read from its pcs field.
+uint16_t notesPcs(const Chord& c) {
+    uint16_t m = 0;
+    for (int i = 0; i < c.n && i < af::kChordMax; ++i) m = static_cast<uint16_t>(m | 1u << (c.notes[i] % 12));
+    return m;
+}
+
 Chord chordOf(std::initializer_list<int> notes) {
     Chord c;
     for (int n : notes) {
@@ -320,7 +327,9 @@ void testLeading() {
 
     // Every scale, chord type and voicing, from a few chords before: the same notes count, pitch
     // classes and root as built; ascending with no note doubled; within 24..108; never costlier
-    // than the chord as built. Spread keeps its shape, moved by octaves, root at the bottom.
+    // than the chord as built. The voicing kept: a triad (or a seventh in a seven-tone scale)
+    // spans less than an octave Close, and between one and two octaves Open or Drop 2. Spread
+    // keeps its shape, moved by octaves, root at the bottom.
     bool all = true;
     for (int s = 0; s < SC_COUNT; ++s)
         for (int ch = 0; ch < CH_COUNT; ++ch)
@@ -330,11 +339,16 @@ void testLeading() {
                     for (int root = 26; root <= 106; root += 5) {
                         const Chord prev = buildChord(h, from), built = buildChord(h, root);
                         const Chord led = leadFrom(h, prev, built);
-                        bool ok = led.n == built.n && led.pcs == built.pcs && led.root == built.root &&
+                        bool ok = led.n == built.n && notesPcs(led) == built.pcs && led.root == built.root &&
                                   voiceLeadCost(prev, led) <= voiceLeadCost(prev, built);
                         for (int i = 0; i < led.n && ok; ++i)
                             ok = led.notes[i] >= kChordLowest && led.notes[i] <= kChordHighest &&
                                  (i == 0 || led.notes[i] > led.notes[i - 1]);
+                        const int span = led.n > 0 ? led.notes[led.n - 1] - led.notes[0] : 0;
+                        if (ch == CH_TRIAD || (ch == CH_SEVENTH && scaleSize(s) == 7)) {
+                            if (v == VO_CLOSE) ok = ok && span < 12;
+                            if (v == VO_OPEN || v == VO_DROP2) ok = ok && span > 12 && span < 24;
+                        }
                         if (ch != CH_OFF && (v == VO_SPREAD || ch == CH_SPREAD)) {
                             const int shift = led.notes[0] - built.notes[0];
                             ok = ok && (shift == -12 || shift == 0 || shift == 12) && led.notes[0] % 12 == root % 12;
@@ -367,23 +381,23 @@ void testLeading() {
     h.leading = true;
     Harmony mem;
     mem.set(h);
-    mem.noteOn(60);
+    mem.noteOn(60, 60);
     CHECK(notesAre(mem.current(), {60, 64, 67}));
-    mem.noteOn(65);
+    mem.noteOn(65, 65);
     CHECK(notesAre(mem.current(), {60, 65, 69}));
     h.voicing = VO_OPEN;
     Harmony opened;
     opened.set(h);
-    opened.noteOn(60);
+    opened.noteOn(60, 60);
     CHECK(notesAre(opened.current(), {60, 67, 76}));
-    opened.noteOn(65);
+    opened.noteOn(65, 65);
     CHECK(notesAre(opened.current(), {60, 69, 77}));
     h.voicing = VO_CLOSE;
     h.leading = false;
     Harmony plain;
     plain.set(h);
-    plain.noteOn(60);
-    plain.noteOn(65);
+    plain.noteOn(60, 60);
+    plain.noteOn(65, 65);
     CHECK(notesAre(plain.current(), {65, 69, 72}));
 }
 
@@ -411,6 +425,14 @@ void testTuning() {
     CHECK(tunedPitch(h, 60) == 60.0 && tunedPitch(h, 72) == 72.0 && tunedPitch(h, 48) == 48.0);
     h.tuning = TU_PYTHAGOREAN;
     CHECK(std::fabs(tunedPitch(h, 64) - (60.0 + 12.0 * std::log2(81.0 / 64.0))) < 1e-9);
+    // Below the key's lowest tonic, the tonic under the note is below MIDI 0: key B, note 5 (F)
+    // is the tritone above the B at -1; note 0 (C) its minor second.
+    h.key = 11;
+    CHECK(std::fabs(tunedPitch(h, 5) - (-1.0 + 12.0 * std::log2(729.0 / 512.0))) < 1e-9);
+    h.tuning = TU_JUST;
+    CHECK(std::fabs(tunedPitch(h, 5) - (-1.0 + 12.0 * std::log2(45.0 / 32.0))) < 1e-9);
+    CHECK(std::fabs(tunedPitch(h, 0) - (-1.0 + 12.0 * std::log2(16.0 / 15.0))) < 1e-9);
+    CHECK(tunedPitch(h, 11) == 11.0);
 
     // The whole tables, on two keys, in the tonic's octave and the one below.
     const double just[12] = {1.0, 16.0 / 15, 9.0 / 8, 6.0 / 5, 5.0 / 4, 4.0 / 3,
@@ -442,9 +464,9 @@ void testMemory() {
         Harmony m;
         HarmonyPatch h = patch(0, SC_MAJOR, CH_OFF);
         m.set(h);
-        m.noteOn(64);
-        m.noteOn(60);
-        m.noteOn(67);
+        m.noteOn(64, 64);
+        m.noteOn(60, 60);
+        m.noteOn(67, 67);
         CHECK(m.current().pcs == pcsOf({0, 4, 7}) && m.current().root == 60);
         CHECK(notesAre(m.current(), {60, 64, 67}));
     }
@@ -452,9 +474,9 @@ void testMemory() {
     {
         Harmony m;
         m.set(patch(0, SC_MAJOR, CH_TRIAD, VO_OPEN));
-        m.noteOn(62);
+        m.noteOn(62, 62);
         CHECK(m.current().root == 62 && m.current().pcs == pcsOf({2, 5, 9}));
-        m.noteOn(65);
+        m.noteOn(65, 65);
         CHECK(m.current().root == 65 && m.current().pcs == pcsOf({5, 9, 0}));
         // Keys going up change nothing until the last.
         m.noteOff(65);
@@ -466,7 +488,7 @@ void testMemory() {
         HarmonyPatch h = patch(0, SC_MAJOR);
         h.memoryBars = -1;
         m.set(h);
-        m.noteOn(60);
+        m.noteOn(60, 60);
         m.noteOff(60);
         const uint32_t v = m.version();
         m.advance(3600.0, 120.0);
@@ -478,7 +500,7 @@ void testMemory() {
         HarmonyPatch h = patch(0, SC_MAJOR);
         h.memoryBars = 1;
         m.set(h);
-        m.noteOn(60);
+        m.noteOn(60, 60);
         m.advance(10.0, 120.0);   // the timer doesn't run while a key is down
         m.noteOff(60);
         const uint32_t v = m.version();
@@ -489,10 +511,10 @@ void testMemory() {
         m.advance(10.0, 120.0);
         CHECK(m.version() == v + 1);
         // A key in between starts the timer again; the tempo sets its length.
-        m.noteOn(62);
+        m.noteOn(62, 62);
         m.noteOff(62);
         m.advance(1.5, 120.0);
-        m.noteOn(62);
+        m.noteOn(62, 62);
         m.noteOff(62);
         m.advance(1.5, 120.0);
         CHECK(m.current().root == 62);
@@ -507,7 +529,7 @@ void testMemory() {
         Harmony m;
         HarmonyPatch h = patch(0, SC_MAJOR);
         m.set(h);
-        m.noteOn(60);
+        m.noteOn(60, 60);
         m.noteOff(60);
         m.advance(2.0, 120.0);
         h.memoryBars = 4;
@@ -523,7 +545,7 @@ void testMemory() {
         m.advance(0.0, 120.0);
         CHECK(m.current().root == -1);
         // Memory Off after the release: gone at the next advance().
-        m.noteOn(62);
+        m.noteOn(62, 62);
         m.noteOff(62);
         h.memoryBars = 0;
         m.set(h);
@@ -536,8 +558,8 @@ void testMemory() {
         HarmonyPatch h = patch(0, SC_MAJOR);
         h.memoryBars = 0;
         m.set(h);
-        m.noteOn(60);
-        m.noteOn(64);
+        m.noteOn(60, 60);
+        m.noteOn(64, 64);
         m.noteOff(60);
         CHECK(m.current().root == 64);
         m.noteOff(64);
@@ -548,11 +570,13 @@ void testMemory() {
         Harmony m;
         m.set(patch(0, SC_MAJOR));
         CHECK(m.version() == 0 && m.current().root == -1);
-        m.noteOn(60);
+        m.noteOn(60, 60);
         CHECK(m.version() == 1);
-        m.noteOn(60);   // a double note-on: nothing changes
+        m.noteOn(60, 60);   // a double note-on: nothing changes
         CHECK(m.version() == 1 && m.held() == 1);
-        m.noteOn(64);
+        m.noteOn(60, 62);   // the same key again, mapped elsewhere (the patch changed): nothing
+        CHECK(m.version() == 1 && m.held() == 1 && m.lowestHeld() == 60 && m.current().root == 60);
+        m.noteOn(64, 64);
         CHECK(m.version() == 2);
         m.noteOff(64);
         m.noteOff(64);   // a key not down
@@ -560,7 +584,9 @@ void testMemory() {
         CHECK(m.version() == 2 && m.held() == 1);
         m.noteOff(60);
         CHECK(m.version() == 2 && m.held() == 0);
-        m.noteOn(-1);    // a dropped note
+        m.noteOn(70, -1);   // a dropped note
+        m.noteOn(-1, 60);   // not a key
+        m.noteOn(128, 60);
         CHECK(m.version() == 2 && m.held() == 0);
         m.clear();
         CHECK(m.version() == 3 && m.current().root == -1);
@@ -572,9 +598,9 @@ void testMemory() {
         Harmony m;
         m.set(patch(0, SC_MAJOR));
         CHECK(m.lowestHeld() == -1);
-        m.noteOn(64);
-        m.noteOn(60);
-        m.noteOn(67);
+        m.noteOn(64, 64);
+        m.noteOn(60, 60);
+        m.noteOn(67, 67);
         CHECK(m.lowestHeld() == 60 && m.held() == 3);
         m.noteOff(60);
         CHECK(m.lowestHeld() == 64);
@@ -582,18 +608,48 @@ void testMemory() {
         m.noteOff(67);
         CHECK(m.lowestHeld() == -1 && m.held() == 0);
         // clear() forgets the keys too.
-        m.noteOn(50);
+        m.noteOn(50, 50);
         m.clear();
         CHECK(m.lowestHeld() == -1 && m.held() == 0 && m.current().root == -1);
         m.noteOff(50);
         CHECK(m.current().root == -1);
+        // It is the mapped note that counts, not the key.
+        m.noteOn(72, 50);
+        CHECK(m.lowestHeld() == 50 && m.current().root == 50);
+    }
+    // Two keys playing one note (Degrees: C and C# are both the tonic) are two keys: releasing
+    // one leaves the other holding the chord, even with Memory Off.
+    {
+        Harmony m;
+        HarmonyPatch h = patch(0, SC_MAJOR);
+        h.input = IN_DEGREES;
+        h.memoryBars = 0;
+        m.set(h);
+        CHECK(mapInput(h, 60) == 60 && mapInput(h, 61) == 60);
+        m.noteOn(60, mapInput(h, 60));
+        m.noteOn(61, mapInput(h, 61));
+        CHECK(m.held() == 2 && m.lowestHeld() == 60 && m.current().root == 60);
+        const uint32_t v = m.version();
+        m.noteOff(61);
+        CHECK(m.held() == 1 && m.lowestHeld() == 60 && m.current().root == 60 && m.version() == v);
+        m.noteOff(60);
+        CHECK(m.held() == 0 && m.lowestHeld() == -1 && m.current().root == -1);
+        // Chord Off: the note they share sounds once.
+        h.chord = CH_OFF;
+        m.set(h);
+        m.noteOn(60, 60);
+        m.noteOn(61, 60);
+        m.noteOn(64, 64);
+        CHECK(notesAre(m.current(), {60, 64}) && m.held() == 3);
+        m.noteOff(60);
+        CHECK(m.lowestHeld() == 60 && m.current().root == 60);
     }
     // More keys than it remembers: the extra ones are ignored, safely.
     {
         Harmony m;
         HarmonyPatch h = patch(0, SC_MAJOR, CH_OFF);
         m.set(h);
-        for (int i = 0; i < 24; ++i) m.noteOn(40 + i);
+        for (int i = 0; i < 24; ++i) m.noteOn(40 + i, 40 + i);
         CHECK(m.held() == Harmony::kHeldMax && m.lowestHeld() == 40);
         // Chord Off with more keys than voices: the lowest and the latest.
         CHECK(notesAre(m.current(), {40, 51, 52, 53, 54, 55}) && m.current().root == 40);
@@ -607,7 +663,7 @@ void testMemory() {
         auto held = [](std::initializer_list<int> keys) {
             Harmony m;
             m.set(patch(0, SC_MAJOR, CH_OFF));
-            for (int k : keys) m.noteOn(k);
+            for (int k : keys) m.noteOn(k, k);
             return m.current();
         };
         const Chord a = held({20, 30});            // up an octave together
