@@ -20,6 +20,9 @@ enum Input : int { IN_AS_PLAYED, IN_SNAP, IN_DEGREES, IN_COUNT };
 enum ChordType : int { CH_OFF, CH_TRIAD, CH_SEVENTH, CH_SUS2, CH_SUS4, CH_ADD9, CH_QUARTAL, CH_FIFTHS,
                        CH_CLUSTER, CH_SPREAD, CH_COUNT };
 enum Voicing : int { VO_CLOSE, VO_OPEN, VO_DROP2, VO_SPREAD, VO_COUNT };
+// How a stratum hears the player (docs/CONCEPT.md 4.1): the notes themselves, the harmony memory,
+// or nothing but the key (Free: it runs on its own from the first note until Stop).
+enum Listen : int { LI_NOTES, LI_HARMONY, LI_FREE, LI_COUNT };
 
 struct HarmonyPatch {
     int key = 0;              // 0 = C .. 11 = B: the tonic's pitch class

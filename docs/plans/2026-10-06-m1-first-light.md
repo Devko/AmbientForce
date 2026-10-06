@@ -540,7 +540,7 @@ public:
 
 ```cpp
 namespace af {
-enum Listen : int { LI_NOTES, LI_HARMONY, LI_FREE, LI_COUNT };
+// enum Listen (LI_NOTES, LI_HARMONY, LI_FREE, LI_COUNT) lives in dsp/harmony.h, shared by every stratum.
 enum ColorInterval : int { CI_MIN3, CI_MAJ3, CI_FOURTH, CI_MIN7, CI_NINTH, CI_ELEVENTH, CI_COUNT };
 
 struct GroundPatch {
