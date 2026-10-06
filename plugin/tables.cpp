@@ -13,9 +13,11 @@ namespace {
 
 // The builder thread, owned by a static whose destructor runs when MPC unloads the plugin (when
 // its last instance is removed) and at process exit. It stops and joins the builder first: a
-// detached thread still building would run on in unmapped code. Then it frees the tables, so
-// removing the last instance and inserting one again (a project change) doesn't leave ~38 MB
-// behind each time. The builder looks at `stop` between pairs of frames, so the wait is a few ms.
+// detached thread still building would run on in unmapped code. Then, with no instance alive, it
+// frees the tables, so removing the last instance and inserting one again (a project change)
+// doesn't leave ~38 MB behind each time. A host that exits while an instance still renders
+// keeps its tables to the end: the OS takes them back. The builder looks at `stop` between pairs
+// of frames, so the wait is a few ms.
 //
 // The unload itself was tried by hand: a loader that dlopens build/ambientforce.so, makes and
 // closes an instance and dlcloses it, mid-build (dlclose took 1 ms) and after all tables were
@@ -35,11 +37,16 @@ Builder& builder() {
     return b;
 }
 
-// In id order, each table published as soon as it is built. One that can't be built (out of
-// memory) leaves its slot on the sine. Nothing may escape a thread: that would end MPC.
+std::atomic<int> live{0};   // plugin instances alive
+
+// In id order, each table published as soon as it is built; one already published (kept by a
+// release while instances were alive) stays as it is, since it may be being read. One that can't
+// be built (out of memory) leaves its slot on the sine. Nothing may escape a thread: that would
+// end MPC.
 void run(Builder* b) {
     TableSet& set = sharedTables();
     for (int id = 0; id < TB_COUNT && !b->stop.load(std::memory_order_relaxed); ++id) {
+        if (set.t[id].load(std::memory_order_acquire)) continue;
         try {
             std::unique_ptr<Wavetable> t(new Wavetable);
             if (buildTable(id, *t, &b->stop)) set.t[id].store(t.release(), std::memory_order_release);
@@ -49,13 +56,15 @@ void run(Builder* b) {
     }
 }
 
-// Each slot back to the sine before its table is freed: whatever reads a slot afterwards gets
-// the sine, never a freed table. Reads already under way must be over (no instance rendering).
+// The builder always stops. The tables are freed only with no instance alive, each slot back to
+// the sine before its table goes: whatever reads a slot afterwards gets the sine, never a freed
+// table.
 void release(Builder& b) {
     std::lock_guard<std::mutex> lk(b.mtx);
     b.stop.store(true, std::memory_order_relaxed);
     if (b.thread.joinable()) b.thread.join();
-    for (auto& slot : sharedTables().t) delete slot.exchange(nullptr, std::memory_order_acq_rel);
+    if (live.load(std::memory_order_acquire) == 0)
+        for (auto& slot : sharedTables().t) delete slot.exchange(nullptr, std::memory_order_acq_rel);
     b.stop.store(false, std::memory_order_relaxed);
     b.started.store(false, std::memory_order_release);
 }
@@ -97,5 +106,9 @@ void releaseTables() {
         trace("tables: could not stop the builder");
     }
 }
+
+void instanceOpened() { live.fetch_add(1, std::memory_order_acq_rel); }
+void instanceClosed() { live.fetch_sub(1, std::memory_order_acq_rel); }
+int liveInstances() { return live.load(std::memory_order_acquire); }
 
 } // namespace af

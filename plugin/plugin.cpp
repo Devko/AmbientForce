@@ -333,7 +333,7 @@ intptr_t dispatch(Plugin* p, int32_t op, int32_t idx, intptr_t val, void* ptr) {
     const bool validIdx = idx >= 0 && idx < P_COUNT;
     switch (op) {
         case vst::effOpen: return 1;
-        case vst::effClose: delete p; return 1;
+        case vst::effClose: delete p; af::instanceClosed(); return 1;
         case vst::effGetProgram: return 0;
         case vst::effGetProgramName: copyStr(ptr, kPlugName, 24); return 0;
         case vst::effGetPlugCategory: return vst::kPlugCategSynth;
@@ -404,6 +404,7 @@ uint32_t instanceSeed(const void* p) {
 
 AEffect* createPlugin(audioMasterCallback master) {
     Plugin* p = new Plugin();
+    af::instanceOpened();   // until effClose: the shared tables stay while it may read them
     p->master = master;
     const uint32_t seed = instanceSeed(p);
     p->engine.seed(seed);

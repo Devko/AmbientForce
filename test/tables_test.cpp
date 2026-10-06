@@ -1,7 +1,8 @@
 // The table library (dsp/wavetable.*, dsp/lifetime.*, plugin/tables.*): names, band limits per
 // mip level, equal RMS across a life, the life curves, size, determinism, the builder thread's
-// handoff to the audio side, and its release at unload.
+// handoff to the audio side, and its release at unload or exit (with and without instances alive).
 #include "check.h"
+#include "host.h"
 #include "../dsp/lifetime.h"
 #include "../dsp/wavetable.h"
 #include "../plugin/tables.h"
@@ -243,6 +244,7 @@ void testHandoff(const std::vector<af::Wavetable>& built, Clock::time_point star
 // false with nothing built. (The module unload itself was tried by hand: see plugin/tables.cpp.)
 void testRelease() {
     std::printf("== tables: stopping the builder (the unload)\n");
+    CHECK(af::liveInstances() == 0);   // no instance alive: the release frees the tables
     af::ensureTablesBuilding();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     const Clock::time_point t0 = Clock::now();
@@ -262,13 +264,53 @@ void testRelease() {
     CHECK(!af::buildTable(af::TB_SAW, t, &cancel) && t.frames == 0);
 }
 
+// With an instance alive (a host exiting while it renders), the release only stops the builder:
+// here just after it published Felt Piano. What is published stays, still readable (a freed table
+// would trip ASan), and the next start builds only the rest (checked after the handoff).
+std::vector<const af::Wavetable*> testReleaseLive() {
+    std::printf("== tables: stopping the builder with an instance alive\n");
+    af::TableSet& shared = af::sharedTables();
+    std::vector<const af::Wavetable*> kept(af::TB_COUNT, nullptr);
+    {
+        Host h;   // VSTPluginMain starts the builder
+        CHECK(af::liveInstances() == 1);
+        const Clock::time_point t0 = Clock::now();
+        while (!shared.t[af::TB_FELT_PIANO].load(std::memory_order_acquire) && secondsSince(t0) < 30.0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        const Clock::time_point t1 = Clock::now();
+        af::releaseTables();
+        const double took = secondsSince(t1);
+        CHECK(took < 0.05);
+        int n = 0;
+        bool picked = true;
+        double sum = 0.0;
+        for (int id = 0; id < af::TB_COUNT; ++id) {
+            const af::Wavetable* p = shared.t[id].load(std::memory_order_acquire);
+            kept[static_cast<size_t>(id)] = p;
+            if (!p) continue;
+            ++n;
+            picked = picked && &shared.get(id) == p;
+            for (int f : {0, p->frames - 1})
+                for (int i = 0; i < af::kTableSize; ++i) sum += std::fabs(p->at(f, 0, i));
+        }
+        std::printf("  released in %.1f ms, %d of %d tables kept\n", 1e3 * took, n, af::TB_COUNT);
+        CHECK(kept[af::TB_FELT_PIANO] != nullptr);
+        CHECK(n < af::TB_COUNT);   // the builder was stopped, not finished
+        CHECK(picked);
+        CHECK(sum > 0.0);
+    }
+    CHECK(af::liveInstances() == 0);
+    return kept;
+}
+
 } // namespace
 
 void tablesTests() {
     testNames();
     testRelease();
+    const std::vector<const af::Wavetable*> kept = testReleaseLive();
     const Clock::time_point started = Clock::now();
-    af::ensureTablesBuilding();   // starts over after the release; works alongside the builds below
+    af::ensureTablesBuilding();   // builds what is missing; works alongside the builds below
 
     std::vector<af::Wavetable> built(af::TB_COUNT);
     std::printf("  built in");
@@ -284,6 +326,13 @@ void tablesTests() {
     testEqualRms(built);
     testLifeCurves(built);
     testHandoff(built, started);
+
+    // The tables kept by the release with an instance alive were not built again.
+    bool stayed = true;
+    for (int id = 0; id < af::TB_COUNT; ++id)
+        if (kept[static_cast<size_t>(id)])
+            stayed = stayed && af::sharedTables().t[id].load(std::memory_order_acquire) == kept[static_cast<size_t>(id)];
+    CHECK(stayed);
 }
 
 } // namespace aft
