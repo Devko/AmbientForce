@@ -1,29 +1,37 @@
 #pragma once
 // The lifetime oscillator (CONCEPT.md 5.2). A wavetable oscillator over PolyForce's table layout
 // (wavetable.h); LifeScan, the read position that moves through a lifetime table (Age, Sway and
-// Smear); and the Couple modes that join oscillator A to oscillator B. Header-only: the voices'
-// loops inline it.
+// Smear); and the Couple modes that join oscillator A to oscillator B. Header-only: templates and
+// small inline functions, compiled into each stratum that uses them.
 //
 // Two reads, chosen at compile time: 4-point Hermite interpolation (TableOsc) and PolyForce's
-// linear one (TableOscLinear). The upper mip levels keep 8 samples per cycle of their top
-// harmonic, and linear interpolation there leaves images of those harmonics at -64 dB under a
-// saw's fundamental (level 5: 32 harmonics in 256 samples; note 72, folded to 14.6 kHz). Hermite
-// takes them to -74.5 dB, for twice the reads. Lifetime frames, whose top harmonics are much
-// quieter than a saw's, leave less either way.
+// linear one (TableOscLinear). Mip levels 2 to 5 keep 8 samples per cycle of their top harmonic
+// (levels 0 and 1, below 51 Hz, fewer; levels 6 and up more), and linear interpolation there
+// leaves images of the top harmonics folded anywhere into the audio band: at worst -64 dB under a
+// saw's fundamental, on level 5, where those harmonics are loudest against it (32 harmonics in
+// 256 samples; note 72, folded to 14.6 kHz). Hermite takes them to -74.5 dB, for twice the reads.
+// Lifetime frames, whose top harmonics are much quieter than a saw's, leave less either way.
 //
 // The cost, as ARM instructions a sample in the inner loop (-O3, the device's flags), over one
 // frame / a pair of frames / a position crossing frames within the render; FM adds 3 to 5:
-//   Hermite  41 / 66 / 85
-//   linear   20 / 35 / 52
-// By PolyForce's calibration (its ARM instructions per block against its device bench: about 1 ns
-// an instruction), a Hermite oscillator over a pair of frames is about 0.29% of a 128-frame block
-// and a linear one over one frame about 0.09%. So the lifetime oscillators (A, Ground's partials)
-// read with Hermite and Bloom's oscillator B, mostly a digital wave, linearly (renderCoupled()).
-// The device bench (Task 11) has the final word; if Bloom runs over, its unison drops from 2 to 1
-// first (CONCEPT.md 11, the caps' order).
+//   Hermite  41 / 65 / 84
+//   linear   20 / 34 / 52
+// and about 100 more per render (the pitch, the position, the read's set-up), 3 a sample at the
+// control step's 32. With 32-sample renders a moving position crosses frames in about 1 render in
+// 3 at the fastest sway (depth 1, 2 Hz), 1 in 10 at 0.5 Hz, 1 in 30 at full Smear, and 1 in 250
+// at Bloom's and Ground's default settings. By PolyForce's calibration (its ARM instructions per
+// block against its device bench: about 1 ns an instruction), a Hermite oscillator over a pair of
+// frames is about 0.29% of a 128-frame block and a linear one over one frame about 0.09%. So the
+// lifetime oscillators (A, Ground's partials) read with Hermite and Bloom's oscillator B, mostly a
+// digital wave, linearly (renderCoupled()). The device bench (Task 11) has the final word; if
+// Bloom runs over, its unison drops from 2 to 1 first (CONCEPT.md 11, the caps' order).
 //
-// A known limit: FM widens A's spectrum, but A's mip level comes from A's own pitch, so at high
-// notes with deep FM the partials pushed past Nyquist fold back down.
+// Known limits, for the voices (Ground, Bloom):
+// - FM widens A's spectrum, but A's mip level comes from A's own pitch, so at high notes with deep
+//   FM the partials pushed past Nyquist fold back down.
+// - A change of table mid-note is not crossfaded: the oscillator reads the new table from the next
+//   render on (its position glides on, but from one table's frame to another's there is a step).
+//   A voice that lets the table change while it sounds fades across it itself.
 #include "common.h"
 #include "wavetable.h"
 
@@ -146,9 +154,10 @@ struct Span {
     const int16_t* a = nullptr;   // ONE, PAIR: the first frame's level; WALK: frame 0's level
     const int16_t* b = nullptr;   // PAIR: the second frame's level
     const float* scale = nullptr; // WALK: every frame's scale
-    float sa = 1.0f, sb = 1.0f;   // ONE, PAIR: the frames' scales
-    float x0 = 0.0f, dx = 0.0f;   // PAIR: the second frame's share at sample i is x0 + dx (i + 1);
-                                  // WALK: the frame position likewise
+    float sa = 1.0f;              // ONE: the frame's scale
+    float wa = 0.0f, wb = 0.0f;   // PAIR: the frames' weights (scale x share) at sample i are
+    float dwa = 0.0f, dwb = 0.0f; // wa + dwa (i + 1) and wb + dwb (i + 1)
+    float x0 = 0.0f, dx = 0.0f;   // WALK: the frame position before the first sample, its step
     int last = 0;                 // WALK: the last pair's first frame (frames - 2)
     uint32_t wrap = 0;            // the level's length - 1
     int shift = 21;               // 32 - the level's bits: phase >> shift is the sample
@@ -168,27 +177,28 @@ AF_INLINE void taps(const int16_t* p, uint32_t j, uint32_t wrap, float& xm, floa
 // n samples into out; returns the phase after the last. The phase is a 32-bit fixed-point fraction
 // of a cycle: its top bits index the level, the rest are the interpolation fraction, and the
 // wrap-around is integer overflow. FM: fm[i] (cycles) moves the read, not the phase itself.
-// Hermite: four samples a frame; else two (linear, PolyForce's read).
-template <bool Hermite, int Kind, bool FM>
-uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const float* fm) {
-    // Locals: the stores to out could otherwise alias the span, and every field would be loaded
-    // again for every sample.
+// Hermite: four samples a frame; else two (linear, PolyForce's read). K: the Kind. The span comes
+// by value: a span whose address went out would give span() a stack guard on every render.
+template <bool Hermite, int K, bool FM>
+uint32_t play(const Span s, uint32_t ph, uint32_t dph, float* out, int n, const float* fm) {
+    // Locals: the stores to out could otherwise alias the span's fields, and every field would be
+    // loaded again for every sample.
     const int16_t* const a = s.a;
     const int16_t* const b = s.b;
     const float* const scale = s.scale;
-    const float sa = s.sa, sb = s.sb, xs = s.x0, dx = s.dx, frac = s.frac;
+    const float sa = s.sa, dwa = s.dwa, dwb = s.dwb, xs = s.x0, dx = s.dx, frac = s.frac;
     const uint32_t wrap = s.wrap, fracMask = s.fracMask;
     const int shift = s.shift, last = s.last;
+    const float wa0 = s.wa, wb0 = s.wb;
     float k = 0.0f;   // i + 1, counted in floats (no conversion per sample)
     for (int i = 0; i < n; ++i) {
         uint32_t p = ph;
         // 2^24 steps a cycle, then into the top bits: offsets up to +-128 cycles, no overflow.
         if constexpr (FM) p += static_cast<uint32_t>(static_cast<int32_t>(fm[i] * 16777216.0f)) << 8;
         ph += dph;
-        k += 1.0f;
         const uint32_t j = p >> shift;
         const float t = static_cast<float>(p & fracMask) * frac;
-        if constexpr (Kind == K_ONE) {
+        if constexpr (K == K_ONE) {
             if constexpr (Hermite) {
                 float am, a0, a1, a2;
                 taps(a, j, wrap, am, a0, a1, a2);
@@ -200,8 +210,9 @@ uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const
         } else {
             const int16_t *A = a, *B = b;
             float wa, wb;
-            const float x = xs + dx * k;
-            if constexpr (Kind == K_WALK) {
+            k += 1.0f;
+            if constexpr (K == K_WALK) {
+                const float x = xs + dx * k;
                 const int f = std::min(std::max(static_cast<int>(x), 0), last);
                 const float u = x - static_cast<float>(f);
                 A = a + static_cast<ptrdiff_t>(f) * kFrameStride;
@@ -209,8 +220,10 @@ uint32_t play(const Span& s, uint32_t ph, uint32_t dph, float* out, int n, const
                 wa = scale[f] * (1.0f - u);
                 wb = scale[f + 1] * u;
             } else {
-                wa = sa - sa * x;
-                wb = sb * x;
+                // From the start, not step by step: adding the steps up drifts by up to 6e-6 over
+                // a 128-sample render.
+                wa = wa0 + dwa * k;
+                wb = wb0 + dwb * k;
             }
             // Interpolation and crossfade are both linear in the samples: mix the taps, then
             // interpolate once.
@@ -271,30 +284,17 @@ public:
             std::fill(out, out + n, 0.0f);
             return;
         }
-        inc = clampInc(inc);
+        pitch(inc);
         pos = lifeosc::unit(pos);
-        const int mip = levelFor(inc);
-        const uint32_t dph = stepFor(inc);
         const float frames1 = static_cast<float>(t.frames - 1);
         const float f1 = pos * frames1, f0 = mip_ < 0 ? f1 : pos_ * frames1;
         const int was = mip_;
         pos_ = pos;
-        mip_ = mip;
-        if (was < 0 || was == mip) {
-            ph_ = span(t, mip, ph_, dph, f0, f1, out, n, fmIn);
-            return;
-        }
-        const float df = (f1 - f0) / static_cast<float>(n), w = 1.0f / static_cast<float>(n);
-        for (int o = 0; o < n; o += kChunk) {
-            const int m = std::min(kChunk, n - o);
-            const float fs = f0 + df * static_cast<float>(o);
-            const float fe = o + m == n ? f1 : f0 + df * static_cast<float>(o + m);
-            const float* fm = fmIn ? fmIn + o : nullptr;
-            float fresh[kChunk];
-            span(t, was, ph_, dph, fs, fe, out + o, m, fm);
-            ph_ = span(t, mip, ph_, dph, fs, fe, fresh, m, fm);
-            for (int i = 0; i < m; ++i) out[o + i] += static_cast<float>(o + i + 1) * w * (fresh[i] - out[o + i]);
-        }
+        mip_ = level_;
+        if (was < 0 || was == level_)
+            ph_ = span(t, level_, ph_, step_, f0, f1, out, n, fmIn);
+        else
+            fadeLevels(t, was, f0, f1, out, n, fmIn);
     }
 
     // What render() would do to the oscillator, without reading the table or writing anything:
@@ -303,31 +303,53 @@ public:
     // against A, renderCoupled()). FM doesn't move the phase itself, so it doesn't matter here.
     void skip(const Wavetable& t, float inc, float pos, int n) {
         if (n <= 0 || t.frames <= 0) return;   // render() leaves the state alone too
-        inc = clampInc(inc);
+        pitch(inc);
         pos_ = lifeosc::unit(pos);
-        mip_ = levelFor(inc);
-        ph_ += static_cast<uint32_t>(n) * stepFor(inc);   // modulo 2^32, as n additions would be
+        mip_ = level_;
+        ph_ += static_cast<uint32_t>(n) * step_;   // modulo 2^32, as n additions would be
     }
 
 private:
-    // The pitch as render() and skip() take it: 0..0.49 cycles a sample (a NaN: 0), its mip level
-    // and its phase step.
-    static float clampInc(float inc) { return inc > 0.0f ? std::min(inc, 0.49f) : 0.0f; }
-    static int levelFor(float inc) { return mipFor(std::max(inc, 1e-6f)); }   // never kAliasLimit / 0
-    static uint32_t stepFor(float inc) { return static_cast<uint32_t>(inc * 4294967296.0f); }
+    // The pitch as render() and skip() take it: 0..0.49 cycles a sample (a NaN: 0); its mip level
+    // and phase step are worked out again only when it changes (mipFor is a search).
+    void pitch(float inc) {
+        inc = inc > 0.0f ? std::min(inc, 0.49f) : 0.0f;
+        if (inc == inc_) return;
+        inc_ = inc;
+        level_ = mipFor(std::max(inc, 1e-6f));   // never kAliasLimit / 0
+        step_ = static_cast<uint32_t>(inc * 4294967296.0f);
+    }
 
-    // n samples of level `mip` from phase ph, the frame position gliding from f0 (before the first
-    // sample) to f1 (the last). Returns the phase after them.
-    static uint32_t span(const Wavetable& t, int mip, uint32_t ph, uint32_t dph, float f0, float f1, float* out, int n,
-                         const float* fm) {
+    // The render in which the mip level changes, from `was` to level_: both levels, the old fading
+    // into the new. Out of line: it is rare, and its scratch buffer would otherwise give every
+    // render a bigger stack frame (and a stack guard).
+    __attribute__((noinline)) void fadeLevels(const Wavetable& t, int was, float f0, float f1, float* out, int n,
+                                              const float* fmIn) {
+        const float df = (f1 - f0) / static_cast<float>(n), w = 1.0f / static_cast<float>(n);
+        for (int o = 0; o < n; o += kChunk) {
+            const int m = std::min(kChunk, n - o);
+            const float fs = f0 + df * static_cast<float>(o);
+            const float fe = (o + m) == n ? f1 : f0 + df * static_cast<float>(o + m);
+            const float* fm = fmIn ? fmIn + o : nullptr;
+            float fresh[kChunk];
+            span(t, was, ph_, step_, fs, fe, out + o, m, fm);
+            ph_ = span(t, level_, ph_, step_, fs, fe, fresh, m, fm);
+            for (int i = 0; i < m; ++i) out[o + i] += static_cast<float>(o + i + 1) * w * (fresh[i] - out[o + i]);
+        }
+    }
+
+    // n samples of level `level` from phase ph, the frame position gliding from f0 (before the
+    // first sample) to f1 (the last). Returns the phase after them.
+    static uint32_t span(const Wavetable& t, int level, uint32_t ph, uint32_t step, float f0, float f1, float* out,
+                         int n, const float* fm) {
         using namespace lifeosc;
         Span s;
-        s.wrap = static_cast<uint32_t>(mipLength(mip) - 1);
-        s.shift = 32 - kMipBits[mip];
+        s.wrap = static_cast<uint32_t>(mipLength(level) - 1);
+        s.shift = 32 - kMipBits[level];
         s.fracMask = (1u << s.shift) - 1u;
-        s.frac = kMip.frac[mip];
-        const int16_t* base = t.data.data() + kMip.offset[mip];
-        int kind = K_ONE;
+        s.frac = kMip.frac[level];
+        const int16_t* base = t.data.data() + kMip.offset[level];
+        Kind kind = K_ONE;
         int f = 0;
         if (t.frames > 1) {
             s.last = t.frames - 2;
@@ -347,28 +369,39 @@ private:
                 kind = K_PAIR;
                 f = a0;
                 s.b = base + static_cast<ptrdiff_t>(f + 1) * kFrameStride;
-                s.sb = t.scale[static_cast<size_t>(f + 1)];
-                s.x0 = x0;
-                s.dx = (x1 - x0) / static_cast<float>(n);
+                const float sa = t.scale[static_cast<size_t>(f)], sb = t.scale[static_cast<size_t>(f + 1)];
+                const float dx = (x1 - x0) / static_cast<float>(n);
+                s.wa = sa - sa * x0;
+                s.wb = sb * x0;
+                s.dwa = -sa * dx;
+                s.dwb = sb * dx;
             }
         }
         if (kind != K_WALK) {
             s.a = base + static_cast<ptrdiff_t>(f) * kFrameStride;
             s.sa = t.scale[static_cast<size_t>(f)];
         }
-        switch (kind * 2 + (fm ? 1 : 0)) {
-            case 0: return play<Hermite, K_ONE, false>(s, ph, dph, out, n, fm);
-            case 1: return play<Hermite, K_ONE, true>(s, ph, dph, out, n, fm);
-            case 2: return play<Hermite, K_PAIR, false>(s, ph, dph, out, n, fm);
-            case 3: return play<Hermite, K_PAIR, true>(s, ph, dph, out, n, fm);
-            case 4: return play<Hermite, K_WALK, false>(s, ph, dph, out, n, fm);
-            default: return play<Hermite, K_WALK, true>(s, ph, dph, out, n, fm);
+        const bool withFm = fm != nullptr;
+        switch (kind) {
+            case K_ONE:
+                return withFm ? play<Hermite, K_ONE, true>(s, ph, step, out, n, fm)
+                              : play<Hermite, K_ONE, false>(s, ph, step, out, n, fm);
+            case K_PAIR:
+                return withFm ? play<Hermite, K_PAIR, true>(s, ph, step, out, n, fm)
+                              : play<Hermite, K_PAIR, false>(s, ph, step, out, n, fm);
+            case K_WALK:
+                return withFm ? play<Hermite, K_WALK, true>(s, ph, step, out, n, fm)
+                              : play<Hermite, K_WALK, false>(s, ph, step, out, n, fm);
         }
+        return ph;   // not reached: the switch has every kind
     }
 
     uint32_t ph_ = 0;
-    float pos_ = 0.0f;   // the last render's position, where the next one's glide starts
-    int mip_ = -1;       // the last render's level; -1: none since reset() (no glide, no level fade)
+    float pos_ = 0.0f;    // the last render's position, where the next one's glide starts
+    int mip_ = -1;        // the last render's level; -1: none since reset() (no glide, no level fade)
+    float inc_ = -1.0f;   // the pitch last worked out (none yet), its level and its phase step
+    int level_ = 0;
+    uint32_t step_ = 0;
 };
 
 using TableOsc = TableOscT<true>;         // the lifetime oscillator: A, and Ground's partials
@@ -412,19 +445,27 @@ inline void couple(int mode, float amt, float blend, const float* a, const float
 // B reads linearly (TableOscLinear). It is mostly a digital wave, there as a blend or a modulator,
 // and the linear read's images (-64 dB under a saw's fundamental at worst, folded to 14.6 kHz,
 // under a reverb) are not worth the Hermite read's cost a second time per voice (see the top of
-// this file). Mix at blend 0 doesn't read B at all, as none of it is heard, but B is skip()ped
-// along, not left standing: where B's phase stands against A's matters to Mix too whenever the
-// two are in tune (the same pitch, or octaves apart, as Bloom's B octave sets them). Two sines in
-// tune add up to anything from silence to twice the level; when the blend opens again, that must
-// not depend on how long it sat at 0. Every mode always ends up exactly where rendering B
-// throughout would have.
+// this file).
+//
+// An oscillator that isn't heard isn't read, but it is skip()ped along, not left standing: at
+// blend 1 (B alone, in every mode) A, and at Mix with blend 0 B. Where B's phase stands against
+// A's matters to every mode, Mix too whenever the two are in tune (the same pitch, or octaves
+// apart, as Bloom's B octave sets them): two sines in tune add up to anything from silence to
+// twice the level, and when the blend moves again that must not depend on how long it sat at an
+// end. Every step ends up exactly where rendering both throughout would have.
 inline void renderCoupled(TableOsc& oa, const Wavetable& ta, float incA, TableOscLinear& ob, const Wavetable& tb,
                           float incB, float pos, int mode, float amt, float blend, float* out, float* scratch, int n) {
     if (n <= 0) return;
+    const float bl = lifeosc::unit(blend);
+    if (bl == 1.0f) {   // what couple() would leave: B, exactly
+        ob.render(tb, incB, pos, out, n);
+        oa.skip(ta, incA, pos, n);
+        return;
+    }
     const bool mix = mode != CP_FM && mode != CP_AM && mode != CP_RING;   // what couple() plays as Mix
-    if (mix && lifeosc::unit(blend) == 0.0f) {
+    if (mix && bl == 0.0f) {   // what couple() would leave: A, exactly
         ob.skip(tb, incB, pos, n);
-        oa.render(ta, incA, pos, out, n);   // what couple() would leave: A, exactly
+        oa.render(ta, incA, pos, out, n);
         return;
     }
     float* b = scratch;
