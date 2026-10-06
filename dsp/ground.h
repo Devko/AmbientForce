@@ -30,7 +30,8 @@
 //   out fades it back in from where it is.
 // - Body: two band-pass SVFs on a vowel's first two formants, mixed with the dry: 0..1/3 fades
 //   in "a" (800 / 1150 Hz), 1/3..2/3 moves it to "o" (450 / 800), 2/3..1 on to "u" (350 / 600).
-//   It shapes the drone toward a choir; at 0 it costs nothing.
+//   It shapes the drone toward a choir, lifting a harmonic on a formant by 4.7 dB at most and
+//   keeping the level within 2.5 dB of the dry's; at 0 it costs nothing.
 // - Tone: a gentle low-pass SVF (Q 0.707, no peak) after the sum, in stereo.
 // - Breath: a sine LFO at breathHz moves the level by +-3 dB and the cutoff by +-1 octave, both
 //   times breath.

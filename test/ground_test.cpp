@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -26,7 +27,7 @@ const af::TableSet& tables() {
     static af::TableSet set;
     static bool built = false;
     if (!built) {
-        for (int id : {af::TB_SINE, af::TB_SAW, af::TB_SQUARE, af::TB_CELLO_TASTO, af::TB_CHOIR_AH_OO}) {
+        for (int id = 0; id < af::TB_COUNT; ++id) {   // the headroom sweep plays every one
             CHECK(af::buildTable(id, t[id]));
             set.t[id].store(&t[id], std::memory_order_release);
         }
@@ -461,9 +462,7 @@ void testNoSteps() {
     CHECK(jump <= 3.0f * steadyStep);   // ramps over a chunk; a step would be ~30x
 }
 
-// Check 6: Tone at both ends, Body 1 and Breath 1 for a minute: finite and at most 4. Then the
-// headroom: the loudest Ground found (every table, Body, Color and Tone tried with every partial at
-// 1, level 1, Breath 1, Beat 3 and Width 0: Square, Body 1, an 11th) peaks under 1.5.
+// Check 6: Tone at both ends, Body 1 and Breath 1 for a minute: finite and at most 4.
 void testStability() {
     std::printf("== ground: stability\n");
     for (float cutoff : {40.0f, 16000.0f}) {
@@ -491,26 +490,73 @@ void testStability() {
         CHECK(finite);
         CHECK(pk <= 4.0f);
     }
-    af::GroundPatch p;
-    p.table = af::TB_SQUARE;
-    p.level = 1.0f;
-    p.sub = p.root = p.fifth = p.octave = p.color = 1.0f;
-    p.colorInterval = af::CI_ELEVENTH;
-    p.body = 1.0f;
-    p.breath = 1.0f;
-    p.breathHz = 0.5f;
-    p.beatHz = 3.0f;
-    p.width = 0.0f;
-    p.fadeS = 0.05f;
-    af::Ground g;
-    g.seed(1);
-    g.set(p, af::HarmonyPatch{});
-    g.setTarget(43);
-    const Out o = play(g, 20 * kSec);
-    const float top = std::max(peak(o.L), peak(o.R));
-    std::printf("  the loudest found (Square, Body 1, every partial at 1, level 1, Breath 1): peak %.3f\n", top);
-    CHECK(allFinite(o.L) && allFinite(o.R));
-    CHECK(top <= 1.5f && top > 1.0f);
+}
+
+// The headroom: with every partial at 1, level 1, Breath 1 and Width 0, Ground peaks under 1.5 at
+// any root. A sweep: every table; the 12 pitch classes in register 3 (where Body's formants catch
+// the strongest harmonics) and C, E and G# in registers 1 and 2; Body 0, 2/3 and 1; the 4th and the
+// m7 in turn. A quarter of a second each, so Breath runs at 5 Hz (a crest in every render) and
+// every render has its own seed (its own alignment of the partials). The long sweep behind
+// kHeadroom (ground.cpp) found 1.26; this one, shorter, finds a little less.
+void testHeadroom() {
+    std::printf("== ground: headroom\n");
+    const auto start = std::chrono::steady_clock::now();
+    struct Root {
+        int reg, pc;
+    };
+    std::vector<Root> roots;
+    for (int pc = 0; pc < 12; ++pc) roots.push_back({3, pc});
+    for (int reg : {1, 2})
+        for (int pc : {0, 4, 8}) roots.push_back({reg, pc});
+    float worst = 0.0f, worstBody = 0.0f;
+    int worstTable = 0, worstReg = 0, worstPc = 0, renders = 0;
+    bool finite = true;
+    uint32_t seed = 100;
+    float L[kHostBlock], R[kHostBlock], sL[kHostBlock], sR[kHostBlock];
+    for (int table = 0; table < af::TB_COUNT; ++table)
+        for (size_t k = 0; k < roots.size(); ++k)
+            for (float body : {0.0f, 2.0f / 3.0f, 1.0f}) {
+                af::GroundPatch p;
+                p.table = table;
+                p.level = 1.0f;
+                p.sub = p.root = p.fifth = p.octave = p.color = 1.0f;
+                p.colorInterval = k % 2 ? af::CI_MIN7 : af::CI_FOURTH;
+                p.registerOct = roots[k].reg;
+                p.body = body;
+                p.breath = 1.0f;
+                p.breathHz = 5.0f;
+                p.beatHz = 3.0f;
+                p.width = 0.0f;
+                p.fadeS = 0.05f;
+                af::Ground g;
+                g.seed(seed++);
+                g.set(p, af::HarmonyPatch{});
+                g.setTarget(roots[k].pc);
+                float pk = 0.0f;
+                for (int b = 0; b < kSec / 4 / kHostBlock; ++b) {
+                    std::fill(L, L + kHostBlock, 0.0f);
+                    std::fill(R, R + kHostBlock, 0.0f);
+                    g.render(tables(), L, R, sL, sR, 0.5f, kHostBlock);
+                    for (int i = 0; i < kHostBlock; ++i) {
+                        finite = finite && std::isfinite(L[i]) && std::isfinite(R[i]);
+                        pk = std::max({pk, std::fabs(L[i]), std::fabs(R[i])});
+                    }
+                }
+                ++renders;
+                if (pk > worst) {
+                    worst = pk;
+                    worstTable = table;
+                    worstReg = roots[k].reg;
+                    worstPc = roots[k].pc;
+                    worstBody = body;
+                }
+            }
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::printf("  %d renders: the loudest %.3f (%s, register %d, pitch class %d, Body %.2f) (%.1f s)\n", renders, worst,
+                af::tableName(worstTable), worstReg, worstPc, worstBody, secs);
+    CHECK(finite);
+    CHECK(worst <= 1.5f && worst > 1.0f);   // and loud enough that the sweep found the loud cases
+
     // The default drone, for the engine's gain staging.
     af::GroundPatch d;
     d.breath = 0.0f;
@@ -646,6 +692,7 @@ void groundTests() {
     testNoSteps();
     testTableSwitch();
     testStability();
+    testHeadroom();
     testDeterminism();
 }
 

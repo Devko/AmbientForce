@@ -12,22 +12,27 @@ constexpr float kFloorDb = -60.0f;       // the fade's bottom: silence from here
 constexpr float kToneK = 1.41421356f;    // the Tone's 1 / Q: Q 0.707, flat up to the cutoff, no peak
 constexpr float kBodyK = 0.25f;          // the formants' 1 / Q: Q 4
 constexpr float kF2 = 0.63f;             // the second formant under the first (PolyForce's vowel filter)
-// At full Body the dry falls to 0.7 and the formants come in at twice their band-passes' unity
-// peak: a harmonic on the first formant ends up 12 dB over one between them, as a sung vowel has
-// it. The level moves less than 3 dB either way: the default drone on Cello Tasto loses up to
-// 2.9 dB (its energy sits under the formants), on Choir Ah-Oo, a vowel already, it gains up to 2.1.
-// Taking more of the dry away thins a low drone out: with the dry down to half, the cello lost
-// 5.6 dB.
-constexpr float kBodyDry = 0.3f, kBodyWet = 2.0f;
+// At full Body the dry falls to 0.75 and the formants come in at 0.9 of their band-passes' unity
+// peak: a harmonic on a formant is lifted 4.7 dB at most (the second formant's skirt included),
+// and stands 7 dB over one between the formants, so the vowel is there without Body making a
+// harmonic much louder than the dry had it. The level stays within 2.5 dB under the dry's: over
+// the tables the default drone loses 1.6 to 2.5 dB at Body 1/3 (most of its energy sits under the
+// formants) and 0 to 2.3 dB at Body 1, where Choir Ah-Oo, a vowel already, loses nothing. Twice
+// the formants over 0.7 of the dry made a stronger vowel but lifted a harmonic on a formant by up
+// to 9 dB, and the loudest peak from 1.26 to 1.95 (Square, B in register 3, Body 1).
+constexpr float kBodyDry = 0.25f, kBodyWet = 0.9f;
 constexpr float kBreathDb = 3.0f, kBreathOct = 1.0f;   // Breath's swing at 1, either way
 // The partials' sum, scaled so the loudest Ground there is peaks under 1.5: every partial at 1
 // adds up to 5 times one partial's peak where they meet in phase, Breath adds 3 dB at its crest,
-// Body its formants. Measured with every partial at 1, level 1, Breath 1, Beat 3 (so the partials
-// pass through every alignment) and Width 0, over every table, Body 0, 1/3 and 1, three Color
-// intervals and two Tones, 20 s each: the loudest is Square at Body 1 with an 11th, 1.49 (11.9
-// before this scale), and the loudest lifetime table Tape Strings, 1.34. The default drone (level
-// 0.7, Breath 0) then plays at about -22 dBFS RMS (-19 on Square, -24.5 on Saw); Task 10's level
-// matching sets the presets. -18 dB, a power of two, so the scale is exact.
+// Body lifts what sits on its formants. Measured with every partial at 1, level 1, Breath 1 at
+// 0.5 Hz, Beat 3 (so the partials pass through their alignments) and Width 0, over every table,
+// the 12 pitch classes in registers 1 to 3, the 6 Color intervals and Body 0, 1/3, 0.5, 2/3, 0.85
+// and 1, 8 s each: the loudest is Square, B in register 3 with a 4th at Body 1, 1.26; the loudest
+// lifetime table Felt Piano, 1.20 (F# in register 3, m7, Body 1); at Body 0 nothing passes 1.06.
+// The default drone (level 0.7, Breath 0, G2) then plays at -22.2 dBFS RMS on Cello Tasto, -21.2
+// to -22.9 on the lifetime tables, -19.1 on Square and -24.9 on Saw; Task 10's level matching sets
+// the presets. -18 dB, a power of two, so the scale is exact; up to about 0.145 would keep the
+// worst under 1.5.
 constexpr float kHeadroom = 0.125f;
 constexpr float kInvRate = 1.0f / kRate;
 
