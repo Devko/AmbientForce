@@ -345,6 +345,7 @@ int main() {
         return t += g_msPerEvent;
     };
 
+    harmonyTests();
     engineTests();
     reverbTests();
     testBasics();
