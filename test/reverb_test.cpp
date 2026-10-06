@@ -1033,25 +1033,31 @@ void abyss() {
     CHECK(mid > 18.0 && mid < 22.0);
 }
 
-// No mode grows: Decay at its longest (Abyss: 120 s), size 1, full modulation, no damping, no low
-// cut, freeze off. After a 1 s burst, the last second of a minute peaks no higher than second 2
-// (2..3 s) did: a loop gain of 1 or more would hold the tail there or lift it.
+// No mode grows, and none stalls: Decay at its longest (Abyss: 120 s), size 1, full modulation, no
+// damping, no low cut, freeze off. After a 1 s burst the peak in the last second has fallen below
+// second 2's (2..3 s) by at least half the 60 dB per RT60 the decay promises, so a loop that holds
+// (a gain of 0.99999) fails as well as one that climbs. The plan asked for the last second of a
+// minute no higher than second 2, in every mode: for the 30 s modes that minute was 40% of the
+// suite spent proving a drop of 110 dB. They run 20 s (34 dB expected) and Abyss the minute
+// (28.5 dB), and the check asks for the rate, which "no higher" did not.
 void noGrowth() {
     Reverb r;
     Buf x = whiteNoise(secs(60.0), 0.5f, 71), y = whiteNoise(secs(60.0), 0.5f, 72);
     std::fill(x.begin() + secs(1.0), x.end(), 0.0f);
     std::fill(y.begin() + secs(1.0), y.end(), 0.0f);
-    std::printf("  reverb: decay 30 s, a 1 s burst, the peak in the last second of a minute against second 2:");
+    std::printf("  reverb: decay 30 s, a 1 s burst, the last second's peak under second 2's (expected):");
     for (int mode = 0; mode < Reverb::kModes; ++mode) {
+        const double len = mode == Reverb::ABYSS ? 60.0 : 20.0, rt60 = mode == Reverb::ABYSS ? 120.0 : 30.0;
         P p = wetOnly(mode, 30.0f);
         p.size = 1.0f;
         p.mod = 1.0f;
-        const Stereo s = render(r, p, x, y);
+        const Stereo s = render(r, p, Buf(x.begin(), x.begin() + secs(len)), Buf(y.begin(), y.begin() + secs(len)));
         const float second2 = std::max(peak(s.L, at(2.0), at(3.0)), peak(s.R, at(2.0), at(3.0)));
-        const float last = std::max(peak(s.L, at(59.0)), peak(s.R, at(59.0)));
-        std::printf(" %s %+.0f dB", kModeNames[mode], db(last / second2));
+        const float last = std::max(peak(s.L, at(len - 1.0)), peak(s.R, at(len - 1.0)));
+        const double drop = db(second2 / last), expected = 60.0 * (len - 3.0) / rt60;
+        std::printf(" %s %.0f dB (%.1f)", kModeNames[mode], drop, expected);
         CHECK(allFinite(s.L) && allFinite(s.R));
-        CHECK(second2 > 0.01f && last <= second2);
+        CHECK(second2 > 0.01f && drop >= 0.5 * expected);
     }
     std::printf("\n");
 }
@@ -1141,33 +1147,86 @@ void rise() {
     }
 }
 
-// silent(): a short tail (decay 0.3 s) is silent within half a second of falling under -120 dBFS,
-// and not before it has. Never while a send plays, even one Rise ducks the wet under entirely, nor
-// while a frozen tail rings. A new or reset Space is silent.
+// A Space that has never been set() is a return too: wet only, so nothing of the send comes
+// through before the default predelay (20 ms), not the 70% dry of Reverb::Params' own mix. And so
+// it stays after reset().
+void freshIsWet() {
+    Space s;
+    const Buf x = whiteNoise(secs(0.2), 0.5f, 95), y = whiteNoise(secs(0.2), 0.5f, 96);
+    for (int pass = 0; pass < 2; ++pass) {
+        Buf L(x.size()), R(x.size());
+        for (size_t pos = 0; pos < x.size(); pos += 128) {
+            const int n = static_cast<int>(std::min<size_t>(128, x.size() - pos));
+            s.process(&x[pos], &y[pos], &L[pos], &R[pos], n);
+        }
+        CHECK(peak(L, 0, at(0.02)) < 1e-6f && peak(R, 0, at(0.02)) < 1e-6f);
+        CHECK(rms(L, at(0.1)) > 1e-3);   // and the wet comes
+        s.reset();
+    }
+}
+
+// A burst of `burstS` seconds of noise into Space, then nothing for 3 s in all: where the tail falls
+// under -120 dBFS for good, where silent() starts saying so for good, and whether it said so before
+// the tail's end (early) or still didn't half a second after it (late).
+struct Quieting {
+    size_t end = 0, from = 0;
+    bool early = false, late = false;
+};
+Quieting quieting(Space& s, const Space::Params& p, double burstS) {
+    Buf x = whiteNoise(secs(3.0), 0.5f, 91), y = whiteNoise(secs(3.0), 0.5f, 92);
+    std::fill(x.begin() + secs(burstS), x.end(), 0.0f);
+    std::fill(y.begin() + secs(burstS), y.end(), 0.0f);
+    s.reset();
+    const Return o = runSpace(s, p, x, y);
+    Quieting q;
+    for (size_t i = 0; i < o.L.size(); ++i)
+        if (std::max(std::fabs(o.L[i]), std::fabs(o.R[i])) > 1e-6f) q.end = i + 1;
+    q.from = o.L.size();
+    for (size_t b = 0; b < o.silent.size(); ++b) {
+        const size_t blockEnd = std::min((b + 1) * 128, o.L.size());
+        q.early = q.early || (o.silent[b] && blockEnd <= q.end);
+        q.late = q.late || (!o.silent[b] && blockEnd >= q.end + at(0.5));
+        if (!o.silent[b]) q.from = o.L.size();
+        else if (q.from == o.L.size()) q.from = blockEnd;
+    }
+    return q;
+}
+
+// silent(): a short tail is silent within half a second of falling under -120 dBFS, and not before
+// it has: Hall at decay 0.3 s after a 0.3 s send; a 5 ms burst into the longest predelay (250 ms),
+// where send and wet are both quiet while the burst is on its way; the shortest network (Plate at
+// size 0, no predelay, decay 0.1 s), where the wait is shortest. Never while a send plays, even one
+// Rise ducks the wet under entirely, nor while a frozen tail rings. A new or reset Space is silent.
 void silence() {
     Space s;
     CHECK(s.silent());
     Space::Params p;
     p.reverb.decayS = 0.3f;
+    struct Case {
+        const char* what;
+        double burstS;
+        void (*apply)(Space::Params&);
+    };
+    std::printf("  space: the tail under -120 dBFS, then silent():");
+    for (const Case c : {Case{"decay 0.3 s", 0.3, [](Space::Params&) {}},
+                         Case{"predelay 250 ms", 0.005, [](Space::Params& q) { q.reverb.predelayMs = 250.0f; }},
+                         Case{"Plate size 0, decay 0.1 s", 0.005, [](Space::Params& q) {
+                                  q.reverb.mode = Reverb::PLATE;
+                                  q.reverb.size = 0.0f;
+                                  q.reverb.predelayMs = 0.0f;
+                                  q.reverb.decayS = 0.1f;
+                              }}}) {
+        Space::Params q = p;
+        c.apply(q);
+        const Quieting r = quieting(s, q, c.burstS);
+        std::printf(" %s %.2f s, %.2f s;", c.what, r.end / af::kRate, r.from / af::kRate);
+        CHECK(r.end > at(c.burstS) && r.end + at(0.5) < at(3.0));
+        CHECK(!r.early && !r.late);
+    }
+    std::printf("\n");
     Buf x = whiteNoise(secs(3.0), 0.5f, 91), y = whiteNoise(secs(3.0), 0.5f, 92);
     std::fill(x.begin() + secs(0.3), x.end(), 0.0f);
     std::fill(y.begin() + secs(0.3), y.end(), 0.0f);
-    const Return o = runSpace(s, p, x, y);
-    size_t end = 0;   // the tail's end: past its last sample over -120 dBFS
-    for (size_t i = 0; i < o.L.size(); ++i)
-        if (std::max(std::fabs(o.L[i]), std::fabs(o.R[i])) > 1e-6f) end = i + 1;
-    size_t from = o.L.size();   // where silent() starts saying so for good
-    bool early = false, late = false;
-    for (size_t b = 0; b < o.silent.size(); ++b) {
-        const size_t blockEnd = std::min((b + 1) * 128, o.L.size());
-        early = early || (o.silent[b] && blockEnd <= end);
-        late = late || (!o.silent[b] && blockEnd >= end + at(0.5));
-        if (!o.silent[b]) from = o.L.size();
-        else if (from == o.L.size()) from = blockEnd;
-    }
-    std::printf("  space: decay 0.3 s: the tail under -120 dBFS from %.2f s, silent() from %.2f s\n", end / af::kRate, from / af::kRate);
-    CHECK(end > at(0.3) && end + at(0.5) < o.L.size());
-    CHECK(!early && !late);
 
     // Frozen as the send ends: the tail holds, never silent.
     s.reset();
@@ -1221,6 +1280,7 @@ void reverbTests() {
     abyss();
     noGrowth();
     std::printf("== space\n");
+    freshIsWet();
     rise();
     silence();
 }

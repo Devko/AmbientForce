@@ -91,8 +91,9 @@ public:
     void process(float* L, float* R, int n);
     int tailSamples() const;
     // The longest anything takes to come out once it has gone in, or to go round the network once:
-    // the predelay, the longest line (at the larger size, fully modulated), and the shimmer's
-    // shifter while it runs. In and out both silent for this long: the reverb holds nothing.
+    // the predelay, the longest line (at the larger size, fully modulated) with the diffusers' and
+    // allpasses' build-up, and the shimmer's shifter while it runs. In and out both silent for
+    // this long: the reverb holds nothing.
     int reachSamples() const;
 
     // Whether the last chunk's loop gains or damping moved (the slower network loop), and whether

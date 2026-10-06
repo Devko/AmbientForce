@@ -178,6 +178,17 @@ float clampParam(float x, float lo, float hi, float nan) {
 
 int predelaySamples(float ms) { return static_cast<int>(ms * (kRate / 1000.0f) + 0.5f); }
 
+// How long a mode's diffusers and in-loop allpasses take to let go of what came in: the longer
+// side's four diffusers in a row, and the longest allpass.
+uint32_t buildSamples(const ModeDef& d) {
+    uint32_t diffL = 0, diffR = 0, apMax = 0;
+    for (int k = 0; k < Reverb::kLines; ++k) {
+        (k < 4 ? diffL : diffR) += static_cast<uint32_t>(d.diff[k]);
+        apMax = std::max(apMax, static_cast<uint32_t>(d.ap[k]));
+    }
+    return std::max(diffL, diffR) + apMax;
+}
+
 } // namespace
 
 // --- setup -------------------------------------------------------------------------------------
@@ -287,7 +298,6 @@ void Reverb::loadMode(int m) {
     mode_ = m;
     float b[kLines], e[kLines];
     maxBase_ = meanBase_ = meanAp_ = 0.0f;
-    uint32_t apMax = 0, diffL = 0, diffR = 0;
     for (int k = 0; k < kLines; ++k) {
         b[k] = static_cast<float>(d.line[k]);
         maxBase_ = std::max(maxBase_, b[k]);
@@ -295,8 +305,6 @@ void Reverb::loadMode(int m) {
         apLen_[k] = static_cast<uint32_t>(d.ap[k]);
         diffLen_[k] = static_cast<uint32_t>(d.diff[k]);
         meanAp_ += static_cast<float>(apLen_[k]) / kLines;
-        apMax = std::max(apMax, apLen_[k]);
-        (k < 4 ? diffL : diffR) += diffLen_[k];
         // The magic circle's step for the line's rate, a segment at a time: 2 sin(pi f segment / rate).
         e[k] = 2.0f * std::sin(kPi * d.modHz * kRateMul[k] * kSegment / kRate);
     }
@@ -307,7 +315,7 @@ void Reverb::loadMode(int m) {
     apG_ = d.apGain;
     diffG_[0] = d.diffGain1;
     diffG_[1] = d.diffGain2;
-    build_ = static_cast<float>(std::max(diffL, diffR) + apMax);
+    build_ = static_cast<float>(buildSamples(d));
     lp_[0] = lp_[1] = splat(0.0f);
     jumpCoefs_ = true;
 }
@@ -362,16 +370,20 @@ int Reverb::tailSamples() const {
 }
 
 // Space::silent() waits this long with the send and the wet both quiet. The size may be gliding
-// and the mode changing: the larger of each.
+// and the mode changing: the larger of each, the line and the diffusers' and allpasses' build-up
+// (as tailSamples() counts it) together.
 int Reverb::reachSamples() const {
     const float scale = std::max(scale_, 0.5f + p_.size);
-    float longest = 0.0f;
-    for (const int m : {mode_, p_.mode})
-        for (int k = 0; k < kLines; ++k)
-            longest = std::max(longest, static_cast<float>(kModeDefs[m].line[k]) * scale + kModeDefs[m].modDepth);
+    float lap = 0.0f;   // the longest way in and once round
+    for (const int m : {mode_, p_.mode}) {
+        const ModeDef& d = kModeDefs[m];
+        float longest = 0.0f;
+        for (int k = 0; k < kLines; ++k) longest = std::max(longest, static_cast<float>(d.line[k]) * scale + d.modDepth);
+        lap = std::max(lap, longest + static_cast<float>(buildSamples(d)));
+    }
     const int pre = std::max({predelaySamples(p_.predelayMs), input_.tapA, input_.fade > 0 ? input_.tapB : 0});
     const int shimmer = shimOn_ || p_.shimmer > 0.0f ? static_cast<int>(shimBuf_.size()) : 0;
-    return pre + static_cast<int>(longest) + kTaps + kSegment + shimmer;
+    return pre + static_cast<int>(lap) + kTaps + kSegment + shimmer;
 }
 
 // --- per chunk ---------------------------------------------------------------------------------

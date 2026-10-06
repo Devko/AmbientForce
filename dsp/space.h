@@ -7,14 +7,17 @@
 // Rise: the wet ducks under what is coming in and blooms once it stops, so the reverb answers a
 // note rather than blurring it. An envelope of the send's louder side (5 ms attack, 400 ms release)
 // sets the wet's gain to 1 - rise x min(1, env / 0.25): at Rise 1 a send peaking around -12 dBFS
-// or louder mutes the wet, at Rise 0.5 it halves it. The gain glides (20 ms) and lands exactly,
-// so at Rise 0 Space is the Reverb bit for bit. Only the return ducks, not the network: the tail
-// builds under the note as it would without Rise, and is there when the note lets go.
+// or louder mutes the wet, at Rise 0.5 it halves it. (That -12 dBFS is a first guess: Tasks 8 and
+// 10 calibrate it against the strata's real send levels.) The gain glides (20 ms) and lands
+// exactly, so at Rise 0 Space is the Reverb bit for bit. Only the return ducks, not the network:
+// the tail builds under the note as it would without Rise, and is there when the note lets go.
 //
 // silent(): the send and the wet (before Rise) have both stayed under -120 dBFS for as long as
 // anything takes to come through the Reverb (Reverb::reachSamples()): nothing in flight, the tail
 // gone, so the engine may stop running it. A frozen tail is never silent while it sounds. The
 // counts saturate: an installation running for days never wraps them.
+//
+// Wet only from the start: a Space that has never been set() plays the Reverb's defaults at mix 1.
 //
 // Real-time rules: the constructor allocates (the Reverb's buffers); reset(), set() and process()
 // don't allocate, lock or throw.
@@ -36,7 +39,7 @@ public:
     void reset();
     void set(const Params& p, const Transport& t);
     // sendL/R: the strata's summed sends; out: the wet return (overwritten; it may be the send's
-    // own buffers). n <= 128.
+    // own buffers). Any n: the Reverb runs in its own 32-sample chunks.
     void process(const float* sendL, const float* sendR, float* outL, float* outR, int n);
     bool silent() const;   // the tail is under -120 dBFS and nothing is coming in
 
