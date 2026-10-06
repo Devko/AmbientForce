@@ -1,5 +1,5 @@
 # From SubForce Makefile (8846421), renamed.
-# AmbientForce: an ambient instrument as a VST2 instrument for MPC OS (Force / MPC standalone).
+# AmbientForce: an ambient instrument as a VST2 plugin for MPC OS (Force / MPC standalone).
 # Builds on Linux or WSL. Native: g++ (tests, x86 bench). Device: arm-linux-gnueabihf-g++ 11 or newer
 # (libstdc++ is linked dynamically; MPC OS has it). Releases come from CI, built against glibc 2.31 so
 # they load on MPC OS 2.x and 3.x; a newer distribution's cross toolchain needs a newer glibc (3.x only).

@@ -60,6 +60,7 @@ double pitchHz(const std::vector<float>& x, size_t from, size_t to) {
     return n > 0 ? 44100.0 * n / (last - first) : 0.0;
 }
 
+// SubForce's test/engine_test.cpp toneAmp (8846421), shared here.
 double toneAmp(const std::vector<float>& x, double hz) {
     double re = 0.0, im = 0.0, wsum = 0.0;
     const double n = static_cast<double>(x.size());
@@ -314,8 +315,14 @@ void testStress() {
         for (int i = 0; i < af::P_COUNT; ++i)
             if (af::PARAM_INFO[i].kind == af::Kind::Synth && i != af::P_VOLUME) h.setN(i, rnd());
         h.set(af::P_VOLUME, 0.0f);
-        h.on(24 + static_cast<int>(rnd() * 84), 1 + static_cast<int>(rnd() * 126));
-        h.midi(0xE0, static_cast<uint8_t>(rnd() * 127), static_cast<uint8_t>(rnd() * 127));
+        // One rnd() per statement: the order a call's arguments are evaluated in is the compiler's
+        // choice (x86 and ARM differ), and both builds must play the same notes.
+        const int note = 24 + static_cast<int>(rnd() * 84);
+        const int vel = 1 + static_cast<int>(rnd() * 126);
+        h.on(note, vel);
+        const auto lsb = static_cast<uint8_t>(rnd() * 127);
+        const auto msb = static_cast<uint8_t>(rnd() * 127);
+        h.midi(0xE0, lsb, msb);
         h.midi(0xB0, 1, static_cast<uint8_t>(rnd() * 127));
         h.midi(0xD0, static_cast<uint8_t>(rnd() * 127), 0);
         worst = std::max(worst, h.run(20));

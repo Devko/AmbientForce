@@ -20,7 +20,7 @@ constexpr float kVoiceGain = 0.25f;   // a voice at full velocity, -12 dBFS at 0
                                       // pass full scale only where their peaks line up
 constexpr float kGlideS = 0.010f;     // the volume's smoothing: a turn of the knob never clicks
 
-float dbToGain(float db) { return db <= -59.5f ? 0.0f : std::pow(10.0f, (db < 12.0f ? db : 12.0f) / 20.0f); }
+float dbToGain(float db) { return db <= kVolumeOffDb ? 0.0f : std::pow(10.0f, (db < 12.0f ? db : 12.0f) / 20.0f); }
 
 } // namespace
 
@@ -42,7 +42,9 @@ void Engine::noteOn(int note, int velocity) {
         return;
     }
     // The same key again restarts its own voice; else a free one; else the oldest (a release
-    // first, it is on its way out anyway). Its phase and level carry on: no click.
+    // first, it is on its way out anyway). The phase and the envelope carry on rather than start
+    // from 0, but the loudness jumps to the new velocity's, and a stolen voice's pitch jumps to the
+    // new note: a click, which the stub accepts.
     Voice* v = nullptr;
     for (Voice& c : voices_)
         if (c.note == note) v = &c;

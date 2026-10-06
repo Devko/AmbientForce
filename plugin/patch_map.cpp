@@ -63,7 +63,7 @@ std::string paramDisplay(int id, float n) {
         case Fmt::Semi: std::snprintf(b, sizeof b, v == 0.0f ? "0 st" : "%+.0f st", v); break;
         case Fmt::Count: std::snprintf(b, sizeof b, "%.0f", v); break;
         case Fmt::Db:
-            if (v <= -59.5f) return "-inf dB";
+            if (v <= kVolumeOffDb) return "-inf dB";   // where the engine's output is off
             std::snprintf(b, sizeof b, "%.1f dB", std::fabs(v) < 0.05f ? 0.0f : v);   // never "-0.0 dB"
             break;
         case Fmt::LfoHz: std::snprintf(b, sizeof b, v < 0.995f ? "%.2f Hz" : (v < 9.95f ? "%.1f Hz" : "%.0f Hz"), v); break;

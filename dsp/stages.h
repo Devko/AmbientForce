@@ -1,5 +1,5 @@
-#pragma once
 // From SubForce dsp/stages.h (8846421), namespace sf -> af; the stub's one stage.
+#pragma once
 // Where a block's time goes, for the profiling build only (-DAF_STAGE_TIMING: `make
 // arm-bench-stages`, read by tools/bench.cpp through AmbientForceStageTimes). Engine::render laps
 // a clock between its stages; in the normal build StageClock is empty and lap() compiles to

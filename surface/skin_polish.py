@@ -490,6 +490,8 @@ def selftest(samples=None):
         grouped = [(gi, si) for gi, g in enumerate(style["tab_groups"]) for si in range(len(g["pages"]))]
         check(numbering(skin) == (grouped, [grouped, grouped]), "tabs and Q-Link sets are not numbered by page group")
         check(0 < len(style["tab_groups"]) <= 7, "no page groups, or too many")
+        if any(si for _, si in grouped):   # a group with sub-pages: they are no longer tabs of their own
+            check(numbering(skin)[0] != [(i, 0) for i in range(len(grouped))], "the sub-pages were left as tabs")
         polish(skin, lay, sty)   # a skin grouped already stays as it is
         check(numbering(skin) == (grouped, [grouped, grouped]), "polishing twice changed the grouping")
         for n, size in sizes.items():
@@ -610,6 +612,8 @@ def selftest(samples=None):
             change(t["pageData"]["tabs"])
             json.dump(t, open(path, "w"))
         refused("unknown page", lambda f: edit_tabs(f, lambda ts: ts[-1].update(tabName="NOT A PAGE")), "the page groups list")
+        if len(sk.tabs) > 1:   # the BROWSE page alone has no order to get wrong
+            refused("pages out of order", lambda f: edit_tabs(f, lambda ts: ts.insert(0, ts.pop(1))), "the page groups list")
         refused("odd numbering", lambda f: edit_tabs(f, lambda ts: ts[-1].update(fnKeySubIndex=3)),
                 "neither the generator's numbering nor the groups'")
         try:

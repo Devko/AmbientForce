@@ -3,14 +3,18 @@
 // to play and the tests something to measure. The real engine (the harmony brain, Ground, Bloom,
 // Space) replaces it behind the same interface.
 //
-// Six voices; a seventh note takes the oldest one. A 10 ms linear attack and a 300 ms linear
-// release (from wherever the level is), the sustain pedal holding released keys. Mono: L = R.
+// Six voices; a seventh note takes the oldest releasing voice, or the oldest of all when none is
+// releasing. A 10 ms linear attack and a 300 ms linear release (from wherever the level is), the
+// sustain pedal holding released keys. Mono: L = R.
 //
 // Real-time rules: no allocation, no locks, no exceptions after construction. The plugin layer
 // feeds it a Patch once per block (only when something changed).
 #include <cstdint>
 
 namespace af {
+
+// The volume at or below which the output is off: the knob's text shows "-inf dB" from here.
+constexpr float kVolumeOffDb = -59.5f;
 
 struct Patch {
     float volumeDb = -6.0f;

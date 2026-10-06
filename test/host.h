@@ -122,7 +122,6 @@ struct Host {
     intptr_t load(const std::string& s) {
         return e->dispatcher(e, vst::effSetChunk, 0, static_cast<intptr_t>(s.size()), const_cast<char*>(s.data()), 0.0f);
     }
-
 };
 
 std::string fixtureDir();   // per-run temp folder (removed at exit)
