@@ -275,7 +275,7 @@ Chord buildChord(const HarmonyPatch& h, int root);
 
 // Voice leading: among the inversions and octave placements of `c` (same pitch classes, root
 // kept the lowest only for VO_SPREAD), the one with the least cost from `prev`. prev.n == 0: c as is.
-Chord leadFrom(const Chord& prev, const Chord& c);
+Chord leadFrom(const HarmonyPatch& h, const Chord& prev, const Chord& c);   // keeps h.voicing's shape
 int voiceLeadCost(const Chord& prev, const Chord& candidate);   // lower = smoother
 
 // Pitch of a MIDI note under the tuning, in (fractional) semitones, so 69.0 = A4 = 440 Hz under
@@ -286,8 +286,8 @@ double tunedPitch(const HarmonyPatch& h, int note);
 class Harmony {
 public:
     void set(const HarmonyPatch& h);
-    void noteOn(int mappedNote);          // a key down (after mapping)
-    void noteOff(int mappedNote);
+    void noteOn(int key, int mapped);     // a key down and the note it maps to (two keys may share one)
+    void noteOff(int key);
     void advance(double seconds, double bpm);   // runs the memory's timer
     void clear();                         // forget (reset, Stop with Cut)
     const Chord& current() const;         // root -1: nothing (never played, or forgotten)
@@ -760,9 +760,9 @@ struct Patch {
 **Routing** (CONCEPT §4.1):
 1. **Map:** `noteOn(note, vel)` → `m = mapInput(h, note)`. The engine remembers `key → m`, so
    note-off finds the mapped note even if the patch changed in between.
-2. **Harmony** gets `noteOn(m)` and `noteOff(m)`.
+2. **Harmony** gets `noteOn(key, m)` and `noteOff(key)`. It keeps keys and mapped notes apart itself.
 3. **Bloom:**
-   - **Notes:** `play(buildChord-or-leadFrom(prev, buildChord(h, m)), owner = key, vel)`. With
+   - **Notes:** `play(leadFrom(h, prev, buildChord(h, m)), owner = key, vel)` (or `buildChord` as is with Leading off). With
      Chord Off this is the single note. On note-off: `release(key)`, unless Hold or the pedal is
      down. With Hold, the next note-on first releases what Hold kept.
    - **Harmony:** when `Harmony::version()` changes → `moveTo(current())`. Root -1 →
@@ -823,7 +823,18 @@ struct Patch {
    - Cut: zeros within 1 block.
    - A suspend/resume 100 ms apart = Stop. A suspend of 1 s = reset.
 8. **Limiter:** every level at max, reso 1, shimmer 1, freeze on, chords of 6 notes → peak
-   ≤ 0.8913 (-1 dBFS) at every sample over 60 s.
+   ≤ 0.8913 (-1 dBFS) at every sample over 60 s. Repeat it with **Abyss at Decay 30**: its wet
+   sits about 15 dB above the send's RMS.
+
+**Notes from Task 2's review:**
+- **Space's `silent()` can stay false for minutes** (Abyss at long Decay). The CPU gate assumes
+  Space always runs.
+- **A `set()` that raises the reverb's reach** (size, predelay, shimmer on) can flip `silent()` to
+  false with no input. Idle logic must tolerate running Space a little longer.
+- **Rise's full-duck level** (`kFull`, -12 dBFS on the send) is absolute. Calibrate it against the
+  real send levels here, or in Task 10.
+- **Abyss is about 6 dB louder** than other modes at the same Decay knob, by design (it is Decay
+  ×4). Level matching in Task 10 handles it; Space must not compensate.
 9. **Guard:** a NaN forced into the reverb (test hook) → that block is zeros, the next blocks are
    finite, and the guard count is 1.
 10. **Clock:** a transport position of 2^31 + 10 beats and an engine sample count near 2^32 (test

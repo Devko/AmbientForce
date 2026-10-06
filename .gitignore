@@ -3,3 +3,6 @@ dist/
 surface/build/
 __pycache__/
 local.mk
+
+# Agent worktrees
+.claude/worktrees/
