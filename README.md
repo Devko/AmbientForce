@@ -12,7 +12,7 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 
 > [!NOTE]
 > **Preview (0.0.1), milestone M1 "First light".** The harmony brain, two of the four strata
-> (Ground and Bloom), Space, the pages and 16 factory presets are built and pass the full test suite
+> (Ground and Bloom), Space, the pages and 28 factory presets are built and pass the full test suite
 > on x86 and under ARM emulation. On a Force (MPC OS 3.9) it installs and benches, at 4–5% of a
 > block for a held chord and 10.6% at its heaviest; playing it there is next. It is not in the plugin
 > catalog, and nothing is released yet. Air, Weather, motion and scenes come in later milestones
@@ -43,7 +43,8 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 - **Ground, the drone:** one voice of five partials (sub, root, fifth, octave and a colour
   interval) in exact ratios under Just, beating against each other at a rate set in **Hz**, the same
   in every register; it leans into a new root over up to 30 s (**Gravity**), and a vowel filter
-  (**Body**) and a slow **Breath** make it sing.
+  (**Body**) and a **Breath**, from a tide to a pulse, make it sing. The breath and both strata's
+  sways run free (cycles that never line up again) or **on the bar**, locked to MPC's position.
 - **Bloom, the chords:** six voices over **lifetime tables**, 256 frames of an instrument's note from
   the strike to the deep tail. **Age** picks the moment, **Sway** and **Smear** move through it. A
   second table couples to the first (Mix, FM, AM, Ring); unison 2; swells and releases of up to
@@ -57,8 +58,9 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 - **Built for MPC:** nine pages in four tabs, a 16-knob Q-Link set on each; a limiter that holds
   the output at −1 dBFS and a guard against non-finite samples, for nights of running; what Stop
   does is a setting (Keep, an 8-second Fade, or Cut).
-- **16 factory presets**: Init and 15 in four categories (Drones, Beds, Blooms, Choirs), each in its
-  own key and scale, level-matched at −16 LUFS; user presets, favorites, a browser.
+- **28 factory presets**: Init and 27 in five categories (Drones, Beds, Blooms, Choirs and Contrasts,
+  which each answer playing in their own way), each in its own key and scale, level-matched at
+  −16 LUFS, each saying what it is when it loads; user presets, favorites, a browser.
 - **Light enough on the CPU:** on the Force, Init holding a chord takes 4.2% of a block on average
   (p99 5.4%), and everything M1 has at its heaviest p99 10.6%, inside the 15% budget with room for
   the strata still to come ([Performance](docs/PERFORMANCE.md)).
@@ -116,7 +118,7 @@ Four tabs; tapping a tab again shows its next page, each with its own Q-Link set
 | Tab | Pages |
 |---|---|
 | PLAY | **PLAY**: the four macros, Freeze, Hold, Bloom's Age, the volume; the levels, Bloom's Swell, key, scale, chord and Gravity; the preset stepper. **HARMONY**: the harmony brain, its memory, On Stop, who listens to what |
-| STRATA | **GROUND** and **DRONE**: the drone, its table and its partials. **BLOOM** and **BLOOM OSC**: the chord voices, the second table, Couple and unison |
+| STRATA | **GROUND** and **DRONE**: the drone, its table, its partials, its breath and sway (free or on the bar). **BLOOM** and **BLOOM OSC**: the chord voices, the second table, Couple and unison, the sway |
 | SPACE | **SPACE**: the reverb, its tail and the sends. **MIX**: levels, pans, sends, mutes, the return, tilt and the widths |
 | BROWSE | **PRESETS**: the preset browser |
 
@@ -124,9 +126,9 @@ The [user guide](docs/USER_GUIDE.md#the-screen) shows them all.
 
 ## Factory presets
 
-16 factory presets, each in its own key and scale, between them every Space type, the three tunings
-and nine of the twelve scales. All are level-matched at −16 LUFS on a phrase of two held chords and their
-release, peaks under −1 dBFS:
+28 factory presets, each in its own key and scale, between them every Space type, the three tunings,
+all twelve scales and all twelve keys. All are level-matched at −16 LUFS on a phrase of two held chords
+and their release, peaks under −1 dBFS:
 
 | Category | Presets | |
 |---|---|---|
@@ -135,6 +137,7 @@ release, peaks under −1 dBFS:
 | Beds | Lydian Morning, Slow Aurora, Felt Room, Night Ferry | Both strata, long swells |
 | Blooms | First Snow, Glass Orchard, Tape Bloom, Sine Garden | Bloom forward, Ground low |
 | Choirs | Lantern Choir, Distant Ah, Cathedral Breath, Choir in Haze | Choir Ah-Oo on both strata, Ground with Body |
+| Contrasts | Felt Keys, Glass Tines, Ring Bells, Bare Strings, Old Tape, Sub Monolith, Pulse Drone, Overtone Choir, Cluster Fog, Tonic Halo, Afterglow, Frozen Sky | One idea each in how they answer playing: melodies, a bass, bells to let ring, a latch pad, a drone throbbing on the beat, a chord that plays itself, a bloom after you let go |
 
 Each one in a line: [User guide](docs/USER_GUIDE.md#presets).
 
@@ -169,7 +172,7 @@ checker): see [Building](docs/BUILDING.md#release-builds).
 |---|---|
 | M1 in code: the harmony brain, Ground, Bloom, the lifetime tables and oscillator, Space with Haze and Abyss, the engine, nine pages, tests | ✅ |
 | M1: 16 factory presets, bench cases, a profile-guided build trained on them, the soak | ✅ |
-| Playability (0.0.2): four macros on PLAY, every control's help on the status line, preset descriptions | ✅ |
+| Playability (0.0.2): four macros on PLAY, every control's help on the status line, preset descriptions; 12 Contrasts presets; the breath and the sways free or on the bar | ✅ |
 | On the device: installs; benches (`make bench-device`: worst case p99 10.6%, [Performance](docs/PERFORMANCE.md)) | ✅ |
 | On the device: playing it, listening, and what MPC sends an instrument ([Roadmap](docs/ROADMAP.md#phase-0-the-probe)) | 🔜 |
 | 0.0.1, the first release; then the plugin catalog | ⬜ |

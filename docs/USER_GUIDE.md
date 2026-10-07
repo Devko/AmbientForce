@@ -80,7 +80,7 @@ stand on the screen.
 | Tab | Pages |
 |---|---|
 | PLAY | **PLAY**: the four [macros](#the-macros), Freeze, Hold, Bloom's Age, the volume; then the levels and Bloom's Swell, the key, scale, chord and Gravity. The preset stepper at the top. **HARMONY**: the harmony brain; its memory, Hold, On Stop and each stratum's Listen |
-| STRATA | **GROUND**: the drone's main controls; its table, motion and voice. **DRONE**: its five partials, pan and beating; its motion and tone again. **BLOOM**: the chord voices' main controls; table, release, filter, tail. **BLOOM OSC**: Table B, Couple, Smear, the sway's rate, unison; the voice |
+| STRATA | **GROUND**: the drone's main controls; its table, motion and voice. **DRONE**: its five partials, pan and beating; its breath and sway, free or on the bar. **BLOOM**: the chord voices' main controls; table, release, filter, tail. **BLOOM OSC**: Table B, Couple, Blend, unison, breath; the sway, free or on the bar; the voice's age, smear, pan and width |
 | SPACE | **SPACE**: the reverb; its tail (Freeze, Shimmer, Rise); the return, the sends and the tilt. **MIX**: each stratum's level, pan, send and mute; the return, tilt, volume, Freeze; the widths and Shimmer |
 | BROWSE | **PRESETS**: the preset browser |
 
@@ -127,9 +127,9 @@ The Q-Link sets:
 | PLAY | Horizon, Motion, Glow, Density, Freeze, Hold, Bloom Age, Volume | Ground Level, Bloom Level, Space Level, Bloom Swell, Key, Scale, Chord, Gravity |
 | HARMONY | Key, Scale, Tuning, Input, Chord, Voicing, Leading, Strum | Memory, Hold, On Stop, Ground Listen, Bloom Listen, Volume, Gravity, Bloom Swell |
 | GROUND | Ground Level, Ground Tone, Ground Age, Ground Sway, Ground Beat, Gravity, Ground Space, Ground Width | Ground Table, Ground Rate, Ground Fade, Ground Body, Gnd Breath, Ground Reg, Ground Listen, Ground Mute |
-| DRONE | Ground Sub, Ground Root, Ground Fifth, Gnd Octave, Ground Color, Color Int, Ground Pan, Ground Beat | Gravity, Ground Fade, Gnd Breath, Ground Body, Ground Level, Ground Tone, Ground Age, Ground Sway |
+| DRONE | Ground Sub, Ground Root, Ground Fifth, Gnd Octave, Ground Color, Color Int, Ground Pan, Ground Beat | Gnd Breath, Breath Rate, Breath Sync, Breath Div, Ground Sway, Ground Rate, Gnd Rate Sync, Gnd Rate Div |
 | BLOOM | Bloom Level, Bloom Tone, Bloom Age, Bloom Sway, Bloom Blend, Bloom Swell, Bloom Space, Bloom Width | Bloom Table, Blm Release, Bloom Reso, Bloom Filter, Bloom Tail, Bloom Vel, Bloom Listen, Bloom Mute |
-| BLOOM OSC | Bloom Table B, Bloom B Oct, Bloom Couple, Couple Amt, Bloom Smear, Bloom Rate, Bloom Unison, Bloom Detune | Bloom Breath, Bloom Pan, Bloom Age, Bloom Sway, Bloom Blend, Bloom Tone, Bloom Swell, Blm Release |
+| BLOOM OSC | Bloom Table B, Bloom B Oct, Bloom Couple, Couple Amt, Bloom Blend, Bloom Unison, Bloom Detune, Bloom Breath | Bloom Sway, Bloom Rate, Blm Rate Sync, Blm Rate Div, Bloom Age, Bloom Smear, Bloom Pan, Bloom Width |
 | SPACE | Space Type, Space Size, Space Decay, Pre-Delay, Space Damp, Low Cut, Space Mod, Space Width | Freeze, Shimmer, Shimmer Int, Space Rise, Space Level, Ground Space, Bloom Space, Tilt |
 | MIX | Ground Level, Ground Pan, Ground Space, Ground Mute, Bloom Level, Bloom Pan, Bloom Space, Bloom Mute | Space Level, Tilt, Volume, Freeze, Ground Width, Bloom Width, Space Width, Shimmer |
 | PRESETS | Preset, Horizon, Motion, Glow, Density, Bloom Age, Freeze, Volume | Key, Scale, Chord, Gravity, Ground Level, Bloom Level, Space Level, Bloom Swell |
@@ -154,7 +154,7 @@ What each one moves (h, m, g, d: the macro from −1 to +1):
 | Macro | Moves |
 |---|---|
 | **Horizon** | Ground Space and Bloom Space × 2^(1.5 h) near (to −9 dB), × 2^(0.5 h) far (to +3 dB); Space Level near only, × 2^(0.5 h) (to −3 dB); Ground Level and Bloom Level far only, × 2^(−0.5 h) (to −3 dB); Space Decay × 2^(1.3 h) (0.41× to 2.46×); Pre-Delay + 50 ms × h; Ground Tone, Bloom Tone and Space Damp × 2^(−0.5 h) (half an octave brighter near, darker far); Space Rise toward 0 near, 60% of the way to 100% far |
-| **Motion** | Ground Sway and Bloom Sway toward 0, or 80% of the way to 100%; Ground Rate and Bloom Rate × 2^(2 m) (a quarter to four times as fast); Bloom Smear toward 0, or 60% of the way to 100%; Gnd Breath toward 0, or 70% of the way to 100%; Ground Beat to 0 still, × 2^(1.5 m) moving (at most 3 Hz) |
+| **Motion** | Ground Sway and Bloom Sway toward 0, or 80% of the way to 100%; Ground Rate, Bloom Rate and Breath Rate × 2^(2 m) (a quarter to four times as fast; a cycle synced to the bar keeps its division); Bloom Smear toward 0, or 60% of the way to 100%; Gnd Breath toward 0, or 70% of the way to 100%; Ground Beat to 0 still, × 2^(1.5 m) moving (at most 3 Hz) |
 | **Glow** | Ground Tone and Bloom Tone × 2^(2 g) (two octaves either way); Tilt + 30 points × g; Space Damp × 2^g; Shimmer + 35 points × g, bright only (not with Shimmer Int at −12, which darkens); Ground Body × 2^(−g) (twice as much, darker vowels, toward dark; half toward bright); the volume down 1.5 dB × (−g), dark only |
 | **Density** | Ground Sub, Gnd Octave and Ground Color × (1 + d) sparse (to 0), × 2^d thick (Root and Fifth stay); Bloom Detune and Bloom Breath likewise (no detune: unison 2 plays as one voice); Strum × 2^(−d) + 0.6 s × (−d) sparse (one note after another even from 0), × (1 − 0.75 d) thick (a quarter); the volume down 1 dB × d, thick only |
 
@@ -302,6 +302,7 @@ Listen ([above](#one-gesture-several-strata)); everything else is here.
 | Ground Tone | 40 Hz–16 kHz | 2.50 kHz | A gentle low-pass (no resonance) after the partials |
 | Ground Table | the [table library](#lifetime-tables) | Cello Tasto | The sound every partial plays |
 | Ground Age, Ground Sway, Ground Rate | 0–100%, 0–100%, 0.002–2 Hz | 50%, 30%, 20 s | Where in the table's life, and how it moves ([below](#lifetime-tables)) |
+| Gnd Rate Sync, Gnd Rate Div | Free, Sync; 1/4 … 64 Bars | Free, 8 Bars | The sway at Ground Rate, or once a division on the bar ([below](#free-or-on-the-bar)) |
 | Ground Beat | 0–3 Hz | 0.30 Hz | How fast the partials beat against each other |
 | Gravity | 0–30 s | 6 s | The glide to a new root |
 | Ground Fade | 50 ms–30 s | 4 s | Fade in when the drone starts, out when it stops |
@@ -309,7 +310,8 @@ Listen ([above](#one-gesture-several-strata)); everything else is here.
 | Color Int | min3, maj3, 4th, min7, 9th, 11th | 9th | The Color partial's interval |
 | Ground Reg | Low, Mid, High | Mid | The octave the root starts in: C1–B1, C2–B2 or C3–B3 |
 | Ground Body | 0–100% | 0% | A vowel: off → a → o → u |
-| Gnd Breath | 0–100% | 30% | A slow swell of level and brightness |
+| Gnd Breath, Breath Rate | 0–100%, 0.11 s–30.5 min | 30%, 14 s | A slow swell of level and brightness, and how long one takes |
+| Breath Sync, Breath Div | Free, Sync; 1/4 … 64 Bars | Free, 8 Bars | The breath at Breath Rate, or once a division on the bar |
 | Ground Width, Ground Pan | 0–100%, L100–R100 | 50%, C | The partials' spread, and the drone's place |
 | Ground Space | 0–100% | 40% | Its send to Space |
 | Ground Listen, Ground Mute | | Harmony, Off | |
@@ -347,8 +349,10 @@ dips the drone out for 40 ms and brings it back in the new octave, without a gli
 - **Ground Body**: two formant filters on a vowel's first two formants, mixed with the drone: up to
   a third of the knob fades in "a", then it moves to "o" and on to "u". It makes a drone into a
   choir, lifting a harmonic on a formant by 4.7 dB at most and keeping the level within 2.5 dB.
-- **Gnd Breath**: a slow sine (one cycle in about 14 s) moves the level by ±3 dB and Ground Tone by
-  ±1 octave, both times Breath.
+- **Gnd Breath**: a sine moves the level by ±3 dB and Ground Tone by ±1 octave, both times Breath:
+  one breath per **Breath Rate** (0.11 s to 30.5 min, 14 s by default: from a fast pulse to a tide),
+  or, with **Breath Sync** on Sync, one per **Breath Div** on the bar, at its top on each division's
+  downbeat ([below](#free-or-on-the-bar)).
 - **Ground Width**: Sub stays in the middle, Root and Octave go left, Fifth and Color right.
 
 A new table, or the table's own arrival after the plugin loaded ([below](#lifetime-tables)), fades
@@ -365,6 +369,7 @@ breath of noise at the note, one filter and an envelope made for slow music.
 | Bloom Tone, Bloom Reso, Bloom Filter | 20 Hz–20 kHz; 0–100%; LP, BP, HP | 5.00 kHz, 10%, LP |
 | Bloom Table | the table library | Felt Piano |
 | Bloom Age, Bloom Sway, Bloom Rate, Bloom Smear | 0–100%; 0–100%; 0.002–2 Hz; 0–100% | 60%, 25%, 14 s, 10% |
+| Blm Rate Sync, Blm Rate Div | Free, Sync; 1/4 … 64 Bars | Free, 8 Bars |
 | Bloom Table B, Bloom B Oct | the table library; −2..+2 octaves | Sine, 0 Oct |
 | Bloom Blend | 0–100% (A to B) | 0% |
 | Bloom Couple, Couple Amt | Mix, FM, AM, Ring; 0–100% | Mix, 0% |
@@ -388,8 +393,9 @@ transient is gone, which slow music doesn't miss.
 
 - **Age**: where in the life to listen. 0 just struck, 1 almost gone.
 - **Sway**: a slow back-and-forth around Age, up to a quarter of the table each way at 100%, at
-  **Rate** (0.002–2 Hz; below 1 Hz shown as the time one cycle takes: 20 s, 8.3 min). Near an end
-  of the table it turns back rather than stopping there. Every voice sways on its own phase.
+  **Rate** (0.002–2 Hz; below 1 Hz shown as the time one cycle takes: 20 s, 8.3 min), or synced to
+  the bar ([below](#free-or-on-the-bar)). Near an end of the table it turns back rather than
+  stopping there. Free, every voice sways on its own phase.
 - **Smear** (Bloom only): fast random micro-motion of the position (up to ±3% of the table, a new
   target every 50–200 ms, gliding), so the spectrum shimmers. It costs nothing.
 
@@ -410,6 +416,22 @@ The table library, every one of them computed when the plugin loads (no samples 
 The tables are built on a background thread when the first AmbientForce loads, in this order, and
 shared by every instance. Until a table is ready, its slots play a sine, then fade into the table
 over 20 ms when it arrives.
+
+### Free or on the bar
+
+Ground's breath and both strata's sways run **Free** by default, each at its own rate knob: cycles of
+unrelated lengths that never line up again, which is what keeps a held drone alive for an hour
+(phasing, [Concept](CONCEPT.md#72-phasing)). **Sync** (Breath Sync, Gnd Rate Sync, Blm Rate Sync)
+runs one cycle per **Div** instead: 1/4 (a quarter note), 1/2, 1 Bar and on to 64 Bars, 4/4.
+
+- While MPC's transport plays, a synced cycle is locked to MPC's position: it is where the bar
+  says, after a loop, a jump or a tempo change too. A synced breath is at its top on each
+  division's downbeat: Breath Div 1/4 throbs on every beat.
+- While it is stopped, a synced cycle runs on at the tempo from where it was, and locks back to the
+  bar when MPC plays again (a jump, as it takes up the bar's position).
+- Synced, Bloom's six voices sway together, on the bar, instead of each on its own phase.
+- The rate knobs stay what Free plays; Sync and Div leave them alone, and the Motion macro bends
+  only the free rates.
 
 ### Table B and Couple
 
@@ -545,9 +567,11 @@ The MIX page has every stratum's level, pan, send and mute in one place, then th
 
 ## Presets
 
-**16 factory presets**, each in its own key and scale. Drones put Ground forward with Bloom quiet
+**28 factory presets**, each in its own key and scale. Drones put Ground forward with Bloom quiet
 and following the harmony; Beds use both strata with long swells; Blooms put Bloom forward over a
-low Ground; Choirs sing Choir Ah-Oo on both strata, Ground with Body. Each one says what it is on
+low Ground; Choirs sing Choir Ah-Oo on both strata, Ground with Body. **Contrasts** each answer
+playing in a way the others don't: an instrument for melodies, a bass, a latch pad, a drone that
+throbs on the beat, a sound that blooms only after you let go. Each one says what it is on
 the status line when it loads (`FIFTH LIGHT: pure fifths on glass, into an endless shimmer`), and
 keeps the [macros](#the-macros) at 0.
 
@@ -569,8 +593,20 @@ keeps the [macros](#the-macros) at 0.
 | **Choirs / Distant Ah** | F Minor: the choir held at its "ah", wide unison, far back in Haze behind a long pre-delay and Rise |
 | **Choirs / Cathedral Breath** | C Dorian: the choir in the Spread voicing, swaying over 28 s, over a choir drone with a strong just fifth and Body, into Abyss with shimmer |
 | **Choirs / Choir in Haze** | F# minor pentatonic: the choir drone up front, its vowel towards "u", choir chords late in their life in wide unison, deep in Haze |
+| **Contrasts / Felt Keys** | A Chromatic, As Played, Equal, Chord Off: an instrument for melodies, one Felt Piano note per key at its strike, in unison 2, a short release in the voice, a small room; Ground muted |
+| **Contrasts / Glass Tines** | G Major: a seventh on every key, Close and voice-led, Felt Piano with FM from a sine two octaves up, struck, a short hall; Ground muted |
+| **Contrasts / Ring Bells** | D Whole Tone in Pythagorean tuning: augmented triads strummed fast on Glass Harmonica ring-modulated two octaves up, a 12 s release into a plate, over a glass hum on the tonic |
+| **Contrasts / Bare Strings** | F# Minor: Cello Tasto Spread chords with bow breath and no reverb at all; the cello drone on your lowest key, sliding |
+| **Contrasts / Old Tape** | C Minor, equal-tempered: Drop 2 sevenths on Tape Strings detuned 45 cents, smeared and swaying fast, dark and narrow: a worn cassette |
+| **Contrasts / Sub Monolith** | G# Phrygian: a bass instrument, Bloom muted, Ground's Square on your lowest key in the Low register, Sub and Root only, a short glide |
+| **Contrasts / Pulse Drone** | C# minor pentatonic: a Felt Piano drone swayed across its whole life, beating fast and breathing on every beat (Breath synced to 1/4); Gravity 0, so each chord jumps the root; Bloom muted |
+| **Contrasts / Overtone Choir** | D# Dorian: choir fifths through a resonant band-pass, their shared overtone whistling on top, singing on 8 s after the keys are up (Harmony, 4 bars) |
+| **Contrasts / Cluster Fog** | B In-Sen, Degrees: a latch pad, Hold on; clusters voiced Spread on Cello Tasto swelling over 8 s into Haze |
+| **Contrasts / Tonic Halo** | F Lydian: the chord plays itself (Bloom on Free, the tonic's Spread seventh on Sine Bloom); your lowest key bends the bass over 30 s |
+| **Contrasts / Afterglow** | A# Mixolydian: Felt Piano sus4 chords late in their life, a 24 s swell, Rise at 100% holding the reverb back until you let go, then Abyss with a shimmer a twelfth up |
+| **Contrasts / Frozen Sky** | E major pentatonic, Chord Off: Celesta notes sent whole into Abyss at Decay 30 with a shimmer an octave up; tap Freeze to keep what hangs there |
 
-Between them they use every Space type, the three tunings and nine of the twelve scales. Every one
+Between them they use every Space type, the three tunings, all twelve scales and all twelve keys. Every one
 is level-matched at −16 LUFS on a phrase in its own key (a chord on the tonic held 12 s, one on the
 fourth held 12 s, in Lydian on the second, then 16 s of release), with peaks under −1 dBFS and
 without leaning on the limiter.

@@ -7,7 +7,9 @@ may still change between releases.
 ## 0.0.2 (unreleased)
 
 Playability: after hearing M1 on the device, "a ton of features, but nobody knows what all these
-knobs are doing". So the screen now explains itself, and four knobs play the whole instrument.
+knobs are doing". So the screen now explains itself, four knobs play the whole instrument, twelve
+new presets each answer playing in their own way, and the drone's breath and the sways can run on
+the bar.
 
 - **Four macros on PLAY** (and on PRESETS' Q-Links): **Horizon** (near and dry to far, wet and
   long), **Motion** (still to drifting), **Glow** (dark to bright) and **Density** (sparse to thick),
@@ -22,13 +24,30 @@ knobs are doing". So the screen now explains itself, and four knobs play the who
   sooner than half a second after, so automation doesn't make it flicker. MPC echoing a value back,
   preset and project loads show nothing.
 - **Preset descriptions:** a preset file may carry an `about=` line; when a preset loads (a tile,
-  the stepper, NEXT, RND, INIT) the status line shows `NAME: description` for 6 s. All 16 factory
+  the stepper, NEXT, RND, INIT) the status line shows `NAME: description` for 6 s. All 28 factory
   presets have one. SAVE writes none.
+- **12 Contrasts presets**, each one idea in how it answers playing, in all twelve keys (In-Sen,
+  Whole Tone and Chromatic for the first time): Felt Keys (melodies, one felt-piano note a key),
+  Glass Tines (a struck FM seventh on every pad), Ring Bells (whole-tone bells to let ring), Bare
+  Strings (no reverb at all), Old Tape (a warbling cassette), Sub Monolith (a bass on your lowest
+  key), Pulse Drone (a drone throbbing on every beat), Overtone Choir (an overtone whistling over
+  fifths), Cluster Fog (a latch pad), Tonic Halo (a chord that plays itself), Afterglow (blooming
+  after you let go) and Frozen Sky (notes that hang for minutes). 28 factory presets in all,
+  every scale and key among them.
+- **Free or on the bar:** Ground's Breath has a rate of its own (**Breath Rate**, 0.11 s to
+  30.5 min, by default the 14 s it always had), and the Breath and both strata's sways can run
+  **Sync**ed: one cycle per **Div** (1/4, 1/2, 1 to 64 bars of 4/4), locked to MPC's position while
+  it plays, at the tempo while it is stopped; a synced breath tops on each division's downbeat, and
+  Bloom's voices then sway together. **Free** stays the default everywhere (phasing needs free
+  cycles), and a preset that leaves them plays bit for bit as before. On the DRONE page (Breath and
+  Sway cards) and BLOOM OSC (Sway). Motion bends the free rates, Breath Rate among them, and leaves
+  synced ones on their bars. Pulse Drone breathes on every beat.
 - **The PLAY page** has the macros, Freeze, Hold, Bloom Age and the volume on its first Q-Link bank;
   the levels, Bloom Swell, key, scale, chord and Gravity on the second. The two Tones, Space Decay
   and Shimmer, which Glow and Horizon now bend, left it (they are on their strata's pages).
-- **Parameters:** four new sound parameters after Tilt (`m_horizon`, `m_motion`, `m_glow`,
-  `m_density`), so every earlier sound parameter keeps its index; 141 in all.
+- **Parameters:** eleven new sound parameters after Tilt (the four macros, then `g_breathrate`,
+  `g_breathsync`, `g_breathdiv`, `g_swaysync`, `g_swaydiv`, `b_swaysync`, `b_swaydiv`), so every
+  earlier sound parameter keeps its index; 151 in all.
 
 ## 0.0.1 (unreleased)
 

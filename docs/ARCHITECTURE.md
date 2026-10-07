@@ -183,7 +183,12 @@ the chord), and Stop's fade and the tilt take a step. The steps sit on the sampl
 of 32, so MPC's 128-sample blocks never cut one; only a MIDI event does, at its sample, and the same
 events play the same samples whatever the block size.
 
-Ground and Bloom are rendered a control step at a time. Each step they read their table pointers
+Ground and Bloom are rendered a control step at a time. Before each piece the engine gives them
+MPC's tempo and its position at the piece's first sample (the block's, moved on by the samples
+since); each keeps a `BeatClock` (`dsp/common.h`) that takes that position while the transport
+plays and runs on at the tempo while it is stopped, and moves it on by each step's samples. A synced
+cycle (Ground's Breath, a sway: `breathBeats`, `LifePos::swayBeats`) reads its phase from that clock,
+so it sits on the bar whatever the blocks or a jump; a free one keeps its own phase, as it always did. Each step they read their table pointers
 (`TableSet::get`), step their `LifeScan` positions, envelopes, glides, fades and filter targets;
 every gain then moves in a straight line across the step and the filters' coefficients glide per
 sample (the cutoffs evenly in octaves), so nothing steps. Bloom also ends a step where a strummed
@@ -288,9 +293,10 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 ## Parameters and saved state
 
 - **Parameters** may still change during 0.x (the previews); from v0.1 they are **append-only**:
-  MPC projects store values by index. Sound parameters (kind `synth`, 79 of them with the volume and
-  the four macros, which come after Tilt) are saved and automatable; the surface's own values (the
-  preset stepper, tiles, popup flags) are not. 141 parameters in all.
+  MPC projects store values by index. Sound parameters (kind `synth`, 86 of them with the volume, the
+  four macros and the seven of the free or synced cycles, which come after Tilt in that order) are
+  saved and automatable; the surface's own values (the preset stepper, tiles, popup flags) are not.
+  151 parameters in all.
 - **Saved state** (projects and `.afp` preset files) is the text format `ambientforce 1`:
   `key=value` lines of *real* values (Hz, seconds, dB, an option's index), plus, in a project, the
   preset it came from. Ranges can change without remapping saved projects or presets. Options are

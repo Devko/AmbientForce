@@ -278,6 +278,20 @@ knobs are doing".
 - 2026-10-07 — **Density leaves Blend alone**: crossfading toward Table B dipped the level 2–5 LU, and
   with B a sine (the default) it thinned the sound rather than thickening it. Unison and the chord
   aren't macro targets either: switching them would jump.
+- 2026-10-07 — **The breath and the sways can sync to the bar; Free stays the default.** CONCEPT
+  §7.1 plans Free / Sync rates; asked for now, for the breath and both sways: Sync runs one cycle per
+  division (1/4 to 64 bars of 4/4) on a beat clock per stratum, locked to MPC's position while it
+  plays (SubForce's synced busses' rule) and running on at the tempo while it is stopped. Free is
+  the default everywhere, because phasing (CONCEPT §7.2) needs cycles that never line up. A synced
+  breath tops on each division's downbeat; synced, Bloom's voices sway together (on their own
+  phases they wouldn't sound on the bar). Breath got a rate knob of its own, its default the
+  knob's middle (0.07 Hz, 128 times either way), so it reads back bit for bit as the breath every
+  preset was made with. Motion bends the free rates, Breath Rate among them, never a division
+  (that would jump).
+- 2026-10-07 — **The DRONE and BLOOM OSC pages traded repeats for motion**: DRONE's second bank,
+  which repeated GROUND's, is the Breath (depth, rate, Sync, Div) and the Sway (the same); BLOOM
+  OSC's is the Sway and the voice's Age, Smear, Pan and Width, Blend and Breath moving up to the
+  oscillators.
 - 2026-10-07 — **The PLAY page gave the two Tones, Space Decay and Shimmer to the macros**: its first
   bank is the macros, Freeze, Hold, Bloom Age and the volume; the second the levels, Bloom Swell, key,
   scale, chord and Gravity. The macros' parameters come after Tilt, so every earlier sound
