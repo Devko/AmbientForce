@@ -23,6 +23,9 @@ constexpr int kTextEveryBlocks     = 4;    // at most one UpdateDisplay per ~12 
 constexpr float kQuant             = 0.0015f;   // MPC rounds values to 1/1000
 constexpr long long kGestureMs     = 300;   // sends closer than this belong to one gesture
 constexpr float kFirstMoveMax      = 0.16f; // a gesture's first event is a turn, not a jump
+constexpr double kRate             = 44100.0;   // the status line's clock: MPC OS always runs 44.1 kHz
+
+uint64_t samplesOf(double s) { return static_cast<uint64_t>(s * kRate); }
 
 // A stepper's 0..1 range: one item per 1/1023, or per 1/(items-1) for longer lists.
 int stepperRange(int items) { return std::max(kStepperRange, items - 1); }
@@ -106,6 +109,9 @@ void Surface::set(int i, float n) {
         shown();
         return;
     }
+    // A preset loaded by this set (a stepper, a tile, NEXT, INIT, RND) says what it is on the status
+    // line; otherwise a set that moved something shows its help there.
+    const uint32_t loads = loads_.load(std::memory_order_relaxed);
     if (k == Kind::Button) {
         // A tap toggles the value MPC last read back, and a button always reads back 0 (it springs
         // back), so every tap arrives as a 1 with no release before the next: each 1 is a press.
@@ -117,14 +123,29 @@ void Surface::set(int i, float n) {
             changes_.fetch_add(1, std::memory_order_release);   // after the flag: notify must see it
             apply(i, n);
             refresh();
+            if (loads_.load(std::memory_order_relaxed) == loads) touch(i);
         }
         return;
     }
     // Act first, then record MPC's value: recorded before, the audio thread could push the old
     // value back while a preset loads (a tile would flicker, MPC's next delta start from it).
+    const float before = want_[i].load(std::memory_order_relaxed);
     apply(i, n);
     shown();
     if (k != Kind::Synth) refresh();   // a sound parameter's text is computed when MPC asks
+    // MPC sending a value back (ours, or a step that doesn't step) moves nothing: no help.
+    if (want_[i].load(std::memory_order_relaxed) != before && loads_.load(std::memory_order_relaxed) == loads) touch(i);
+}
+
+void Surface::touch(int i) {
+    if (!PARAM_INFO[i].help) return;   // a tile, a popup's flag: nothing to say
+    const uint32_t m = moves_.fetch_add(1, std::memory_order_relaxed) + 1;
+    touched_.store(m << kTouchBits | static_cast<uint32_t>(i), std::memory_order_release);
+}
+
+std::string Surface::aboutText() const {
+    std::lock_guard<std::mutex> lk(mtx_);
+    return about_;
 }
 
 void Surface::beginBatch() {
@@ -354,6 +375,15 @@ void Surface::loadPreset(const std::string& key) {
     }
     presetLibrary().touchRecent(key);
     refresh();
+    // The status line: "NAME: its description" (an about= line), or the name alone.
+    const auto L = presetLibrary().listing();
+    const int at = L->find(key);
+    const std::string about = presetAbout(text);
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        about_ = upper(at >= 0 ? L->items[static_cast<size_t>(at)].name : L->label(key)) + (about.empty() ? "" : ": " + about);
+    }
+    loads_.fetch_add(1, std::memory_order_release);
 }
 
 void Surface::savePreset() {
@@ -500,7 +530,49 @@ bool Surface::snapshot(float* out) const {
     return true;
 }
 
-void Surface::notify(AutomateFn automate, UpdateFn update, void* ctx) {
+void Surface::tickStatus(int frames) {
+    now_ += static_cast<uint64_t>(std::max(frames, 0));
+    bool changed = false;
+    // A preset loaded: its description at once, over whatever showed (a move noted before it is old news).
+    const uint32_t loads = loads_.load(std::memory_order_acquire);
+    if (loads != loadsSeen_) {
+        loadsSeen_ = loads;
+        line_ = kStatusAbout;
+        lineSince_ = now_;
+        lineUntil_ = now_ + samplesOf(kAboutS);
+        pending_ = -1;
+        changed = true;
+    }
+    const uint32_t touched = touched_.load(std::memory_order_acquire);
+    if (touched != touchedSeen_) {
+        touchedSeen_ = touched;
+        pending_ = static_cast<int>(touched & ((1u << kTouchBits) - 1));
+        pendingAt_ = now_;
+    }
+    if (pending_ >= 0) {
+        if (pending_ == line_) {   // the control shown, moved again: it stays, kHelpS from its latest move
+            lineUntil_ = pendingAt_ + samplesOf(kHelpS);
+            pending_ = -1;
+        } else if (line_ == kStatusPlugin || now_ - lineSince_ >= samplesOf(kHoldS)) {
+            line_ = pending_;
+            lineSince_ = now_;
+            lineUntil_ = pendingAt_ + samplesOf(kHelpS);
+            pending_ = -1;
+            changed = true;
+        }   // else it waits for the line shown to have had kHoldS
+    }
+    if (line_ != kStatusPlugin && pending_ < 0 && now_ >= lineUntil_) {
+        line_ = kStatusPlugin;
+        changed = true;
+    }
+    if (changed) {
+        status_.store(line_, std::memory_order_release);
+        statusChanged_ = true;
+    }
+}
+
+void Surface::notify(AutomateFn automate, UpdateFn update, void* ctx, int frames) {
+    tickStatus(frames);
     // Nothing changed since the last full pass: no need to look at every value every block.
     const uint32_t changes = changes_.load(std::memory_order_acquire);
     if (changes != scanned_ || scanPending_) {
@@ -530,8 +602,9 @@ void Surface::notify(AutomateFn automate, UpdateFn update, void* ctx) {
     if (sinceText_ < kTextEveryBlocks) ++sinceText_;   // saturates: no overflow in a long session
     if (sinceText_ >= kTextEveryBlocks) {
         const uint32_t g = textGen_.load(std::memory_order_acquire);
-        if (g != textSeen_) {
+        if (g != textSeen_ || statusChanged_) {   // new texts, or the status line now says something else
             textSeen_ = g;
+            statusChanged_ = false;
             sinceText_ = 0;
             update(ctx);
         }

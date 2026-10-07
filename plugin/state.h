@@ -4,7 +4,9 @@
 //
 // "ambientforce 1": key=value lines of REAL values (Hz, seconds, semitones, option index) for every
 // sound parameter, plus, in a project, the preset it came from. Survives parameters being added
-// or reordered AND ranges changing (a 0..1 value would silently move when a range does).
+// or reordered AND ranges changing (a 0..1 value would silently move when a range does). A preset
+// file may also carry a description (about=, presets.h presetAbout): not part of the state, never
+// written here.
 #include "surface.h"
 
 #include <string>

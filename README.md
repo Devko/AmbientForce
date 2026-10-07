@@ -30,6 +30,11 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
   hears it in its own way (**Listen**: the notes themselves, the harmony's memory of them, or only
   the key). By default your hands play Bloom's chords and Ground holds the drone under them, and
   keeps holding it after you let go.
+- **Four macros, and a screen that explains itself.** On PLAY, **Horizon** (near to far),
+  **Motion** (still to moving), **Glow** (dark to bright) and **Density** (sparse to thick) each
+  bend the loaded preset in one gesture, without moving its knobs; at 0 it plays as saved. Move any
+  control and the status line says what it does for a few seconds; load a preset and it says what
+  the preset is.
 - **The harmony brain:** a key and one of 12 scales; Equal, **Just** (5-limit) or Pythagorean
   tuning; Input **As Played**, **Snap** (to the nearest scale tone) or **Degrees** (the white keys
   play the scale's degrees, so every key is in key); 10 chord types, always diatonic; Close, Open,
@@ -110,7 +115,7 @@ Four tabs; tapping a tab again shows its next page, each with its own Q-Link set
 
 | Tab | Pages |
 |---|---|
-| PLAY | **PLAY**: the levels, Freeze, Hold, Bloom's Age and Swell, the volume; key, scale, chord, Gravity and the tones; the preset stepper. **HARMONY**: the harmony brain, its memory, On Stop, who listens to what |
+| PLAY | **PLAY**: the four macros, Freeze, Hold, Bloom's Age, the volume; the levels, Bloom's Swell, key, scale, chord and Gravity; the preset stepper. **HARMONY**: the harmony brain, its memory, On Stop, who listens to what |
 | STRATA | **GROUND** and **DRONE**: the drone, its table and its partials. **BLOOM** and **BLOOM OSC**: the chord voices, the second table, Couple and unison |
 | SPACE | **SPACE**: the reverb, its tail and the sends. **MIX**: levels, pans, sends, mutes, the return, tilt and the widths |
 | BROWSE | **PRESETS**: the preset browser |
@@ -164,6 +169,7 @@ checker): see [Building](docs/BUILDING.md#release-builds).
 |---|---|
 | M1 in code: the harmony brain, Ground, Bloom, the lifetime tables and oscillator, Space with Haze and Abyss, the engine, nine pages, tests | ✅ |
 | M1: 16 factory presets, bench cases, a profile-guided build trained on them, the soak | ✅ |
+| Playability (0.0.2): four macros on PLAY, every control's help on the status line, preset descriptions | ✅ |
 | On the device: installs; benches (`make bench-device`: worst case p99 10.6%, [Performance](docs/PERFORMANCE.md)) | ✅ |
 | On the device: playing it, listening, and what MPC sends an instrument ([Roadmap](docs/ROADMAP.md#phase-0-the-probe)) | 🔜 |
 | 0.0.1, the first release; then the plugin catalog | ⬜ |

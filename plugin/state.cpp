@@ -76,6 +76,7 @@ bool loadState(Surface& s, const std::string& textIn, bool asPreset) {
             preset = val;
             continue;
         }
+        if (key == "about") continue;   // a preset's description, not a sound value (presets.h presetAbout)
         for (int i = 0; i < P_COUNT; ++i)
             if (PARAM_INFO[i].kind == Kind::Synth && key == PARAM_INFO[i].key) {
                 float v = 0.0f;

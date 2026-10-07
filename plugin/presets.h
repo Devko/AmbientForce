@@ -15,6 +15,9 @@
 namespace af {
 
 bool presetText(const std::string& key, std::string& out);   // factory or file
+// A preset's one-line description: its "about=" line (the first; "" when there is none), which the
+// status line shows when it loads. Not a parameter: the state ignores it, and saving never writes one.
+std::string presetAbout(const std::string& text);
 // Claims the next user preset file (created empty: highest number + 1) and its key. "" if
 // there is no preset root. The caller writes it, or removes it on failure.
 std::string nextUserPreset(std::string* key);

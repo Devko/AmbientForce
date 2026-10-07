@@ -1,15 +1,19 @@
 // The parameters as surface.py declares them, against the engine they drive: every default and the text it
-// reads, the display formats, the popups, the patch map (the defaults play what a Patch{} plays, every option
-// lands on its value), and every sound value at both ends of its range while a chord sounds. That the option
-// lists are the engine's names is checked as plugin/patch_map.cpp compiles.
+// reads, the display formats, the popups, the help lines, the patch map (the defaults play what a Patch{} plays,
+// every option lands on its value), the macros (at 0 nothing, else their own fields one way, in range), and every
+// sound value at both ends of its range while a chord sounds. That the option lists are the engine's names is
+// checked as plugin/patch_map.cpp compiles.
 #include "host.h"
+#include "factory_presets.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace aft {
 namespace {
@@ -41,6 +45,7 @@ const struct {
     {"s_lowcut", "120 Hz"}, {"s_mod", "40%"}, {"s_width", "100%"}, {"s_freeze", "Off"}, {"s_shimmer", "0%"},
     {"s_shint", "+12"}, {"s_rise", "20%"}, {"s_return", "80%"},
     {"o_tilt", "0%"},
+    {"m_horizon", "0%"}, {"m_motion", "0%"}, {"m_glow", "0%"}, {"m_density", "0%"},
 };
 
 void testDefaults() {
@@ -210,6 +215,190 @@ void testPatchMap() {
           near(with(af::P_B_SWELL, 30.0f).bloom.swellS, 30.0f));
 }
 
+// The help lines (surface.py "help", shown on the status line after a move): every control a hand moves has one,
+// "NAME: what it does", the name as MPC shows it in capitals; tiles, readouts and popup flags have none. That each
+// fits the status line is surface.py's check.
+void testHelp() {
+    std::printf("== parameters: help lines\n");
+    int with = 0;
+    bool ok = true;
+    for (int i = 0; i < af::P_COUNT; ++i) {
+        const af::ParamInfo& p = af::PARAM_INFO[i];
+        const bool moved = p.kind == af::Kind::Synth || p.kind == af::Kind::Ui || p.kind == af::Kind::Stepper ||
+                           p.kind == af::Kind::Button || p.kind == af::Kind::Toggle;
+        std::string name = p.name;
+        for (char& c : name) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        const bool good = moved ? p.help && std::string(p.help).compare(0, name.size() + 2, name + ": ") == 0 &&
+                                      std::strlen(p.help) > name.size() + 12
+                                : p.help == nullptr;
+        if (!good) std::printf("  %s: help %s\n", p.key, p.help ? p.help : "(none)");
+        ok = ok && good;
+        with += p.help != nullptr;
+    }
+    CHECK(ok && with > 80);
+}
+
+// --- the macros ----------------------------------------------------------------------------------
+
+// Every number in a Patch, by name, as a float (an int or bool exactly): two patches are alike when these are, bit
+// for bit. A field added to Patch is added here.
+struct Field {
+    const char* name;
+    float v;
+};
+std::vector<Field> fields(const af::Patch& p) {
+    const af::HarmonyPatch& h = p.harmony;
+    const af::GroundPatch& g = p.ground;
+    const af::BloomPatch& b = p.bloom;
+    const af::Reverb::Params& r = p.space.reverb;
+    auto f = [](int v) { return static_cast<float>(v); };
+    return {
+        {"volumeDb", p.volumeDb}, {"tilt", p.tilt}, {"hold", f(p.hold)}, {"onStop", f(p.onStop)},
+        {"key", f(h.key)}, {"scale", f(h.scale)}, {"tuning", f(h.tuning)}, {"input", f(h.input)}, {"chord", f(h.chord)},
+        {"voicing", f(h.voicing)}, {"leading", f(h.leading)}, {"strumS", h.strumS}, {"memoryBars", f(h.memoryBars)},
+        {"g.listen", f(g.listen)}, {"g.mute", f(g.mute)}, {"g.level", g.level}, {"g.cutoffHz", g.cutoffHz},
+        {"g.table", f(g.table)}, {"g.age", g.pos.age}, {"g.sway", g.pos.sway}, {"g.swayHz", g.pos.swayHz},
+        {"g.smear", g.pos.smear}, {"g.beatHz", g.beatHz}, {"g.gravityS", g.gravityS}, {"g.fadeS", g.fadeS},
+        {"g.sub", g.sub}, {"g.root", g.root}, {"g.fifth", g.fifth}, {"g.octave", g.octave}, {"g.color", g.color},
+        {"g.colorInterval", f(g.colorInterval)}, {"g.registerOct", f(g.registerOct)}, {"g.body", g.body},
+        {"g.breath", g.breath}, {"g.breathHz", g.breathHz}, {"g.width", g.width},
+        {"groundSpace", p.groundSpace}, {"groundPan", p.groundPan},
+        {"b.listen", f(b.listen)}, {"b.mute", f(b.mute)}, {"b.level", b.level}, {"b.cutoffHz", b.cutoffHz},
+        {"b.reso", b.reso}, {"b.filterMode", f(b.filterMode)}, {"b.table", f(b.table)}, {"b.age", b.pos.age},
+        {"b.sway", b.pos.sway}, {"b.swayHz", b.pos.swayHz}, {"b.smear", b.pos.smear}, {"b.tableB", f(b.tableB)},
+        {"b.bOctave", f(b.bOctave)}, {"b.blend", b.blend}, {"b.couple", f(b.couple)}, {"b.coupleAmt", b.coupleAmt},
+        {"b.unison", f(b.unison)}, {"b.detuneCents", b.detuneCents}, {"b.swellS", b.swellS},
+        {"b.releaseS", b.releaseS}, {"b.velSens", b.velSens}, {"b.breath", b.breath}, {"b.tail", f(b.tail)},
+        {"b.width", b.width}, {"bloomSpace", p.bloomSpace}, {"bloomPan", p.bloomPan},
+        {"r.mode", f(r.mode)}, {"r.size", r.size}, {"r.decayS", r.decayS}, {"r.predelayMs", r.predelayMs},
+        {"r.dampHz", r.dampHz}, {"r.lowCutHz", r.lowCutHz}, {"r.mod", r.mod}, {"r.width", r.width},
+        {"r.freeze", f(r.freeze)}, {"r.mix", r.mix}, {"r.shimmer", r.shimmer}, {"r.shimmerInterval", f(r.shimmerInterval)},
+        {"rise", p.space.rise}, {"spaceReturn", p.spaceReturn},
+    };
+}
+
+bool sameBits(float a, float b) { return std::memcmp(&a, &b, sizeof a) == 0; }
+
+// The fields each macro owns, the way each one goes as the macro rises (+1 up, -1 down), and the range it must
+// stay in (the parameter's own; a level or send 0..1 as a gain).
+struct Owned {
+    const char* field;
+    int dir;
+    float lo, hi;
+};
+constexpr float lo(int id) { return af::PARAM_SPECS[id].lo; }
+constexpr float hi(int id) { return af::PARAM_SPECS[id].hi; }
+struct MacroSpec {
+    int id;
+    std::vector<Owned> owned;
+};
+std::vector<MacroSpec> macroSpecs() {
+    using namespace af;
+    return {
+        {P_M_HORIZON, {{"groundSpace", 1, 0, 1}, {"bloomSpace", 1, 0, 1}, {"spaceReturn", 1, 0, 1}, {"g.level", -1, 0, 1},
+                       {"b.level", -1, 0, 1}, {"r.decayS", 1, lo(P_S_DECAY), hi(P_S_DECAY)},
+                       {"r.predelayMs", 1, lo(P_S_PREDELAY), hi(P_S_PREDELAY)}, {"g.cutoffHz", -1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)},
+                       {"b.cutoffHz", -1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)}, {"r.dampHz", -1, lo(P_S_DAMP), hi(P_S_DAMP)},
+                       {"rise", 1, 0, 1}}},
+        {P_M_MOTION, {{"g.sway", 1, 0, 1}, {"b.sway", 1, 0, 1}, {"g.swayHz", 1, lo(P_G_SWAYRATE), hi(P_G_SWAYRATE)},
+                      {"b.swayHz", 1, lo(P_B_SWAYRATE), hi(P_B_SWAYRATE)}, {"b.smear", 1, 0, 1}, {"g.breath", 1, 0, 1},
+                      {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}}},
+        {P_M_GLOW, {{"g.cutoffHz", 1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)}, {"b.cutoffHz", 1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)},
+                    {"tilt", 1, lo(P_O_TILT), hi(P_O_TILT)}, {"r.dampHz", 1, lo(P_S_DAMP), hi(P_S_DAMP)},
+                    {"r.shimmer", 1, 0, 1}, {"g.body", -1, 0, 1}, {"volumeDb", 1, lo(P_VOLUME), hi(P_VOLUME)}}},
+        {P_M_DENSITY, {{"g.sub", 1, 0, 1}, {"g.octave", 1, 0, 1}, {"g.color", 1, 0, 1},
+                       {"b.detuneCents", 1, lo(P_B_DETUNE), hi(P_B_DETUNE)}, {"b.breath", 1, 0, 1},
+                       {"strumS", -1, lo(P_H_STRUM), hi(P_H_STRUM)}, {"volumeDb", -1, lo(P_VOLUME), hi(P_VOLUME)}}},
+    };
+}
+
+af::Macros only(int id, float x) {
+    af::Macros m;
+    (id == af::P_M_HORIZON ? m.horizon : id == af::P_M_MOTION ? m.motion : id == af::P_M_GLOW ? m.glow : m.density) = x;
+    return m;
+}
+
+void testMacros() {
+    std::printf("== the macros\n");
+    // Every factory preset, as the plugin loads it: with its macros at 0 (as saved) it plays the knobs' patch bit for
+    // bit, through patchFromParams as the audio thread builds it.
+    std::vector<std::vector<float>> presets;   // each one's 0..1
+    bool same = true;
+    for (int k = 0; k < af::kNumFactoryPresets; ++k) {
+        Host h;
+        CHECK(h.load(af::kFactoryPresets[k].text) == 1);
+        std::vector<float> norm(af::P_COUNT);
+        for (int i = 0; i < af::P_COUNT; ++i) norm[static_cast<size_t>(i)] = h.get(i);
+        for (int id : {af::P_M_HORIZON, af::P_M_MOTION, af::P_M_GLOW, af::P_M_DENSITY})
+            CHECK(af::paramValue(id, norm[static_cast<size_t>(id)]) == 0.0f);
+        const auto a = fields(af::patchFromParams(norm.data())), b = fields(af::patchFromKnobs(norm.data()));
+        for (size_t f = 0; f < a.size(); ++f)
+            if (!sameBits(a[f].v, b[f].v)) {
+                std::printf("  %s: %s %g with the macros at 0, %g without\n", af::kFactoryPresets[k].name, a[f].name, a[f].v, b[f].v);
+                same = false;
+            }
+        presets.push_back(std::move(norm));
+    }
+    CHECK(same && presets.size() == static_cast<size_t>(af::kNumFactoryPresets));
+
+    // Each macro swept from -1 to +1 on every factory preset: its own fields each one way, inside their range;
+    // nothing else moves (bit for bit); and each field it owns moves on some preset.
+    for (const MacroSpec& spec : macroSpecs()) {
+        std::vector<int> movedOn(spec.owned.size(), 0);
+        bool others = true, monotonic = true, inRange = true;
+        for (const auto& norm : presets) {
+            const af::Patch knobs = af::patchFromKnobs(norm.data());
+            const auto base = fields(knobs);
+            std::vector<float> last(spec.owned.size(), 0.0f);
+            for (int s = -10; s <= 10; ++s) {
+                af::Patch p = knobs;
+                af::applyMacros(p, only(spec.id, static_cast<float>(s) / 10.0f));
+                const auto now = fields(p);
+                for (size_t f = 0; f < now.size(); ++f) {
+                    size_t o = 0;
+                    while (o < spec.owned.size() && std::strcmp(spec.owned[o].field, now[f].name) != 0) ++o;
+                    if (o == spec.owned.size()) {   // not this macro's: untouched
+                        if (!sameBits(now[f].v, base[f].v)) {
+                            std::printf("  %s at %+.1f moves %s\n", af::PARAM_INFO[spec.id].name, s / 10.0, now[f].name);
+                            others = false;
+                        }
+                        continue;
+                    }
+                    const Owned& w = spec.owned[o];
+                    if (now[f].v < w.lo || now[f].v > w.hi) {
+                        std::printf("  %s at %+.1f: %s %g outside %g..%g\n", af::PARAM_INFO[spec.id].name, s / 10.0, w.field, now[f].v, w.lo, w.hi);
+                        inRange = false;
+                    }
+                    if (s > -10 && (now[f].v - last[o]) * static_cast<float>(w.dir) < 0.0f) {
+                        std::printf("  %s at %+.1f: %s turns back (%g after %g)\n", af::PARAM_INFO[spec.id].name, s / 10.0, w.field, now[f].v, last[o]);
+                        monotonic = false;
+                    }
+                    if (s == 0 && !sameBits(now[f].v, base[f].v)) monotonic = false;   // 0: as the knobs have it
+                    if (!sameBits(now[f].v, base[f].v)) ++movedOn[o];
+                    last[o] = now[f].v;
+                }
+            }
+        }
+        bool allMove = true;
+        for (size_t o = 0; o < spec.owned.size(); ++o)
+            if (!movedOn[o]) {
+                std::printf("  %s never moves %s\n", af::PARAM_INFO[spec.id].name, spec.owned[o].field);
+                allMove = false;
+            }
+        CHECK(others && monotonic && inRange && allMove);
+    }
+
+    // Through the plugin: a macro bends the sound, not the knobs. The parameters it bends read and show as they were.
+    Host h;
+    const float cutoff = h.get(af::P_B_CUTOFF);
+    const std::string shown = h.display(af::P_B_CUTOFF);
+    h.set(af::P_M_GLOW, 1.0f);
+    h.run(2);
+    CHECK(h.display(af::P_M_GLOW) == "+100%" && h.get(af::P_B_CUTOFF) == cutoff && h.display(af::P_B_CUTOFF) == shown);
+    h.set(af::P_M_HORIZON, -0.5f);
+    CHECK(h.display(af::P_M_HORIZON) == "-50%");
+}
+
 // Each sound value at 0 and at 1 while a chord sounds, a quarter of a second each, one after another and back
 // between (Swell at its shortest, so the chord sounds from the start): every sample finite.
 void testExtremes() {
@@ -243,7 +432,9 @@ void paramsTests() {
     testDefaults();
     testFormats();
     testPopups();
+    testHelp();
     testPatchMap();
+    testMacros();
     testExtremes();
 }
 

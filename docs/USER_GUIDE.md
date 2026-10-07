@@ -3,6 +3,7 @@
 - [Getting started](#getting-started)
 - [One gesture, several strata](#one-gesture-several-strata)
 - [The screen](#the-screen)
+- [The macros](#the-macros)
 - [The harmony](#the-harmony)
 - [Ground, the drone](#ground-the-drone)
 - [Bloom, the chords](#bloom-the-chords)
@@ -27,8 +28,11 @@
    gliding there over 6 s (Gravity). When MPC's transport stops, everything fades out over 8 s
    (On Stop: Fade).
 
-Then pick a factory preset (the **PRESETS** page, or the preset stepper at the top of PLAY), or turn
-Bloom's **Age** on PLAY and hear the same chord at another moment of the instrument's life.
+Then pick a factory preset (the **PRESETS** page, or the preset stepper at the top of PLAY): the status
+line at the top says what it is. Or turn the four **macros** at the top left of PLAY, Horizon, Motion,
+Glow and Density, which bend whatever preset is loaded ([below](#the-macros)), or Bloom's **Age** and
+hear the same chord at another moment of the instrument's life. Whatever you turn, the status line
+says what it does for a few seconds.
 
 ## One gesture, several strata
 
@@ -75,7 +79,7 @@ stand on the screen.
 
 | Tab | Pages |
 |---|---|
-| PLAY | **PLAY**: the levels, Freeze, Hold, Bloom's Age and Swell, the volume; then the key, scale, chord and Gravity, the two Tones, Space Decay and Shimmer. The preset stepper at the top. **HARMONY**: the harmony brain; its memory, Hold, On Stop and each stratum's Listen |
+| PLAY | **PLAY**: the four [macros](#the-macros), Freeze, Hold, Bloom's Age, the volume; then the levels and Bloom's Swell, the key, scale, chord and Gravity. The preset stepper at the top. **HARMONY**: the harmony brain; its memory, Hold, On Stop and each stratum's Listen |
 | STRATA | **GROUND**: the drone's main controls; its table, motion and voice. **DRONE**: its five partials, pan and beating; its motion and tone again. **BLOOM**: the chord voices' main controls; table, release, filter, tail. **BLOOM OSC**: Table B, Couple, Smear, the sway's rate, unison; the voice |
 | SPACE | **SPACE**: the reverb; its tail (Freeze, Shimmer, Rise); the return, the sends and the tilt. **MIX**: each stratum's level, pan, send and mute; the return, tilt, volume, Freeze; the widths and Shimmer |
 | BROWSE | **PRESETS**: the preset browser |
@@ -87,6 +91,18 @@ Bloom's **Blend**), its time (**Gravity**, **Swell**), its **Space** send and it
 The status line at the top of every page: `VOICES 4   CPU 6%   PEAK 9%`. VOICES counts Bloom's
 voices in use and Ground while it sounds; CPU is AmbientForce's share of MPC's audio block over the
 last half second, PEAK its slowest block in that time.
+
+**The status line also says what you just did.** Move any control and for 4 s it shows that
+control's help, what it does and what its range means: `BLOOM AGE: where in a note's life you
+listen, struck to fading`. Load a preset (a tile, the stepper, NEXT, RND, INIT) and for 6 s it shows
+the preset's name and description: `HARBOUR AT 4AM: a held G drone in fog, chords drift in`. Then it
+goes back to the meter.
+
+- A control you keep moving keeps its line: 4 s from its last move.
+- Another control takes the line over once the one shown has had half a second, so automation that
+  moves several controls at once doesn't make it flicker.
+- Only moves count. MPC sending a control's own value back, a preset or a project loading, and the
+  plugin's own steps change nothing there.
 
 Every control's name says what it belongs to ("Ground Tone", "Bloom Swell"), because MPC's Q-Link
 overlay shows the name without the page; a few are shortened to fit MPC's name box (Gnd Octave,
@@ -108,7 +124,7 @@ The Q-Link sets:
 
 | Page | Q-Links 1–8 | Q-Links 9–16 |
 |---|---|---|
-| PLAY | Ground Level, Bloom Level, Space Level, Freeze, Hold, Bloom Age, Bloom Swell, Volume | Key, Scale, Chord, Gravity, Bloom Tone, Ground Tone, Space Decay, Shimmer |
+| PLAY | Horizon, Motion, Glow, Density, Freeze, Hold, Bloom Age, Volume | Ground Level, Bloom Level, Space Level, Bloom Swell, Key, Scale, Chord, Gravity |
 | HARMONY | Key, Scale, Tuning, Input, Chord, Voicing, Leading, Strum | Memory, Hold, On Stop, Ground Listen, Bloom Listen, Volume, Gravity, Bloom Swell |
 | GROUND | Ground Level, Ground Tone, Ground Age, Ground Sway, Ground Beat, Gravity, Ground Space, Ground Width | Ground Table, Ground Rate, Ground Fade, Ground Body, Gnd Breath, Ground Reg, Ground Listen, Ground Mute |
 | DRONE | Ground Sub, Ground Root, Ground Fifth, Gnd Octave, Ground Color, Color Int, Ground Pan, Ground Beat | Gravity, Ground Fade, Gnd Breath, Ground Body, Ground Level, Ground Tone, Ground Age, Ground Sway |
@@ -116,7 +132,40 @@ The Q-Link sets:
 | BLOOM OSC | Bloom Table B, Bloom B Oct, Bloom Couple, Couple Amt, Bloom Smear, Bloom Rate, Bloom Unison, Bloom Detune | Bloom Breath, Bloom Pan, Bloom Age, Bloom Sway, Bloom Blend, Bloom Tone, Bloom Swell, Blm Release |
 | SPACE | Space Type, Space Size, Space Decay, Pre-Delay, Space Damp, Low Cut, Space Mod, Space Width | Freeze, Shimmer, Shimmer Int, Space Rise, Space Level, Ground Space, Bloom Space, Tilt |
 | MIX | Ground Level, Ground Pan, Ground Space, Ground Mute, Bloom Level, Bloom Pan, Bloom Space, Bloom Mute | Space Level, Tilt, Volume, Freeze, Ground Width, Bloom Width, Space Width, Shimmer |
-| PRESETS | Preset, Ground Level, Bloom Level, Space Level, Bloom Age, Bloom Swell, Bloom Tone, Volume | Key, Scale, Chord, Gravity, Ground Tone, Space Decay, Shimmer, Freeze |
+| PRESETS | Preset, Horizon, Motion, Glow, Density, Bloom Age, Freeze, Volume | Key, Scale, Chord, Gravity, Ground Level, Bloom Level, Space Level, Bloom Swell |
+
+## The macros
+
+Four knobs at the top left of PLAY (and Q-Links 2–5 on PRESETS, to bend a preset while you audition
+it) each move several controls at once in one musical direction. They bend the sound the other
+knobs make without moving those knobs: with Glow up, Bloom Tone still reads 5.00 kHz, and sounds
+brighter. Each runs from −100% to +100%, and at **0 the preset plays exactly as saved**. They are
+saved with the sound like any other control; the factory presets keep them at 0.
+
+| Macro | −100% | +100% |
+|---|---|---|
+| **Horizon** | Near: dry, close, a short room | Far: wet, darker, a long space that blooms after the note |
+| **Motion** | Still: the tables held at their Age, the drone without beating or breath | Moving: deep, faster sways, the tone flickering, the drone breathing and beating |
+| **Glow** | Dark and warm | Bright and airy, with a shimmer |
+| **Density** | Sparse: the drone's root and fifth alone, the chords' notes one by one | Thick: the drone's other partials up, a wider unison, more breath, the chords all at once |
+
+What each one moves (h, m, g, d: the macro from −1 to +1):
+
+| Macro | Moves |
+|---|---|
+| **Horizon** | Ground Space and Bloom Space × 2^(1.5 h) near (to −9 dB), × 2^(0.5 h) far (to +3 dB); Space Level near only, × 2^(0.5 h) (to −3 dB); Ground Level and Bloom Level far only, × 2^(−0.5 h) (to −3 dB); Space Decay × 2^(1.3 h) (0.41× to 2.46×); Pre-Delay + 50 ms × h; Ground Tone, Bloom Tone and Space Damp × 2^(−0.5 h) (half an octave brighter near, darker far); Space Rise toward 0 near, 60% of the way to 100% far |
+| **Motion** | Ground Sway and Bloom Sway toward 0, or 80% of the way to 100%; Ground Rate and Bloom Rate × 2^(2 m) (a quarter to four times as fast); Bloom Smear toward 0, or 60% of the way to 100%; Gnd Breath toward 0, or 70% of the way to 100%; Ground Beat to 0 still, × 2^(1.5 m) moving (at most 3 Hz) |
+| **Glow** | Ground Tone and Bloom Tone × 2^(2 g) (two octaves either way); Tilt + 30 points × g; Space Damp × 2^g; Shimmer + 35 points × g, bright only (not with Shimmer Int at −12, which darkens); Ground Body × 2^(−g) (twice as much, darker vowels, toward dark; half toward bright); the volume down 1.5 dB × (−g), dark only |
+| **Density** | Ground Sub, Gnd Octave and Ground Color × (1 + d) sparse (to 0), × 2^d thick (Root and Fifth stay); Bloom Detune and Bloom Breath likewise (no detune: unison 2 plays as one voice); Strum × 2^(−d) + 0.6 s × (−d) sparse (one note after another even from 0), × (1 − 0.75 d) thick (a quarter); the volume down 1 dB × d, thick only |
+
+- Every result stays inside its control's range, and what a preset has switched off stays off (a
+  send or the Space Level at 0, a partial at 0, Body off, no Beat), Shimmer aside: Glow's bright half
+  adds one (unless the preset's shimmer goes down).
+- Two macros can move one control (Horizon and Glow both move the Tones and Space Damp); each adds
+  its share.
+- The level stays near the preset's: far is a few LU quieter (the dry steps back), dark and thick are
+  trimmed by the volume. No macro at either end drives a factory preset into the limiter.
+- Nothing that would jump is touched: not Unison, the chord, the voicing or the tables.
 
 ## The harmony
 
@@ -498,7 +547,9 @@ The MIX page has every stratum's level, pan, send and mute in one place, then th
 
 **16 factory presets**, each in its own key and scale. Drones put Ground forward with Bloom quiet
 and following the harmony; Beds use both strata with long swells; Blooms put Bloom forward over a
-low Ground; Choirs sing Choir Ah-Oo on both strata, Ground with Body.
+low Ground; Choirs sing Choir Ah-Oo on both strata, Ground with Body. Each one says what it is on
+the status line when it loads (`FIFTH LIGHT: pure fifths on glass, into an endless shimmer`), and
+keeps the [macros](#the-macros) at 0.
 
 | Preset | What it is |
 |---|---|
@@ -539,7 +590,10 @@ without leaning on the limiter.
   categories, loose files go to "Unsorted", and a folder named like a factory category shows as
   "<Name> (files)". Files added, renamed or deleted while MPC runs show up when you browse.
 - A preset file is plain text: `ambientforce 1`, then `key=value` lines of real values (Hz,
-  seconds, an option's number), the same as an MPC project stores.
+  seconds, an option's number), the same as an MPC project stores. An optional `about=` line is the
+  preset's description: the status line shows `NAME: description` for 6 s when it loads, or the name
+  alone without one. SAVE writes none; add one on a computer, in plain ASCII, about 40 characters
+  (the status line on PLAY has room for about 60 with the name).
 
 ## How it behaves in MPC
 
