@@ -52,7 +52,7 @@ enum : int32_t {
     effSetSampleRate = 10, effSetBlockSize = 11, effMainsChanged = 12, effGetChunk = 23,
     effSetChunk = 24, effProcessEvents = 25, effCanBeAutomated = 26, effGetPlugCategory = 35,
     effGetEffectName = 45, effGetVendorString = 47, effGetProductString = 48,
-    effGetVendorVersion = 49, effCanDo = 51, effGetVstVersion = 58, effStopProcess = 72,
+    effGetVendorVersion = 49, effCanDo = 51, effGetVstVersion = 58, effStartProcess = 71, effStopProcess = 72,
 };
 
 enum : int32_t {

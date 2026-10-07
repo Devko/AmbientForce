@@ -59,8 +59,8 @@ void testState() {
     d.run(kBlocksPerSec / 4);
     CHECK(d.run(4) == 0.0f);
     CHECK(d.load("ambientforce 1\nvolume=0\n") == 1);
-    d.run(kBlocksPerSec / 4);
-    CHECK(d.run(4) > 0.1f);
+    d.run(3 * kBlocksPerSec);   // past Bloom's swell
+    CHECK(d.run(4) > 0.05f);
 }
 
 void testPresets() {

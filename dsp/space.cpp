@@ -11,8 +11,13 @@ namespace {
 
 constexpr float kQuiet = 1e-6f;              // -120 dBFS: under it, nothing is coming in or out
 constexpr uint32_t kQuietMax = 1u << 30;     // the quiet counts stop here (6.8 hours, far past any reach)
-constexpr float kFull = 0.25f;               // the send's envelope at which Rise ducks all it may: -12 dBFS
-                                             // (a first guess; Tasks 8 and 10 set it from real send levels)
+// The send's envelope at which Rise ducks all it may: -28 dBFS. Measured on the default patch at the
+// Init levels (Ground and Bloom 0.7 and the sends 0.4 and 0.5, all squared by the patch map), the
+// Rise envelope holds a sustained triad at -25 dBFS (Bloom's -25.4, Ground's -35.6), two chords
+// (6 voices) at -23: both duck fully at Rise 1, with 3 dB to spare. (The first guess, -12 dBFS, left
+// the triad's wet at 0.77 at Rise 1: Rise barely ducked.) The patch's own gains unsquared (0.7, 0.4,
+// 0.5) put the triad at -16 dBFS.
+constexpr float kFull = 0.04f;
 constexpr float kClamp = 8.0f;               // +18 dBFS: a wild sample mustn't hold the wet down for long
 // The gain this near its target is there, so Rise 0 is exactly 1. Not nearer: each sample moves it
 // 0.11% of the way, and a float near 1 stops moving once that is under half an ulp, 2.6e-5 short.

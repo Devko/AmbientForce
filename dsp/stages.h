@@ -1,4 +1,4 @@
-// From SubForce dsp/stages.h (8846421), namespace sf -> af; the stub's one stage.
+// From SubForce dsp/stages.h (8846421), namespace sf -> af; the engine's four stages.
 #pragma once
 // Where a block's time goes, for the profiling build only (-DAF_STAGE_TIMING: `make
 // arm-bench-stages`, read by tools/bench.cpp through AmbientForceStageTimes). Engine::render laps
@@ -11,8 +11,10 @@
 
 namespace af {
 
-enum Stage : int { STG_VOICES, STG_COUNT };
-constexpr const char* kStageNames[STG_COUNT] = {"voices"};
+// Ground, Bloom, Space (the reverb and its return), the output (tilt, volume, the guard, the
+// limiter, the fade).
+enum Stage : int { STG_GROUND, STG_BLOOM, STG_SPACE, STG_OUT, STG_COUNT };
+constexpr const char* kStageNames[STG_COUNT] = {"ground", "bloom", "space", "out"};
 
 #ifdef AF_STAGE_TIMING
 extern uint64_t g_stageNs[STG_COUNT];   // summed over every instance (the bench runs one)

@@ -6,9 +6,10 @@
 //
 // Rise: the wet ducks under what is coming in and blooms once it stops, so the reverb answers a
 // note rather than blurring it. An envelope of the send's louder side (5 ms attack, 400 ms release)
-// sets the wet's gain to 1 - rise x min(1, env / 0.25): at Rise 1 a send peaking around -12 dBFS
-// or louder mutes the wet, at Rise 0.5 it halves it. (That -12 dBFS is a first guess: Tasks 8 and
-// 10 calibrate it against the strata's real send levels.) The gain glides (20 ms) and lands
+// sets the wet's gain to 1 - rise x min(1, env / 0.04): at Rise 1 a send at -28 dBFS or louder
+// mutes the wet, at Rise 0.5 it halves it. -28 dBFS is under a pad's send at the Init levels (the
+// knobs' defaults, squared): a triad's envelope sits at -25 dBFS, two chords' at -23 (space.cpp).
+// Ground's drone alone, at -36, ducks a little over half. The gain glides (20 ms) and lands
 // exactly, so at Rise 0 Space is the Reverb bit for bit. Only the return ducks, not the network:
 // the tail builds under the note as it would without Rise, and is there when the note lets go.
 //

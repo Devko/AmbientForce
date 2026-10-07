@@ -1,17 +1,90 @@
 #pragma once
-// The AmbientForce engine, for now a stub: a sine per note, so the plugin around it has something
-// to play and the tests something to measure. The real engine (the harmony brain, Ground, Bloom,
-// Space) replaces it behind the same interface.
+// The AmbientForce engine (docs/CONCEPT.md 4 and 8): the harmony brain, Ground and Bloom, Space,
+// and the output stage, behind the interface the plugin drives (MIDI at sample offsets, the
+// transport once per block, a Patch when a parameter changes).
 //
-// Six voices; a seventh note takes the oldest releasing voice, or the oldest of all when none is
-// releasing. A 10 ms linear attack and a 300 ms linear release (from wherever the level is), the
-// sustain pedal holding released keys. Mono: L = R.
+// Routing (CONCEPT.md 4.1). A key goes through Input (mapInput) once, on its way down; the
+// harmony keeps the key and its mapped note together, so a key's note-off finds its note even if
+// the patch changed in between. Then every stratum hears it by its Listen mode:
+// - Bloom, Notes: the chord on the mapped note (buildChord, led from the chord Bloom played last
+//   when Leading is on; with Chord Off the single note), owned by the key. Harmony: it moves to
+//   the harmony's chord whenever that changes (Harmony::version()), and lets go when the memory
+//   forgets it. Free: it moves to the tonic chord (its Chord type, a triad under Chord Off) from
+//   the first note on, and moves again when the key, scale, chord or voicing change.
+// - Ground, Notes: the lowest note held (fading when none is). Harmony: the harmony's root. Free:
+//   the tonic, from the first note on.
+// Nothing sounds before the first note-on, Free strata included: the engine is asleep. It wakes
+// at the first note-on and stays awake through note-offs, until Stop or reset() put it to sleep.
 //
-// Real-time rules: no allocation, no locks, no exceptions after construction. The plugin layer
-// feeds it a Patch once per block (only when something changed).
+// Keys, the pedal and Hold. A key up while the pedal (CC 64) is down is held by the pedal until
+// it comes up; with Hold on it is latched instead, and the next note-on lets it go, after the
+// new chord has started (Bloom's play() before release(), so the notes the two chords share carry
+// on). A key held either way still counts as held for the harmony: the memory's bars count from
+// when the chord is let go, not from when the fingers left it, and Ground in Notes mode stays on
+// the chord the pedal or Hold keeps sounding. (Under Chord Off, where the harmony's chord is the
+// notes held, the latched keys leave the harmony before the new one goes down, or they would stay
+// in its chord.) Hold turned off lets the latched keys go (to the pedal, if it is down). CC 123
+// lets every key go, held by a finger, the pedal or Hold, but the engine stays awake: what the
+// harmony remembers goes on sounding.
+//
+// Stop (CONCEPT.md 7.4): the transport stopping (playing to stopped, from setTransport) or a
+// suspend that resumes within kStopWindowS applies On Stop: Keep does nothing; Fade fades the
+// output to silence over kFadeS (linear in dB down to -60 dB), then resets and sleeps; Cut resets
+// at once. A note-on or the transport starting during a fade turns it round: the output comes
+// back up at kRecoverDbPerS. A longer suspend resets. CC 120 and reset() silence everything at
+// once, forget the harmony and the keys, and sleep.
+//
+// The mix: Ground and Bloom each render their dry (panned by groundPan / bloomPan, equal power,
+// unity in the middle) into the dry bus and add their sends into the Space bus (Ground at
+// groundSpace, Bloom at bloomSpace). Bloom's send is 0 whenever Space can't carry a tail (the
+// return or Bloom's send at 0): it then releases as Tail Voice. Ground's is 0 with the return at
+// 0 too, so a Space nobody hears isn't run. With Bloom's Tail on Space, the reverb's decay is held
+// at Bloom's Release or longer (not in Abyss, which rings four times the Decay anyway), so the
+// tail a voice hands off carries on.
+//
+// The output: dry + spaceReturn x wet -> tilt -> volume -> the non-finite guard -> limiter ->
+// Stop's fade.
+// - Tilt: one first-order shelf pivoting at 800 Hz, the highs up and the lows down by 6 dB at
+//   tilt 1 (and the other way at -1), 0 dB at the pivot. Bypassed at 0.
+// - Volume before the limiter, so the ceiling holds at every volume: the presets are level-matched
+//   well under it and the knob reaches +6 dB, where the limiter takes the extra rather than the
+//   output passing -1 dBFS. (After the limiter, +6 dB would put a limited peak at +5 dBFS.)
+// - The guard: any sample that isn't finite zeroes the whole render() call, resets every DSP
+//   state (Ground, Bloom, Space, the output's filters) and is counted; the keys and the harmony
+//   stay, so Harmony and Free strata come back by themselves. It looks before the limiter, whose
+//   soft clip would turn an infinity into a finite peak.
+// - The limiter: no lookahead. A stereo-linked gain computer (1 ms attack, 150 ms release) holds
+//   the peak at kKnee (0.95 of the ceiling); what the attack lets through goes into a soft clip
+//   (softclip(), a tanh-like curve) from kKnee up to kCeiling, which it never passes: the output
+//   stays at or under -1 dBFS (0.8913) whatever comes in. Under the knee, with the gain back at 1,
+//   it only looks.
+//
+// Control rate: every kChunk samples the harmony's memory advances at the transport's tempo, the
+// routes are looked at again (the memory may have forgotten the chord), Stop's fade and the tilt
+// take a step. The steps sit on the sample count's multiples of kChunk, so the host's blocks
+// (MPC's 128) never cut one; only a MIDI event does, at its sample. Ground and Bloom are rendered a
+// control step at a time: they read their tables (TableSet::get) and step their own controls at
+// every call.
+//
+// Idle: asleep, or awake with nothing to hear (Ground !audible(), Bloom with no voice in use) and
+// Space::silent(): render() writes zeros and runs no DSP. Space can stay unsilent for minutes
+// (Abyss at Decay 30), and a set() that lengthens its reach can make it unsilent again with no
+// input: it then simply runs that much longer.
+//
+// Cost, as ARM instructions per 128-sample block (qemu's count, the device's flags, tables of a
+// lifetime table's size): asleep 0.4k. The Init patch (the knobs' defaults, squared) holding a
+// triad 206k: Space 113k, Bloom 46k, Ground 35k, the engine's own routing, mix and output 4.5k. The
+// worst case (6 voices of unison 2 with FM, every Ground partial and Body, Abyss with shimmer) 394k:
+// Bloom 224k, Space 107k, Ground 46k, the engine 7k. By PolyForce's ~1 ns an instruction that is
+// 7.1% and 13.6% of a block, against CONCEPT.md 11's 15% gate for everything, Air, Weather, Echo
+// and Patina still to come: Bloom's unison 2 is the first cap to fall, as planned there.
+//
+// Real-time rules: everything is allocated in the constructor (Space's buffers). Nothing on the
+// audio thread allocates, locks or throws.
 #include "bloom.h"
 #include "ground.h"
 #include "harmony.h"
+#include "lifetime.h"
 #include "space.h"
 
 #include <cstdint>
@@ -40,54 +113,128 @@ struct Patch {
 
 class Engine {
 public:
-    static constexpr int kVoices = 6;
+    static constexpr double kStopWindowS = 0.25;  // a suspend resumed within this is a Stop, longer a reset
+    static constexpr float kFadeS = 8.0f;         // On Stop's Fade, to -60 dB
+    static constexpr float kRecoverDbPerS = 30.0f;   // a fade turned round comes back this fast
+    static constexpr float kCeiling = 0.891f;     // -1 dBFS: the output never passes it
+    static constexpr float kKnee = 0.95f * kCeiling;   // the limiter holds peaks here; the soft clip above
 
-    explicit Engine(float sampleRate = 44100.0f);
+    // What the tests (and nothing else) look at.
+    struct Info {
+        bool awake = false;           // a note-on has woken it, and no Stop or reset put it to sleep
+        bool idle = false;            // the last render() ran no DSP
+        bool fading = false;          // On Stop's Fade under way
+        float fadeDb = 0.0f;          // where it is (0: none)
+        bool suspended = false;       // suspend() without resume() yet
+        int groundTarget = -1;        // the note Ground was last given (-1: none)
+        bool groundAudible = false;
+        int bloomActive = 0;
+        int harmonyRoot = -1;
+        uint32_t harmonyVersion = 0;
+        uint32_t guards = 0;          // blocks the non-finite guard zeroed
+        uint64_t samples = 0;         // rendered so far
+        float limiterGain = 1.0f;
+        float spaceDecayS = 0.0f;     // the decay Space was given (the tail's hold applied)
+    };
+
+    explicit Engine(const TableSet& tables);
 
     void setPatch(const Patch& p);           // between render() calls
     void noteOn(int note, int velocity);     // velocity 0 = note off
     void noteOff(int note);
     void pitchBend(float) {}
     void sustain(bool down);
-    void allNotesOff();                      // release every note, held by a key or the pedal (CC 123)
-    void reset();                            // silence now: CC 120, suspend, transport stop
+    void allNotesOff();                      // CC 123: every key let go; the engine stays awake
+    void reset();                            // CC 120: silence now, the harmony forgotten, asleep
     void controller(int, int) {}
     void aftertouch(float) {}
     void polyAftertouch(int, float) {}
     void resetControllers() { sustain(false); }   // CC 121: the pedal back up
-    void seed(uint32_t s);                   // per instance; the stub has no random numbers yet
-    // MPC's tempo and position (quarter notes), once per block before render().
+    void seed(uint32_t s);                   // per instance: Ground's and Bloom's random numbers
+    // MPC's tempo and position (quarter notes), once per block before render(). playing falling to
+    // false is a Stop.
     void setTransport(double bpm, double beats, bool playing, bool beatsValid);
+    // The host stopped processing, and started again `awayS` seconds later: within kStopWindowS
+    // that is a Stop (On Stop applies), longer a reset. A resume() without a suspend() does nothing.
+    void suspend();
+    void resume(double awayS);
 
-    void render(float* outL, float* outR, int n);   // overwrites n samples
-    int  activeVoices() const;                      // voices sounding, releases included
+    void render(float* outL, float* outR, int n);   // overwrites n samples (any n)
+    int  activeVoices() const;                      // Bloom's voices in use, and Ground if it sounds
+
+    Info info() const;
+    const Harmony& harmony() const { return harmony_; }
+    const Ground& ground() const { return ground_; }
+    const Bloom& bloom() const { return bloom_; }
+
+    // Test hooks: the next render() finds a NaN in the reverb's return; the sample count jumps.
+    void testInjectNaN() { poison_ = true; }
+    void testSetSamples(uint64_t n) { samples_ = n; }
 
 private:
-    struct Voice {
-        int      note = -1;          // -1: free
-        float    phase = 0.0f;       // 0..1
-        float    inc = 0.0f;         // phase per sample
-        float    amp = 0.0f;         // from the velocity
-        float    level = 0.0f;       // the envelope, 0..1
-        float    step = 0.0f;        // envelope change per sample: > 0 attack, < 0 release, 0 held
-        bool     key = false;        // its key is down
-        bool     pedal = false;      // its key is up, the pedal holds it
-        uint64_t age = 0;            // when it started: the oldest is taken first
+    enum KeyState : uint8_t { K_UP, K_DOWN, K_PEDAL, K_HOLD };
+
+    // A gain that moves in a straight line across a piece (at most kChunk samples) to its target.
+    struct Glide {
+        float now = 1.0f, target = 1.0f;
     };
 
-    void release(Voice& v);
+    void letGo(int key);                     // the key's notes released, the key gone from the harmony
+    void stop();                             // On Stop
+    void route();                            // Ground's target and Bloom's chord from the harmony
+    void control();                          // a control step
+    void clearDsp();                         // every DSP state, silent (reset() and the guard)
+    bool piece(float* outL, float* outR, int n);   // n <= kChunk samples; false: not finite
+    bool output(float* L, float* R, int n);   // false: a sample isn't finite
+    void tiltFor(float t);                   // the tilt's coefficients for t
 
-    float    sr_;
-    float    attackStep_, releaseStep_;   // per sample, at full level
-    float    gain_ = 0.0f;                // the volume as a factor, gliding to target_
-    float    target_ = 0.0f;
-    float    glide_;                      // the gain's one-pole coefficient per sample
-    bool     pedal_ = false;
-    uint64_t started_ = 0;                // notes started so far: each voice's age
-    uint32_t seed_ = 1;
-    double   bpm_ = 120.0, beats_ = 0.0;
-    bool     playing_ = false, beatsValid_ = false;
-    Voice    voices_[kVoices];
+    const TableSet& tables_;
+    Patch p_;
+    Harmony harmony_;
+    Ground ground_;
+    Bloom bloom_;
+    Space space_;
+    Space::Params spaceParams_;              // what Space is given: the patch's, the tail's hold applied
+    Transport transport_;
+
+    // Keys: down, held by the pedal or latched by Hold (the harmony keeps each one's mapped note),
+    // and the chord Bloom played for each (Notes).
+    KeyState key_[128] = {};
+    Chord keyChord_[128];
+    bool pedal_ = false;
+    Chord prev_;                             // the chord Bloom played last (Notes): Leading's start
+    float lastVel_ = 0.0f;                   // the last note-on's velocity, 0..1: Harmony and Free moves
+
+    // Routes: what Ground and Bloom were last given.
+    int groundWant_ = -1;
+    uint32_t bloomVersion_ = 0;              // the harmony's version Bloom (Harmony) moved to
+    bool bloomSync_ = false;                 // Bloom (Harmony) moves to the harmony's chord at the next route
+    Chord freeChord_, freePlayed_;           // the tonic chord (Free), and what Bloom was moved to
+
+    bool awake_ = false;
+    bool idle_ = true;
+    bool suspended_ = false;
+    bool fading_ = false;
+    float fadeDb_ = 0.0f;
+    Glide fade_;                             // Stop's fade as a gain
+    uint64_t samples_ = 0;
+    uint32_t guards_ = 0;
+    bool poison_ = false;
+
+    // The mix and the output.
+    float groundSend_ = 0.0f, bloomSend_ = 0.0f;
+    Glide ret_;                              // the Space return
+    Glide gPanL_, gPanR_, bPanL_, bPanR_;    // the strata's pans
+    float volume_ = 0.0f, volumeNow_ = 0.0f; // the volume as a gain, and where it glides
+    float tilt_ = 0.0f;                      // where the tilt glides, from tiltNow_
+    float tiltNow_ = 0.0f;
+    float tiltG_ = 0.0f, tiltLow_ = 1.0f, tiltHigh_ = 1.0f;   // the one-pole's G, the shelf's gains
+    float tiltS_[2] = {};                    // the one-pole's state, L and R
+    float limit_ = 1.0f;                     // the limiter's gain
+
+    // A piece's buffers: Ground's and Bloom's dry when panned, the sends (and Space's wet in them).
+    float gL_[kChunk] = {}, gR_[kChunk] = {}, bL_[kChunk] = {}, bR_[kChunk] = {};
+    float sendL_[kChunk] = {}, sendR_[kChunk] = {};
 };
 
 } // namespace af
