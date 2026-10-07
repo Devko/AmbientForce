@@ -486,7 +486,8 @@ The MIX page has every stratum's level, pan, send and mute in one place, then th
 - **Tilt** (−100%..+100%): one gentle shelf pivoting at 800 Hz. At +100% the highs are 6 dB up and the
   lows 6 dB down; at −100% the other way; 0 is bypassed.
 - **Volume** (−inf..+6 dB) comes **before** the limiter, so the output never passes −1 dBFS at any
-  volume: the presets are level-matched well under it, and above that the limiter takes the extra.
+  volume. At its default −6 dB, Init plays at −16 LUFS, and the presets are level-matched at −6 dB or
+  under; what the 12 dB above them would push past the ceiling, the limiter takes.
 - **The limiter**: no lookahead (no latency). It holds peaks at about 0.95 of the ceiling and soft
   clips what its 1 ms attack lets through, up to a ceiling of −1 dBFS that nothing passes.
 - **The guard**: should a sample ever come out not finite (it never should), that block is silence

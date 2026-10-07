@@ -140,12 +140,16 @@ pans glide in a straight line over 10 ms from the control step that finds them c
 sample carried from one piece to the next, so a MIDI event that cuts a piece short never makes one
 jump.
 
-**The output:** dry + return × wet → tilt → volume → the non-finite guard → limiter → Stop's fade.
+**The output:** dry + return × wet → tilt → make-up and volume → the non-finite guard → limiter →
+Stop's fade.
 
 - **Tilt**: one first-order shelf pivoting at 800 Hz, ±6 dB at the ends, 0 dB at the pivot;
   bypassed at 0.
-- **Volume before the limiter**, so the ceiling holds at every volume: the knob reaches +6 dB, where
-  the limiter takes the extra instead of the output passing −1 dBFS.
+- **Make-up**: a fixed +8.9 dB (`Engine::kMakeUpDb`) after the mix, so the strata, their sends and
+  Rise keep their own calibration, while Init (which is `Patch{}`) plays the demo phrase at −16 LUFS
+  at the volume's default −6 dB. The factory presets are matched at that default or under it.
+- **Volume before the limiter**, so the ceiling holds at every volume: the knob reaches +6 dB, 12 dB
+  over the presets, where the limiter takes the extra instead of the output passing −1 dBFS.
 - **The guard** looks before the limiter, whose soft clip would turn an infinity into a finite peak.
   A sample that isn't finite zeroes the whole `render()` call, resets every DSP state (Ground, Bloom,
   Space, the output's filters) and is counted; the keys and the harmony stay.

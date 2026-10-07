@@ -67,7 +67,7 @@ changes; it checks the layout and every factory preset before writing anything. 
 | `test-module M=<suite>` | One dsp suite on its own under ASan/UBSan, quicker to iterate on: `test/<suite>_test.cpp` with every `dsp/*.cpp` (`M=harmony`, `reverb`, `lifeosc`, `ground`, `bloom`, `engine`) |
 | `test-module-arm M=<suite>` | The same for the Force's CPU, under `qemu-arm` |
 | `demos` | Render every factory preset playing the demo phrase to `build/demos-out/*.wav` (stereo, as the plugin plays), and all of them back to back as `tour.wav`; prints what each one measures ([below](#the-demo-phrase-and-the-presets-levels)) |
-| `preset-levels` | Set every factory preset's volume so its demo phrase plays at `PRESET_LUFS` (default −16); the limiter holds the peaks under −1 dBFS, and how hard it works for that is printed |
+| `preset-levels` | Set every factory preset's volume so its demo phrase plays at `PRESET_LUFS` (default −16); the limiter holds the peaks under −1 dBFS, and a preset it takes more than 1 dB off fails, as one off its target does |
 | `bench` | x86 bench: only proves the bench and the profiling build work |
 | `arm-plugin` | `build/arm/ambientforce.so`; profile-guided when `qemu-arm` is installed |
 | `arm-bench` | `build/arm/afbench`, the CPU bench for the device |
@@ -88,16 +88,19 @@ release, 40 s at 120 BPM with the transport playing. Every preset plays it **in 
 scale**, so it sounds as the preset is meant to and the levels still compare:
 
 - the first chord on the tonic, between C3 and B3; the second on IV, a fourth above (in Lydian, whose
-  IV is diminished, on II; in the five- and six-tone scales on the tone a fourth above, or the nearest
-  one under it);
+  IV is diminished, on II; in the other scales on the tone nearest a fourth above, the lower on a tie);
 - one key per chord, the preset's Chord type building on it; with Chord Off three keys, an open
-  triad; keys mapped back through the preset's Input, velocity 100.
+  triad (the root, the scale's tones nearest a fifth and a tenth over it); keys mapped back through
+  the preset's Input, velocity 100.
 
-The loudness is ITU-R BS.1770 / EBU R128 integrated loudness of the stereo pair over all 40 s (the
-−70 LUFS and −10 LU gates). `preset-levels` sets each preset's volume for −16 LUFS on it without
-touching the limiter: the limiter holds the peaks under −1 dBFS, and a preset that leans on it is one
-to fix, not to turn down. `test/preset_test.cpp` plays every factory preset through the phrase and
-holds it finite, within −16 ± 1 LUFS and under −1 dBFS.
+The loudness is ITU-R BS.1770 / EBU R128 integrated loudness of the stereo pair over all 40 s
+(`tools/loudness.h`). `preset-levels` sets each preset's volume for −16 LUFS on it without touching
+the limiter: the limiter holds the peaks under −1 dBFS, and a preset that leans on it (more than
+1 dB off) is one to fix, not to turn down: the match fails on it. Init, which is the engine's
+`Patch{}`, lands at the default volume of −6 dB (the engine's make-up gain is set for that); the
+others at −6 dB or under. `test/preset_test.cpp` plays every factory preset through the phrase (five
+of them under qemu, where one takes 7.6 s) and holds it finite, within −16 ± 1 LUFS, under −1 dBFS,
+with the limiter working on at most 1% of it.
 
 `make demos` prints a map of each preset, for listening without a device: LUFS and peak; the peak
 before the limiter and the most it took off (from a second render 20 dB down, the volume being the
@@ -150,7 +153,7 @@ turn, `aft::Turn`), so stepping never depends on the machine's speed. The suites
 | `test/reverb_test.cpp` | EffectForce's Reverb suite (decay against the target, damping, density, freeze, shimmer, width, robustness, fingerprints); Haze and Abyss; no mode growing over a minute; Space's Rise and `silent()` |
 | `test/plugin_test.cpp` | The VST2 basics, every getter at every index, playing, Stop and suspend through the plugin, `process()` against `processReplacing`, MIDI mapping, the trace (nothing written from a block; the resume and the MIDI written at the host's next call, a full ring's drops counted), a stress run of floods and random patches |
 | `test/params_test.cpp` | Every default and its text, the display formats, the popups, the patch map (Init plays what `Patch{}` plays), every option landing on its value, every sound value at both ends of its range while a chord sounds |
-| `test/preset_test.cpp` | Saved state round trips and bad input, presets (init, save, step, the ends, missing files), user numbering, files appearing while running, the browser, favorites, stepping and the values pushed back (a Q-Link turn on the stepper: one preset per detent; a tile's release echo); every factory preset through the [demo phrase](#the-demo-phrase-and-the-presets-levels): finite, −16 ± 1 LUFS, under −1 dBFS |
+| `test/preset_test.cpp` | Saved state round trips and bad input, presets (init, save, step, the ends, missing files), user numbering, files appearing while running, the browser, favorites, stepping and the values pushed back (a Q-Link turn on the stepper: one preset per detent; a tile's release echo); every factory preset through the [demo phrase](#the-demo-phrase-and-the-presets-levels) (five under qemu): finite, −16 ± 1 LUFS, under −1 dBFS, the limiter on at most 1% of it; Init is `Patch{}` |
 
 `make test-arm` runs the same suite cross-compiled for the Force's CPU under `qemu-arm` (no
 sanitizers): it catches 32-bit and ARM-only paths (the FPSCR flush, NEON float code). `make

@@ -56,13 +56,18 @@
 // step finds them changed, a step a sample carried from one piece to the next, so a MIDI event
 // that cuts a piece short never makes one jump.
 //
-// The output: dry + spaceReturn x wet -> tilt -> volume -> the non-finite guard -> limiter ->
-// Stop's fade.
+// The output: dry + spaceReturn x wet -> tilt -> make-up and volume -> the non-finite guard ->
+// limiter -> Stop's fade.
 // - Tilt: one first-order shelf pivoting at 800 Hz, the highs up and the lows down by 6 dB at
 //   tilt 1 (and the other way at -1), 0 dB at the pivot. Bypassed at 0.
-// - Volume before the limiter, so the ceiling holds at every volume: the presets are level-matched
-//   well under it and the knob reaches +6 dB, where the limiter takes the extra rather than the
-//   output passing -1 dBFS. (After the limiter, +6 dB would put a limited peak at +5 dBFS.)
+// - Make-up: a fixed kMakeUpDb, after the mix (the strata's levels, their sends and Rise keep their
+//   own calibration: Ground's headroom, Bloom's voice gain of 0.25, Rise's -28 dBFS), so that Init,
+//   which is Patch{}, plays the demo phrase (tools/phrase.h) at the family's -16 LUFS at the
+//   volume's default -6 dB; the factory presets are matched at that default or under it (down to
+//   -10.5 dB). It rides in the volume's gain, one multiply.
+// - Volume before the limiter, so the ceiling holds at every volume: the knob reaches +6 dB, 12 dB
+//   over the presets, where the limiter takes the extra rather than the output passing -1 dBFS.
+//   (After the limiter, +6 dB would put a limited peak at +5 dBFS.)
 // - The guard: any sample that isn't finite zeroes the whole render() call, resets every DSP
 //   state (Ground, Bloom, Space, the output's filters) and is counted; the keys and the harmony
 //   stay, so Harmony and Free strata come back by themselves. It looks before the limiter, whose
@@ -155,6 +160,7 @@ public:
     static constexpr double kStopWindowS = 0.25;  // a suspend resumed within this is a Stop, longer a reset
     static constexpr float kFadeS = 8.0f;         // On Stop's Fade, to -60 dB
     static constexpr float kRecoverDbPerS = 30.0f;   // a fade turned round comes back this fast
+    static constexpr float kMakeUpDb = 8.9f;      // the output's make-up gain, with the volume (above)
     static constexpr float kCeiling = 0.891f;     // -1 dBFS: the output never passes it
     static constexpr float kKnee = 0.95f * kCeiling;   // the limiter holds peaks here; the soft clip above
 

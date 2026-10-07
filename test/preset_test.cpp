@@ -325,30 +325,58 @@ void testStepping() {
 
 // Every factory preset plays the demo phrase (tools/phrase.h: two chords of 12 s and 16 s of release,
 // in the preset's key) finite, at the level `make preset-levels` matched it to (-16 LUFS, within 1 LU:
-// a preset edited since, or an engine change that moved its level, shows here) and under -1 dBFS. The
-// whole 40 s, as the level match measures it.
+// a preset edited since, or an engine change that moved its level, shows here) and under -1 dBFS,
+// matched by its volume and not by the limiter, which works on at most 1% of the phrase. The whole
+// 40 s, as the level match measures it. Under qemu (the ARM build) a preset takes 7.6 s, so five play
+// there: the template, Ground on Free into Haze (Harbour at 4am), Abyss with Shimmer (Fifth Light),
+// FM (Sine Garden) and unison 2 in Haze (Choir in Haze); x86 plays all of them.
 void testFactory() {
     std::printf("== factory presets: the demo phrase at -16 LUFS\n");
     CHECK(af::kNumFactoryPresets >= 1);
     CHECK(afl::waitForTables());   // a slot still on the sine would play another sound
-    for (int i = 0; i < af::kNumFactoryPresets; ++i) {
+    // Init is Patch{}: every sound value at its default, so INIT, a fresh instance and the engine's
+    // own Patch{} (which test/params_test.cpp holds the defaults to) sound alike.
+    {
         Host h;
-        const std::string key = std::string("builtin:") + af::kFactoryPresets[i].name;
+        h.press(af::P_PRE_INIT);
+        int off = 0;
+        for (int i = 0; i < af::P_COUNT; ++i)
+            if (af::PARAM_INFO[i].kind == af::Kind::Synth && std::fabs(h.get(i) - af::PARAM_INFO[i].def) > 1e-5f) {
+                std::printf("  Init: %s is %s, not its default\n", af::PARAM_INFO[i].key, h.display(i).c_str());
+                ++off;
+            }
+        CHECK(off == 0);
+    }
+#if defined(__arm__)
+    const std::vector<std::string> only = {"Init", "Harbour at 4am", "Fifth Light", "Sine Garden", "Choir in Haze"};
+#else
+    const std::vector<std::string> only;   // every one
+#endif
+    size_t played = 0;
+    for (int i = 0; i < af::kNumFactoryPresets; ++i) {
+        const std::string name = af::kFactoryPresets[i].name;
+        if (!only.empty() && std::find(only.begin(), only.end(), name) == only.end()) continue;
+        ++played;
+        Host h;
         std::string text;
-        CHECK(af::presetText(key, text));
+        CHECK(af::presetText("builtin:" + name, text));
         CHECK(h.load(text) == 1);   // the stepper / browser path is tested above; here, the sound
         std::vector<float> L, R;
+        const uint32_t was = af::limitedSamples();   // the process's count: one instance renders at a time
         afl::render(h.e, h.log.time, afl::phrase(text), L, R);
+        const double limited = static_cast<double>(af::limitedSamples() - was) / static_cast<double>(L.size());
         const double lufs = afl::lufs(L, R);
         const float peak = afl::peakOf(L, R);
         const bool level = std::fabs(lufs - afl::kTargetLufs) <= afl::kTolLu;
-        std::printf("  %-10s %-18s %6.1f LUFS  peak %6.1f dBFS%s\n", af::kFactoryPresets[i].category,
-                    af::kFactoryPresets[i].name, lufs, 20.0 * std::log10(std::max(peak, 1e-9f)),
+        std::printf("  %-10s %-18s %6.1f LUFS  peak %6.1f dBFS  limited %4.1f%%%s\n", af::kFactoryPresets[i].category,
+                    name.c_str(), lufs, 20.0 * std::log10(std::max(peak, 1e-9f)), 100.0 * limited,
                     level ? "" : "  (make preset-levels)");
         CHECK(afl::allFinite(L, R));
         CHECK(level);
         CHECK(peak <= afl::kPeakCap);
+        CHECK(limited <= afl::kMaxLimitedShare);
     }
+    CHECK(played == (only.empty() ? static_cast<size_t>(af::kNumFactoryPresets) : only.size()));   // none renamed away
 }
 
 } // namespace

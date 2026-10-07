@@ -146,7 +146,7 @@ PRESET_LUFS ?= -16
 preset-levels: $(BUILD)/demos
 	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos --match presets/Factory $(PRESET_LUFS)
 	python3 $(SURF)/surface.py
-$(BUILD)/demos: tools/demos.cpp tools/phrase.h $(SRC) $(HDR) $(GEN) | $(BUILD)
+$(BUILD)/demos: tools/demos.cpp tools/phrase.h tools/loudness.h $(SRC) $(HDR) $(GEN) | $(BUILD)
 	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(SRC) $< -o $@
 
 # The soak test: HOURS of audio (default 1) rendered offline through the plugin's entry points, a

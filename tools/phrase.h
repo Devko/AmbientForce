@@ -1,7 +1,7 @@
 #pragma once
-// The demo phrase and the loudness the factory presets are matched by: tools/demos.cpp renders and
-// level-matches them with these, test/preset_test.cpp checks that they stay matched. (EffectForce's
-// tools/loudness.h does the same for its presets.)
+// The demo phrase the factory presets are matched on, and what a render of it must meet:
+// tools/demos.cpp renders and level-matches them with these, test/preset_test.cpp checks that they
+// stay matched.
 //
 // The phrase, for an ambient instrument: one chord held 12 s, a second chord held 12 s, then 16 s
 // of release, 40 s in all at 120 BPM, the transport playing. Each preset plays it in its own key and
@@ -9,16 +9,18 @@
 // - the first chord on the tonic, in the octave from C3 to B3 (MIDI 48..59, under middle C: where a
 //   pad's left hand plays, and where a Spread voicing's bass, an octave down, is still a bass);
 // - the second on IV, a fourth above (in Lydian, whose IV is diminished, on II, its own colour; in
-//   the five- and six-tone scales on the tone a fourth above, or the nearest one under it);
-// - one key per chord, the preset's Chord type building on it; with Chord Off three keys, the
-//   triad's root, fifth and tenth (an open triad);
+//   the other scales on the tone nearest a fourth above, the lower on a tie);
+// - one key per chord, the preset's Chord type building on it; with Chord Off three keys, an open
+//   triad: the root, the scale's tone nearest a fifth over it (7 semitones) and the one nearest a
+//   major third (4), an octave up: a tenth (the lower on a tie, as for IV);
 // - keys mapped back through Input: As Played and Snap get the scale's own notes, Degrees the
-//   white keys of the degrees;
+//   white keys that play the degrees (a scale of fewer than seven tones runs on into the next
+//   octave's C, harmony.h's mapInput);
 // - velocity 100; the first chord's keys go up at 12 s in the same sample as the second's go
 //   down, the ups first (a key the two share is struck again rather than held through).
-// The loudness is measured over the whole 40 s: ITU-R BS.1770 / EBU R128 integrated loudness of the
-// stereo pair (K-weighting as libebur128 derives it, 400 ms blocks every 100 ms, the -70 LUFS and
-// -10 LU gates).
+// The loudness is measured over the whole 40 s: tools/loudness.h's integrated loudness of the stereo
+// pair (ITU-R BS.1770 / EBU R128).
+#include "loudness.h"
 #include "../dsp/harmony.h"
 #include "../plugin/patch_map.h"
 #include "../plugin/tables.h"
@@ -47,6 +49,11 @@ constexpr int kVelocity = 100;
 constexpr double kTargetLufs = -16.0;     // the family's level (CONCEPT.md 10)
 constexpr double kTolLu = 1.0;            // what test/preset_test.cpp allows either side of it
 constexpr double kPeakCap = 0.89125;      // -1 dBFS: no factory preset passes it on its phrase
+// A factory preset is matched by its volume, not by the limiter, which only holds the peaks: on its
+// phrase the limiter may take at most this off (`make preset-levels` fails past it) and work on at
+// most this share of the samples (test/preset_test.cpp, af::limitedSamples()).
+constexpr double kMaxGainReductionDb = 1.0;
+constexpr double kMaxLimitedShare = 0.01;
 
 // The real value a preset's text gives the parameter, or its default: as the plugin reads it
 // (plugin/state.cpp: the last line naming it wins; clamped and rounded by the patch map).
@@ -71,28 +78,31 @@ inline std::vector<Event> phrase(const std::string& text) {
     h.input = static_cast<int>(presetValue(text, af::P_H_INPUT));
     h.chord = static_cast<int>(presetValue(text, af::P_H_CHORD));
     const int size = af::scaleSize(h.scale);
-    // The second chord's degree.
-    int second = 3;
-    if (h.scale == af::SC_LYDIAN) second = 1;
-    else if (h.scale == af::SC_CHROMATIC) second = 5;
-    else if (size != 7) {
-        second = 0;
-        for (int d = 1; d < size; ++d)
-            if (std::abs(af::scaleStep(h.scale, d) - 5) < std::abs(af::scaleStep(h.scale, second) - 5)) second = d;
-    }
+    // The degree over `from` (within its octave) whose tone is nearest `semis` above it, the lower
+    // on a tie.
+    auto nearest = [&h, size](int from, int semis) {
+        int best = from;
+        auto off = [&](int d) { return std::abs(af::scaleStep(h.scale, d) - af::scaleStep(h.scale, from) - semis); };
+        for (int d = from + 1; d < from + size; ++d)
+            if (off(d) < off(best)) best = d;
+        return best;
+    };
+    // The second chord's degree: IV, in Lydian II, in the other scales the tone nearest a fourth.
+    int second = nearest(0, 5);
+    if (size == 7) second = h.scale == af::SC_LYDIAN ? 1 : 3;
     // A degree's key: the scale's note over the tonic, or (Degrees) the white key that plays it.
     constexpr int lowC = 48;   // C3: the tonic's octave
-    auto keyOf = [&h](int degree) {
+    auto keyOf = [&h, size](int degree) {
         if (h.input != af::IN_DEGREES) return lowC + h.key + af::scaleStep(h.scale, degree);
         if (h.scale == af::SC_CHROMATIC) return lowC + degree;   // Degrees under Chromatic: as played, moved by the key
-        static constexpr int kWhite[7] = {0, 2, 4, 5, 7, 9, 11};
-        return lowC + kWhite[degree % 7] + 12 * (degree / 7);
+        static constexpr int kWhite[7] = {0, 2, 4, 5, 7, 9, 11};   // the scales other than Chromatic: 5..7 tones
+        return lowC + kWhite[degree % size] + 12 * (degree / size);
     };
     auto chord = [&](int degree) {
         std::vector<int> keys{keyOf(degree)};
         if (h.chord == af::CH_OFF) {
-            keys.push_back(keyOf(degree + 4));          // the fifth
-            keys.push_back(keyOf(degree + 2 + size));   // the tenth
+            keys.push_back(keyOf(nearest(degree, 7)));              // the fifth
+            keys.push_back(keyOf(nearest(degree, 4) + size));       // the third, an octave up: the tenth
         }
         return keys;
     };
@@ -164,69 +174,13 @@ inline void render(AEffect* e, VstTimeInfo& time, const std::vector<Event>& ev, 
     R.resize(total);
 }
 
-// --- loudness: ITU-R BS.1770-4 -----------------------------------------------------------------
-struct Biquad {
-    double b0, b1, b2, a1, a2, z1 = 0.0, z2 = 0.0;
-    double run(double x) {
-        const double y = b0 * x + z1;
-        z1 = b1 * x - a1 * y + z2;
-        z2 = b2 * x - a2 * y;
-        return y;
-    }
-};
+// --- what a render measures -----------------------------------------------------------------------
 
-// K-weighting at 44.1 kHz (libebur128's formulas): the head's high shelf, then the RLB high-pass.
-inline Biquad kShelf() {
-    const double f0 = 1681.974450955533, g = 3.999843853973347, q = 0.7071752369554196;
-    const double k = std::tan(kPi * f0 / kSr), vh = std::pow(10.0, g / 20.0), vb = std::pow(vh, 0.4996667741545416);
-    const double a0 = 1.0 + k / q + k * k;
-    return {(vh + vb * k / q + k * k) / a0, 2.0 * (k * k - vh) / a0, (vh - vb * k / q + k * k) / a0,
-            2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0};
-}
-inline Biquad kHighpass() {
-    const double f0 = 38.13547087602444, q = 0.5003270373238773;
-    const double k = std::tan(kPi * f0 / kSr), a0 = 1.0 + k / q + k * k;
-    return {1.0, -2.0, 1.0, 2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0};
-}
-
-// The K-weighted power (both channels summed) of every 400 ms block, a block every 100 ms.
-inline std::vector<double> blockPowers(const std::vector<float>& L, const std::vector<float>& R, double blockS = 0.4) {
-    Biquad s[2] = {kShelf(), kShelf()}, hp[2] = {kHighpass(), kHighpass()};
-    std::vector<double> sq(L.size());
-    for (size_t i = 0; i < L.size(); ++i) {
-        const double l = hp[0].run(s[0].run(L[i])), r = hp[1].run(s[1].run(R[i]));
-        sq[i] = l * l + r * r;
-    }
-    const size_t block = static_cast<size_t>(blockS * kSr), hop = static_cast<size_t>(0.1 * kSr);
-    std::vector<double> z;
-    double sum = 0.0;
-    for (size_t i = 0; i < std::min(block, sq.size()); ++i) sum += sq[i];
-    for (size_t at = 0; at + block <= sq.size(); at += hop) {
-        if (at > 0) {   // slide the window by a hop
-            for (size_t i = at - hop; i < at; ++i) sum -= sq[i];
-            for (size_t i = at - hop + block; i < at + block; ++i) sum += sq[i];
-        }
-        z.push_back(std::max(sum, 0.0) / static_cast<double>(block));
-    }
-    return z;
-}
-
-inline double loudnessOf(double power) { return -0.691 + 10.0 * std::log10(std::max(power, 1e-20)); }
-
-// Integrated loudness, LUFS (-100: silence).
+// Integrated loudness of the stereo pair, LUFS (-100: silence).
 inline double lufs(const std::vector<float>& L, const std::vector<float>& R) {
-    const std::vector<double> z = blockPowers(L, R);
-    double sum = 0.0;
-    int n = 0;
-    for (double v : z)
-        if (loudnessOf(v) > -70.0) sum += v, ++n;
-    if (!n) return -100.0;
-    const double gate = loudnessOf(sum / n) - 10.0;
-    sum = 0.0;
-    n = 0;
-    for (double v : z)
-        if (loudnessOf(v) > -70.0 && loudnessOf(v) > gate) sum += v, ++n;
-    return n ? loudnessOf(sum / n) : -100.0;
+    loudness::Meter m;
+    for (size_t i = 0; i < L.size(); ++i) m.add(L[i], R[i]);
+    return m.integrated();
 }
 
 inline float peakOf(const std::vector<float>& L, const std::vector<float>& R) {

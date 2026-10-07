@@ -210,6 +210,10 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 
 - 2026-10-07 — **Volume before the limiter**, so −1 dBFS holds at every volume (after it, +6 dB would
   put a limited peak at +5 dBFS).
+- 2026-10-07 — **A fixed make-up gain (+8.9 dB) at the output**, after the mix: Init, which is
+  `Patch{}`, plays at −16 LUFS at the default volume of −6 dB, and the presets sit at −6 dB or under
+  with 12 dB of the knob above them (without it Init needed +2.9 dB, 3 dB from the knob's end). The
+  strata, their sends and Rise keep their own calibration.
 - 2026-10-07 — **One first-order tilt shelf**, pivoting at 800 Hz, instead of the plan's two
   one-poles.
 - 2026-10-07 — **Keys held by the pedal or Hold count as held for the harmony**: the memory counts

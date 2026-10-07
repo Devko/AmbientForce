@@ -39,6 +39,9 @@ float volumeGain(float db) {
     return std::pow(10.0f, (db < 12.0f ? db : 12.0f) / 20.0f);
 }
 
+// The make-up gain (engine.h, the output), set when the plugin loads.
+const float kMakeUp = std::pow(10.0f, Engine::kMakeUpDb / 20.0f);
+
 // A stratum's pan, -1..1: equal power, unity in the middle (exactly, so a centred stratum is its
 // own dry bit for bit), sqrt 2 at the sides, where the other side is exactly 0 (as Ground pans its
 // partials).
@@ -170,7 +173,7 @@ void Engine::setPatch(const Patch& in) {
     ret_.target = p.spaceReturn;
     panGains(p.groundPan, gPanL_.target, gPanR_.target);
     panGains(p.bloomPan, bPanL_.target, bPanR_.target);
-    volume_.target = volumeGain(p.volumeDb);
+    volume_.target = volumeGain(p.volumeDb) * kMakeUp;
     tilt_ = p.tilt;
 
     // Free's tonic chord: the patch's chord type on the key (a triad under Chord Off).
