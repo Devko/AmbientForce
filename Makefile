@@ -91,7 +91,7 @@ test: $(BUILD)/plugin_test
 	$(BUILD)/plugin_test
 
 TESTS    := $(wildcard test/*_test.cpp)
-$(BUILD)/plugin_test: $(TESTS) $(wildcard test/*.h) $(SRC) $(HDR) $(GEN) | $(BUILD)
+$(BUILD)/plugin_test: $(TESTS) $(wildcard test/*.h tools/*.h) $(SRC) $(HDR) $(GEN) | $(BUILD)
 	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra -pthread \
 		$(INC) $(SRC) $(TESTS) -o $@
 
@@ -100,7 +100,7 @@ $(BUILD)/plugin_test: $(TESTS) $(wildcard test/*.h) $(SRC) $(HDR) $(GEN) | $(BUI
 test-arm: $(BUILD)/arm/plugin_test
 	$(ARM_RUN) $<
 
-$(BUILD)/arm/plugin_test: $(TESTS) $(wildcard test/*.h) $(SRC) $(HDR) $(GEN)
+$(BUILD)/arm/plugin_test: $(TESTS) $(wildcard test/*.h tools/*.h) $(SRC) $(HDR) $(GEN)
 	mkdir -p $(BUILD)/arm
 	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC) $(SRC) $(TESTS) -o $@
 
@@ -145,7 +145,7 @@ PRESET_LUFS ?= -16
 preset-levels: $(BUILD)/demos
 	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos --match presets/Factory $(PRESET_LUFS)
 	python3 $(SURF)/surface.py
-$(BUILD)/demos: tools/demos.cpp $(SRC) $(HDR) $(GEN) | $(BUILD)
+$(BUILD)/demos: tools/demos.cpp tools/phrase.h $(SRC) $(HDR) $(GEN) | $(BUILD)
 	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(SRC) $< -o $@
 
 # --- device -----------------------------------------------------------------------------------
