@@ -303,6 +303,7 @@ void testTrace() {
     const std::string after = log();
     CHECK(before.find("suspend at") != std::string::npos && before.find("resumed") == std::string::npos);
     CHECK(after.find("resumed 100 ms after the suspend (the host said so): On Stop") != std::string::npos);
+    CHECK(after.find("] resume at") != std::string::npos && after.find("[tid ") != std::string::npos);   // which thread
     // MIDI as it came in (channel 2 here), traced at the host's next call, not from the block.
     h.midi(0x91, 60, 100, 12);
     h.midi(0xB1, 64, 127);
