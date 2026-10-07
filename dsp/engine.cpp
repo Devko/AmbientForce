@@ -20,7 +20,9 @@ constexpr float kVoiceGain = 0.25f;   // a voice at full velocity, -12 dBFS at 0
                                       // pass full scale only where their peaks line up
 constexpr float kGlideS = 0.010f;     // the volume's smoothing: a turn of the knob never clicks
 
-float dbToGain(float db) { return db <= kVolumeOffDb ? 0.0f : std::pow(10.0f, (db < 12.0f ? db : 12.0f) / 20.0f); }
+// The volume knob's gain: off at kVolumeOffDb, at most +12 dB. (common.h's dbToGain is the fast one
+// for the DSP; this one is exact and runs only when the patch changes.)
+float volumeGain(float db) { return db <= kVolumeOffDb ? 0.0f : std::pow(10.0f, (db < 12.0f ? db : 12.0f) / 20.0f); }
 
 } // namespace
 
@@ -33,7 +35,7 @@ Engine::Engine(float sampleRate)
     gain_ = target_;
 }
 
-void Engine::setPatch(const Patch& p) { target_ = std::isfinite(p.volumeDb) ? dbToGain(p.volumeDb) : 0.0f; }
+void Engine::setPatch(const Patch& p) { target_ = std::isfinite(p.volumeDb) ? volumeGain(p.volumeDb) : 0.0f; }
 
 void Engine::noteOn(int note, int velocity) {
     if (note < 0 || note > 127) return;

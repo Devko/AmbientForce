@@ -149,7 +149,7 @@ inline constexpr MipTables kMip = mipTables();
 // How a span of samples reads the frames. ONE: a single frame (a digital wave, or a position on a
 // frame). PAIR: the same two frames throughout, their shares gliding. WALK: the position crosses
 // frames within the span, so each sample finds its own pair.
-enum Kind { K_ONE, K_PAIR, K_WALK };
+enum ReadKind { K_ONE, K_PAIR, K_WALK };
 
 struct Span {
     const int16_t* a = nullptr;   // ONE, PAIR: the first frame's level; WALK: frame 0's level
@@ -178,7 +178,7 @@ AF_INLINE void taps(const int16_t* p, uint32_t j, uint32_t wrap, float& xm, floa
 // n samples into out; returns the phase after the last. The phase is a 32-bit fixed-point fraction
 // of a cycle: its top bits index the level, the rest are the interpolation fraction, and the
 // wrap-around is integer overflow. FM: fm[i] (cycles) moves the read, not the phase itself.
-// Hermite: four samples a frame; else two (linear, PolyForce's read). K: the Kind. The span comes
+// Hermite: four samples a frame; else two (linear, PolyForce's read). K: the ReadKind. The span comes
 // by value: a span whose address went out would give span() a stack guard on every render.
 template <bool Hermite, int K, bool FM>
 uint32_t play(const Span s, uint32_t ph, uint32_t dph, float* out, int n, const float* fm) {
@@ -350,7 +350,7 @@ private:
         s.fracMask = (1u << s.shift) - 1u;
         s.frac = kMip.frac[level];
         const int16_t* base = t.data.data() + kMip.offset[level];
-        Kind kind = K_ONE;
+        ReadKind kind = K_ONE;
         int f = 0;
         if (t.frames > 1) {
             s.last = t.frames - 2;

@@ -9,6 +9,11 @@
 //
 // Real-time rules: no allocation, no locks, no exceptions after construction. The plugin layer
 // feeds it a Patch once per block (only when something changed).
+#include "bloom.h"
+#include "ground.h"
+#include "harmony.h"
+#include "space.h"
+
 #include <cstdint>
 
 namespace af {
@@ -16,8 +21,21 @@ namespace af {
 // The volume at or below which the output is off: the knob's text shows "-inf dB" from here.
 constexpr float kVolumeOffDb = -59.5f;
 
+// What Stop does to a sounding landscape (docs/CONCEPT.md 7.4).
+enum OnStop : int { OS_KEEP, OS_FADE, OS_CUT, OS_COUNT };
+
+// Everything the engine plays, in real values (seconds, Hz, gains): plugin/patch_map.cpp builds it
+// from the parameters. Levels arrive as gains (the knobs' audio taper is the patch map's).
 struct Patch {
     float volumeDb = -6.0f;
+    float tilt = 0.0f;            // -1..1: ±6 dB at the extremes, pivot 800 Hz
+    HarmonyPatch harmony;
+    bool hold = false;            // latch: chords stay until the next one
+    int onStop = OS_FADE;
+    GroundPatch ground; float groundSpace = 0.4f, groundPan = 0.0f;
+    BloomPatch bloom;   float bloomSpace = 0.5f, bloomPan = 0.0f;
+    Space::Params space;
+    float spaceReturn = 0.8f;     // the return's level as a gain
 };
 
 class Engine {

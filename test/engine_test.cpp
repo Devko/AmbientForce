@@ -10,6 +10,13 @@
 namespace aft {
 namespace {
 
+// A patch that differs from the default only in its volume (the stub engine reads nothing else).
+af::Patch vol(float db) {
+    af::Patch p;
+    p.volumeDb = db;
+    return p;
+}
+
 using af::Engine;
 
 // Renders n samples (in 128-frame blocks, as the plugin does); returns the left channel and
@@ -35,7 +42,7 @@ double hzOf(int note) { return 440.0 * std::pow(2.0, (note - 69) / 12.0); }
 void testSilence() {
     std::printf("== engine: silence\n");
     Engine e;
-    e.setPatch(af::Patch{0.0f});
+    e.setPatch(vol(0.0f));
     bool same = false;
     const std::vector<float> x = render(e, 44100, &same);
     CHECK(peakOf(x) == 0.0f && same);   // exactly 0, not just quiet
@@ -45,7 +52,7 @@ void testSilence() {
 void testNote() {
     std::printf("== engine: a note\n");
     Engine e;
-    e.setPatch(af::Patch{0.0f});
+    e.setPatch(vol(0.0f));
     e.noteOn(69, 100);
     render(e, 4410);   // past the attack
     bool same = false;
@@ -57,14 +64,14 @@ void testNote() {
     CHECK(std::fabs(at - 0.25 * 100.0 / 127.0) < 0.01);   // a voice's level, at 0 dB
     CHECK(same && e.activeVoices() == 1);
     // The volume: -6 dB halves it; -60 is off.
-    e.setPatch(af::Patch{-6.0206f});
+    e.setPatch(vol(-6.0206f));
     render(e, 4410);
     CHECK(std::fabs(toneAmp(render(e, 16384), 440.0) / at - 0.5) < 0.005);
-    e.setPatch(af::Patch{-60.0f});
+    e.setPatch(vol(-60.0f));
     render(e, 22050);
     CHECK(peakOf(render(e, 4410)) == 0.0f);
     // Velocity 0 is a note-off.
-    e.setPatch(af::Patch{0.0f});
+    e.setPatch(vol(0.0f));
     e.noteOn(69, 0);
     render(e, 22050);
     CHECK(e.activeVoices() == 0);
@@ -73,7 +80,7 @@ void testNote() {
 void testRelease() {
     std::printf("== engine: attack and release\n");
     Engine e;
-    e.setPatch(af::Patch{0.0f});
+    e.setPatch(vol(0.0f));
     e.noteOn(60, 127);
     const std::vector<float> a = render(e, 4410);
     float first = 0.0f, rest = 0.0f;
@@ -94,7 +101,7 @@ void testVoices() {
     std::printf("== engine: six voices, the seventh steals\n");
     const int notes[] = {48, 52, 55, 60, 64, 67, 72};
     Engine e;
-    e.setPatch(af::Patch{0.0f});
+    e.setPatch(vol(0.0f));
     for (int k = 0; k < 6; ++k) e.noteOn(notes[k], 100);
     render(e, 4410);
     CHECK(e.activeVoices() == 6);
@@ -130,7 +137,7 @@ void testVoices() {
 void testPedalAndReset() {
     std::printf("== engine: the pedal, reset\n");
     Engine e;
-    e.setPatch(af::Patch{0.0f});
+    e.setPatch(vol(0.0f));
     e.sustain(true);
     e.noteOn(60, 100);
     e.noteOff(60);
@@ -157,7 +164,7 @@ void testPedalAndReset() {
     e.noteOn(-1, 100);
     e.noteOn(128, 100);
     e.noteOff(500);
-    e.setPatch(af::Patch{std::nanf("")});
+    e.setPatch(vol(std::nanf("")));
     render(e, 128);
     e.noteOn(60, 100);
     const std::vector<float> x = render(e, 4410);
