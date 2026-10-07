@@ -7,15 +7,17 @@
 //   afbench <plugin.so> [-s seconds] [-c cpu]
 //
 // Cases, each on a fresh instance set up through its parameters by index (real values, turned into
-// MPC's 0..1 by plugin/patch_map.cpp's paramNorm), played for kWarmS untimed (the voices sounding,
-// the reverb full), then timed for `seconds`:
+// MPC's 0..1 by plugin/patch_map.cpp's paramNorm), played for kWarmBlocks (2 s) untimed (the voices
+// sounding, the reverb full), then timed for `seconds`:
 //   idle         asleep: no note yet
 //   init chord   the Init patch, one key held: its triad on Bloom, Ground on the root, Space's Hall
 //   drone        Ground only (Bloom muted): every partial at full, Body and Breath; one key held
 //   bloom 6x2    Bloom only (Ground muted): Chord Off and six keys, unison 2, Couple FM
-//   worst        six keys (Chord Off), let go every kRestrikeS for six others (every voice taken
-//                from its release), unison 2, FM; Ground at full (every partial, Body, Breath);
-//                Space Abyss with Shimmer 100%, Freeze off; Tilt on
+//   worst        six keys (Chord Off), let go every kRestrikeBlocks (2 s) for six others (every
+//                voice taken from its release), unison 2, FM; Ground at full (every partial, Body,
+//                Breath); Sway 1 at 2 Hz on both strata, Bloom's Smear and Breath at 1 (the read
+//                position crossing frames all the time: the dearest read); Space Abyss with Shimmer
+//                100%, Freeze off; Tilt on
 //
 // The tables: the first instance starts the shared builder thread (plugin/tables.h), which builds
 // every table at nice 10, seconds of work on the device, on the bench's own core (a new thread
@@ -24,9 +26,12 @@
 // afbench opens an instance and waits for the builder to finish: it counts the process's threads
 // (/proc/self/task) before that instance and waits until the count is back there, the builder gone
 // and every table published, and says how long that took. Every case then reads real tables, as an
-// instance does in a running MPC.
+// instance does in a running MPC. No new thread (the builder never started), or one still running
+// after kTablesWaitS, fails the bench (the cases still run, for what they are worth). Where /proc
+// can't be read it waits kTablesFallbackS instead, and says so.
 //
-// Hermetic: the plugin reads no user folders and saves nothing. A profiling build of the plugin
+// Hermetic: the plugin reads no user folders and saves nothing, and AF_FIXED_SEED gives every run
+// the same random numbers. A profiling build of the plugin
 // (make arm-bench-stages: ambientforce_stages.so) also reports where each case's time goes, in us
 // per block: Ground, Bloom, Space and the output (dsp/stages.h).
 #ifndef _GNU_SOURCE
@@ -56,6 +61,7 @@ constexpr double kBudgetUs = kBlock * 1e6 / kRate;   // 2902 us
 constexpr int kWarmBlocks = 689;                     // 2 s: a case plays this long before it is timed
 constexpr int kRestrikeBlocks = 689;                 // worst: another six keys every 2 s
 constexpr double kTablesWaitS = 300.0;               // the builder's limit (it takes seconds)
+constexpr double kTablesFallbackS = 30.0;            // without /proc: this long, and hope
 
 VstTimeInfo g_time{};
 
@@ -116,24 +122,32 @@ AEffect* openPlugin(void* lib) {
 }
 
 // The first instance, and the builder thread it starts: back when the thread has gone (every table
-// published). The seconds that took; -1 when it didn't finish in kTablesWaitS, or /proc can't tell.
-double waitForTables(void* lib) {
+// published), saying how long that took. False when no builder thread appeared (the instance starts
+// it before VSTPluginMain returns) or it was still running after kTablesWaitS.
+bool waitForTables(void* lib) {
     const int before = threads();
     const double t0 = wallS();
     AEffect* e = openPlugin(lib);
-    double took = -1.0;
-    if (before > 0) {
-        while (wallS() - t0 < kTablesWaitS) {
-            if (threads() <= before) {
-                took = wallS() - t0;
-                break;
-            }
-            const timespec nap{0, 20 * 1000 * 1000};
-            nanosleep(&nap, nullptr);
-        }
+    const auto napUntil = [t0](double s) {
+        const timespec nap{0, 20 * 1000 * 1000};
+        while (wallS() - t0 < s) nanosleep(&nap, nullptr);
+    };
+    bool ok = true;
+    if (before <= 0) {
+        std::printf("  WARNING: /proc/self/task can't be read: waiting %.0f s for the tables instead\n", kTablesFallbackS);
+        napUntil(kTablesFallbackS);
+    } else if (threads() <= before) {
+        std::printf("  FAIL: no table builder thread appeared: the cases play the sine fallback\n");
+        ok = false;
+    } else {
+        const timespec nap{0, 20 * 1000 * 1000};
+        while (threads() > before && wallS() - t0 < kTablesWaitS) nanosleep(&nap, nullptr);
+        ok = threads() <= before;
+        if (ok) std::printf("  tables built in %.1f s (the builder thread gone before the first case)\n", wallS() - t0);
+        else std::printf("  FAIL: the table builder was still running after %.0f s: the cases time it too\n", kTablesWaitS);
     }
     e->dispatcher(e, vst::effClose, 0, 0, nullptr, 0.0f);   // the tables stay until the .so is unloaded
-    return took;
+    return ok;
 }
 
 enum Case : int { C_IDLE, C_INIT, C_DRONE, C_BLOOM, C_WORST, C_COUNT };
@@ -159,7 +173,10 @@ void setUp(AEffect* e, int c) {
         set(e, P_B_CAMT, 0.5f);
         set(e, P_B_BLEND, 0.5f);
     }
-    if (c == C_WORST) {
+    if (c == C_WORST) {   // the scan moving fast and jittering: every read crosses frames
+        for (int id : {P_G_SWAY, P_B_SWAY, P_B_SMEAR, P_B_BREATH}) set(e, id, 1.0f);
+        set(e, P_G_SWAYRATE, 2.0f);
+        set(e, P_B_SWAYRATE, 2.0f);
         set(e, P_S_MODE, Reverb::ABYSS);
         set(e, P_S_SHIMMER, 1.0f);
         set(e, P_S_FREEZE, 0);
@@ -232,9 +249,10 @@ int main(int argc, char** argv) {
         CPU_SET(cpu, &set);
         if (sched_setaffinity(0, sizeof set, &set) != 0) std::printf("(could not pin to cpu %d)\n", cpu);
     }
-    // Hermetic: no user folders, nothing saved.
+    // Hermetic: no user folders, nothing saved, the same random numbers every run.
     setenv("AF_PRESET_ROOTS", "/nonexistent-afbench", 1);
     setenv("AF_DATA_DIR", "", 1);
+    setenv("AF_FIXED_SEED", "1", 1);
     g_time.sampleRate = kRate;
     g_time.tempo = 120.0;
     g_time.flags = vst::kVstTempoValid | vst::kVstPpqPosValid;
@@ -246,11 +264,7 @@ int main(int argc, char** argv) {
     }
     auto stages = reinterpret_cast<StageFn>(dlsym(lib, "AmbientForceStageTimes"));
     std::printf("%s, %d s per case, %s\n", argv[1], seconds, stages ? "profiling build" : "plain build");
-    const double tables = waitForTables(lib);
-    if (tables >= 0.0) std::printf("  tables built in %.1f s (the builder thread gone before the first case)\n", tables);
-    else std::printf("  WARNING: the table builder hadn't finished after %.0f s (or /proc/self/task can't tell):\n"
-                     "  the cases may play the sine fallback and time the builder too\n", kTablesWaitS);
-    bool fail = false;
+    bool fail = !waitForTables(lib);
     for (int c = 0; c < C_COUNT; ++c) {
         double us[8] = {};
         const char* stageNames[8] = {};

@@ -572,8 +572,10 @@ void testGuard() {
     e.noteOn(60, 100);
     CHECK(peakOf(render(e, 1.0)) > 0.0f);
     e.testInjectNaN();
+    const uint32_t trips = af::guardTrips();
     const Out hit = render(e, 128.0 / af::kRate);
     CHECK(peakOf(hit) == 0.0f && finiteOut(hit) && e.info().guards == 1);
+    CHECK(af::guardTrips() - trips == 1);   // the process-wide count the soak reads
     const Out after = render(e, 2.0);
     CHECK(finiteOut(after) && e.info().guards == 1);
     // The harmony and the key stayed: Ground (Harmony) and Bloom come back by themselves.

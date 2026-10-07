@@ -6,8 +6,9 @@
 //   the old ones go up; a quarter of the changes under the pedal, let up 2-8 s later;
 // - Freeze on for 10-60 s every 3-8 minutes;
 // - Shimmer every 2-6 minutes: off half the time, else 20-100% at one of its intervals;
-// - every 8-16 minutes the next factory preset (as a project chunk: every parameter's default,
-//   then the preset's lines, which is what loading the preset does) or another Space mode;
+// - every 8-16 minutes the next factory preset (the browser's Next button, the way a preset loads
+//   on the device; at the end of the list the Init button, and on from there) or another Space
+//   mode;
 // - every 15-30 minutes the transport stops (On Stop) and starts again 3-20 s later, at a new
 //   tempo, with a new chord;
 // - every 20-40 minutes the host suspends processing and resumes it, within the Stop window (On
@@ -18,18 +19,24 @@
 //
 // It fails on:
 // - any sample that isn't finite;
+// - any trip of the engine's non-finite guard (af::guardTrips(): it zeroes the block and resets the
+//   DSP, so its output looks clean, but a trip is a fault in the DSP);
 // - any peak over -1 dBFS (kPeakMax);
 // - a 10-minute window whose mean |DC| is over -60 dBFS: each 10 s's mean, its magnitude, averaged
 //   over the window, for L and R each (an offset that changes sign doesn't cancel out);
 // - a 10-minute window whose loudness is more than 6 LU from the first window's.
-// The loudness is ITU-R BS.1770's integrated loudness over the window (tools/demos.cpp's measure:
-// K-weighting, 400 ms blocks every 100 ms, the -70 LUFS absolute and -10 LU relative gates). The
-// gates keep what a Stop leaves (a fade, then silence until the transport starts again) from
-// pulling a window down: what it compares is how loud the music is while it plays.
+// The loudness is ITU-R BS.1770's integrated loudness over the window (tools/loudness.h: K-weighting,
+// 400 ms blocks every 100 ms, the -70 LUFS absolute and -10 LU relative gates). The gates keep what
+// a Stop leaves (a fade, then silence until the transport starts again) from pulling a window down:
+// what it compares is how loud the music is while it plays.
+// It warns (no fail) when a window had the limiter working (af::limitedSamples()) more than
+// kLimitWarn of the time: the presets are levelled well under the ceiling, so a limiter that works
+// that much means something is louder than it should be.
 //
-// It prints every window (loudness and its drift, peak, DC, what happened in it), and the CPU time
-// the plugin took against the audio's length, with the slowest block and the event before it (x86,
-// where the host's own hiccups show up there too: it says nothing about the device).
+// It prints every window (loudness and its drift, peak, DC, the limiter's share, what happened in
+// it), and the CPU time the plugin took against the audio's length, with the slowest block and the
+// event before it (x86, where the host's own hiccups show up there too: it says nothing about the
+// device).
 //
 //   soak [hours] [seed]          AF_SOAK_EVENTS=1: every event as it happens, with its time
 #include "../plugin/patch_map.h"
@@ -37,6 +44,7 @@
 #include "../plugin/tables.h"
 #include "../plugin/vst2.h"
 #include "factory_presets.h"
+#include "loudness.h"
 #include "param_ids.h"
 
 #include <algorithm>
@@ -57,11 +65,12 @@ using namespace af;
 constexpr double kSr = 44100.0;
 constexpr int kBlock = 128;
 constexpr long long kWindow = 600LL * 44100;   // 10 minutes
-constexpr int kSeg = 4410;                     // 100 ms: the loudness blocks' step
 constexpr int kDcSeg = 441000;                 // 10 s: the DC's piece
 constexpr float kPeakMax = 0.8913f;            // -1 dBFS
 constexpr double kDcMax = 0.001;               // -60 dBFS
 constexpr double kDriftMax = 6.0;              // LU
+constexpr double kLimitWarn = 0.05;            // of a window's time
+constexpr double kTablesWaitS = 600.0;
 
 VstTimeInfo g_time{};
 long long g_samples = 0;     // rendered
@@ -99,88 +108,36 @@ struct Rng {   // splitmix64
     bool chance(double p) { return uni(0.0, 1.0) < p; }
 };
 
-// --- loudness: ITU-R BS.1770-4 (tools/demos.cpp's) ---------------------------------------------
-struct Biquad {
-    double b0, b1, b2, a1, a2, z1 = 0, z2 = 0;
-    double run(double x) {
-        const double y = b0 * x + z1;
-        z1 = b1 * x - a1 * y + z2;
-        z2 = b2 * x - a2 * y;
-        return y;
-    }
-};
-
-// K-weighting for 44.1 kHz (libebur128's formulas): the head's high shelf, then the RLB high-pass.
-struct KWeight {
-    Biquad shelf, hp;
-    KWeight() {
-        double f0 = 1681.974450955533, G = 3.999843853973347, Q = 0.7071752369554196;
-        double K = std::tan(M_PI * f0 / kSr), Vh = std::pow(10.0, G / 20.0), Vb = std::pow(Vh, 0.4996667741545416);
-        double a0 = 1.0 + K / Q + K * K;
-        shelf = {(Vh + Vb * K / Q + K * K) / a0, 2.0 * (K * K - Vh) / a0, (Vh - Vb * K / Q + K * K) / a0,
-                 2.0 * (K * K - 1.0) / a0, (1.0 - K / Q + K * K) / a0};
-        f0 = 38.13547087602444;
-        Q = 0.5003270373238773;
-        K = std::tan(M_PI * f0 / kSr);
-        a0 = 1.0 + K / Q + K * K;
-        hp = {1.0, -2.0, 1.0, 2.0 * (K * K - 1.0) / a0, (1.0 - K / Q + K * K) / a0};
-    }
-    double run(double x) { return hp.run(shelf.run(x)); }
-};
-
-double loudOf(double ms) { return -0.691 + 10.0 * std::log10(std::max(ms, 1e-20)); }
-
-// Integrated loudness from the window's 100 ms sums of L^2 + R^2 (K-weighted): 400 ms blocks every
-// 100 ms, gated. -100: nothing over the absolute gate.
-double integrated(const std::vector<double>& seg) {
-    std::vector<double> z;
-    for (size_t j = 0; j + 4 <= seg.size(); ++j) z.push_back((seg[j] + seg[j + 1] + seg[j + 2] + seg[j + 3]) / (4.0 * kSeg));
-    double sum = 0.0;
-    int n = 0;
-    for (double v : z)
-        if (loudOf(v) > -70.0) sum += v, ++n;
-    if (!n) return -100.0;
-    const double rel = loudOf(sum / n) - 10.0;
-    sum = 0.0;
-    n = 0;
-    for (double v : z)
-        if (loudOf(v) > -70.0 && loudOf(v) > rel) sum += v, ++n;
-    return n ? loudOf(sum / n) : -100.0;
-}
-
 double db(double x) { return 20.0 * std::log10(std::max(x, 1e-12)); }
 
 // --- what a window saw ---------------------------------------------------------------------------
 struct Window {
     long long samples = 0;
-    std::vector<double> seg;          // K-weighted L^2 + R^2 per 100 ms
-    double segAcc = 0.0;
+    double lufs = -100.0;             // set as it closes
     double dcL = 0.0, dcR = 0.0;      // this 10 s's sums
     double dcAbsL = 0.0, dcAbsR = 0.0;   // the 10 s means' magnitudes, summed
     int dcPieces = 0;
     float peak = 0.0f;
+    uint32_t limited = 0, guards = 0;   // samples the limiter worked on, the guard's trips
     int chords = 0, freezes = 0, shimmers = 0, presets = 0, modes = 0, stops = 0, suspends = 0;
 
     void closePieces() {
-        const long long inSeg = samples % kSeg, inDc = samples % kDcSeg;
-        if (inSeg > 0) seg.push_back(segAcc * kSeg / static_cast<double>(inSeg));   // a part block, as if whole
-        if (inDc >= 44100) {                       // a part piece of a second or more counts
+        const long long inDc = samples % kDcSeg;
+        if (inDc >= 44100) {   // a part piece of a second or more counts
             dcAbsL += std::fabs(dcL / static_cast<double>(inDc));
             dcAbsR += std::fabs(dcR / static_cast<double>(inDc));
             ++dcPieces;
         }
     }
     double dc() const { return dcPieces ? std::max(dcAbsL, dcAbsR) / dcPieces : 0.0; }
+    double limitShare() const { return samples ? static_cast<double>(limited) / static_cast<double>(samples) : 0.0; }
 };
 
 // --- the player -----------------------------------------------------------------------------------
 struct Soak {
     AEffect* e = nullptr;
     Rng rng;
-    std::string defaults;             // a chunk of every sound parameter at its default
-    int preset = 0;
     int spaceMode = 0;
-    bool frozen = false;
     std::vector<int> held;            // the keys down (ours: the engine may have let them go)
     std::vector<VstMidiEvent> pending;   // this block's MIDI
 
@@ -202,6 +159,12 @@ struct Soak {
     }
 
     void set(int id, float v) { e->setParameter(e, id, paramNorm(id, v)); }
+    void press(int id) { e->setParameter(e, id, 1.0f); }   // a button: every 1 is a press
+    std::string display(int id) {
+        char b[256] = {};
+        e->dispatcher(e, vst::effGetParamDisplay, id, 0, b, 0.0f);
+        return b;
+    }
     void midi(uint8_t st, uint8_t d1, uint8_t d2, int delta) {
         VstMidiEvent m{};
         m.type = vst::kVstMidiType;
@@ -222,14 +185,12 @@ struct Soak {
         pending.clear();
     }
 
-    void loadPreset(int i) {
-        const FactoryPreset& p = kFactoryPresets[i];
-        std::string text = p.text;
-        const size_t body = text.find('\n');
-        text = defaults + (body == std::string::npos ? "" : text.substr(body + 1)) + "preset=builtin:" + p.name + "\n";
-        e->dispatcher(e, vst::effSetChunk, 0, static_cast<intptr_t>(text.size()), const_cast<char*>(text.data()), 0.0f);
+    // The browser's Next; where it doesn't move (the end of the list), Init, and on from there.
+    void nextPreset() {
+        const std::string was = display(P_PRESET);
+        press(P_PRESET_NEXT);
+        if (display(P_PRESET) == was) press(P_PRE_INIT);
         spaceMode = static_cast<int>(paramValue(P_S_MODE, e->getParameter(e, P_S_MODE)));
-        frozen = paramValue(P_S_FREEZE, e->getParameter(e, P_S_FREEZE)) > 0.5f;
     }
 
     // One to three keys, each its own chord: the new ones down, then the old ones up.
@@ -278,13 +239,11 @@ struct Soak {
         }
         if (freezeOff >= 0 && now >= freezeOff) {
             set(P_S_FREEZE, 0);
-            frozen = false;
             freezeOff = -1;
             mark("Freeze off");
         }
         if (now >= nextFreeze) {
             set(P_S_FREEZE, 1);
-            frozen = true;
             freezeOff = in(10.0, 60.0);
             ++w.freezes;
             mark("Freeze on");
@@ -300,8 +259,7 @@ struct Soak {
         }
         if (now >= nextPatch) {
             if (rng.chance(0.5)) {
-                preset = (preset + 1) % kNumFactoryPresets;
-                loadPreset(preset);
+                nextPreset();
                 ++w.presets;
                 mark("a preset");
             } else {
@@ -337,8 +295,8 @@ struct Soak {
 } // namespace
 
 int main(int argc, char** argv) {
-    const double hours = argc > 1 ? std::atof(argv[1]) : 1.0;
-    const uint64_t seed = argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 1;
+    const double hours = argc > 1 && *argv[1] ? std::atof(argv[1]) : 1.0;   // empty: the default
+    const uint64_t seed = argc > 2 && *argv[2] ? std::strtoull(argv[2], nullptr, 10) : 1;
     if (!(hours > 0.0) || hours > 1000.0) {
         std::fprintf(stderr, "usage: %s [hours] [seed]\n", argv[0]);
         return 2;
@@ -359,19 +317,18 @@ int main(int argc, char** argv) {
     s.e->dispatcher(s.e, vst::effOpen, 0, 0, nullptr, 0.0f);
     // The tables first (the builder thread the instance started), so the whole run reads them.
     const double t0 = wallS();
-    for (bool all = false; !all && wallS() - t0 < 600.0;) {
-        all = true;
-        for (const auto& slot : sharedTables().t) all = all && slot.load() != nullptr;
+    bool tables = false;
+    while (!tables && wallS() - t0 < kTablesWaitS) {
+        tables = true;
+        for (const auto& slot : sharedTables().t) tables = tables && slot.load() != nullptr;
         const timespec nap{0, 10 * 1000 * 1000};
-        if (!all) nanosleep(&nap, nullptr);
+        if (!tables) nanosleep(&nap, nullptr);
     }
-    std::printf("soak: %.2f h of audio, seed %llu, %d factory presets; tables built in %.1f s\n", hours,
-                static_cast<unsigned long long>(seed), kNumFactoryPresets, wallS() - t0);
-    s.defaults = "ambientforce 1\n";
-    for (int i = 0; i < P_COUNT; ++i)
-        if (PARAM_INFO[i].kind == Kind::Synth)
-            s.defaults += std::string(PARAM_INFO[i].key) + "=" + std::to_string(paramValue(i, PARAM_INFO[i].def)) + "\n";
-    s.loadPreset(0);
+    std::printf("soak: %.2f h of audio, seed %llu, %d factory presets; ", hours, static_cast<unsigned long long>(seed),
+                kNumFactoryPresets);
+    if (tables) std::printf("tables built in %.1f s\n", wallS() - t0);
+    else std::printf("WARNING: the tables weren't all built in %.0f s, some slots play the sine for a while\n", kTablesWaitS);
+    s.press(P_PRE_INIT);   // Init by its button: the browser's Next goes on from there
     s.transport(true);
     s.nextFreeze = s.in(180.0, 480.0);
     s.nextShimmer = s.in(60.0, 240.0);
@@ -382,7 +339,7 @@ int main(int argc, char** argv) {
     const long long total = (static_cast<long long>(hours * 3600.0 * kSr) + kBlock - 1) / kBlock * kBlock;
     std::vector<Window> done;
     Window w;
-    KWeight kl, kr;
+    loudness::Meter meter;
     float L[kBlock], R[kBlock];
     float* out[2] = {L, R};
     long long nonFinite = 0, overPeak = 0, firstBad = -1;
@@ -390,26 +347,34 @@ int main(int argc, char** argv) {
     double cpu = 0.0, worstBlockS = 0.0;
     long long worstAt = 0, worstAfter = 0;
     const char* worstEvent = "";
+    uint32_t limitedWas = limitedSamples(), tripsWas = guardTrips();
     const double wall0 = wallS();
-    auto close = [&](Window& x) {
-        x.closePieces();
-        done.push_back(x);
-        x = Window{};
-    };
-    std::printf("  window          LUFS   drift   peak dBFS   DC dBFS   chords freeze shimmer preset mode stop suspend\n");
+    std::printf("  window          LUFS   drift  peak dBFS  DC dBFS  limit  guard  chords freeze shimmer preset mode stop "
+                "suspend\n");
     double reference = 0.0;
     bool fail = false;
-    auto report = [&](const Window& x, int index) {
-        const double lufs = integrated(x.seg), drift = index == 0 ? 0.0 : lufs - reference;
-        if (index == 0) reference = lufs;
-        const bool loud = lufs > -70.0 && std::fabs(drift) <= kDriftMax, dcOk = x.dc() <= kDcMax;
-        fail = fail || !loud || !dcOk;
-        const long long from = static_cast<long long>(index) * 600, to = from + x.samples / 44100;
-        std::printf("  %2lld:%02lld-%2lld:%02lld   %6.1f  %+5.1f%s   %6.1f      %6.1f%s    %4d %6d %7d %6d %4d %4d %7d\n",
-                    from / 3600, from / 60 % 60, to / 3600, to / 60 % 60, lufs, drift, loud ? " " : "!", db(x.peak),
-                    db(x.dc()), dcOk ? " " : "!", x.chords, x.freezes, x.shimmers, x.presets, x.modes, x.stops,
-                    x.suspends);
+    int limitWarnings = 0;
+    // A window done: its loudness, its line, its verdict.
+    auto close = [&]() {
+        w.closePieces();
+        w.lufs = meter.integrated();
+        meter.clear();
+        peak = std::max(peak, w.peak);
+        const int index = static_cast<int>(done.size());
+        if (index == 0) reference = w.lufs;
+        const double drift = w.lufs - reference;
+        const bool loud = w.lufs > -70.0 && std::fabs(drift) <= kDriftMax, dcOk = w.dc() <= kDcMax;
+        const bool limits = w.limitShare() > kLimitWarn;
+        fail = fail || !loud || !dcOk || w.guards > 0;
+        limitWarnings += limits;
+        const long long from = static_cast<long long>(index) * 600, to = from + w.samples / 44100;
+        std::printf("  %2lld:%02lld-%2lld:%02lld   %6.1f  %+5.1f%s  %6.1f    %6.1f%s %5.1f%%%s %4u%s  %6d %6d %7d %6d %4d %4d %7d\n",
+                    from / 3600, from / 60 % 60, to / 3600, to / 60 % 60, w.lufs, drift, loud ? " " : "!", db(w.peak),
+                    db(w.dc()), dcOk ? " " : "!", 100.0 * w.limitShare(), limits ? "?" : " ", w.guards,
+                    w.guards ? "!" : " ", w.chords, w.freezes, w.shimmers, w.presets, w.modes, w.stops, w.suspends);
         std::fflush(stdout);
+        done.push_back(w);
+        w = Window{};
     };
     while (g_samples < total) {
         s.events(w);
@@ -423,6 +388,12 @@ int main(int argc, char** argv) {
             worstEvent = s.last;
             worstAfter = g_samples - s.lastAt;
         }
+        // The engine's counters, to the window the block started in.
+        const uint32_t limited = limitedSamples(), trips = guardTrips();
+        w.limited += limited - limitedWas;
+        w.guards += trips - tripsWas;
+        limitedWas = limited;
+        tripsWas = trips;
         if (g_time.flags & vst::kVstTransportPlaying) {
             g_time.samplePos += kBlock;
             g_time.ppqPos += kBlock / kSr * g_time.tempo / 60.0;
@@ -440,34 +411,25 @@ int main(int argc, char** argv) {
                 ++overPeak;
             }
             w.peak = std::max(w.peak, a);
-            const double yl = kl.run(l), yr = kr.run(r);
-            w.segAcc += yl * yl + yr * yr;
+            meter.add(l, r);
             w.dcL += l;
             w.dcR += r;
             ++w.samples;
-            if (w.samples % kSeg == 0) {
-                w.seg.push_back(w.segAcc);
-                w.segAcc = 0.0;
-            }
             if (w.samples % kDcSeg == 0) {
                 w.dcAbsL += std::fabs(w.dcL / kDcSeg);
                 w.dcAbsR += std::fabs(w.dcR / kDcSeg);
                 w.dcL = w.dcR = 0.0;
                 ++w.dcPieces;
             }
-            if (w.samples == kWindow) {
-                peak = std::max(peak, w.peak);
-                close(w);
-                report(done.back(), static_cast<int>(done.size()) - 1);
-            }
+            if (w.samples == kWindow) close();
         }
         g_samples += kBlock;
     }
-    if (w.samples >= 60 * 44100 || done.empty()) {   // a last part window of a minute or more
-        peak = std::max(peak, w.peak);
-        close(w);
-        report(done.back(), static_cast<int>(done.size()) - 1);
-    }
+    if (w.samples >= 60 * 44100 || done.empty()) close();   // a last part window of a minute or more
+    peak = std::max(peak, w.peak);                           // and a shorter one's peak
+    uint32_t trips = 0;
+    for (const Window& x : done) trips += x.guards;
+    trips += w.guards;
     s.e->dispatcher(s.e, vst::effClose, 0, 0, nullptr, 0.0f);
 
     const double audioS = static_cast<double>(g_samples) / kSr, wall = wallS() - wall0;
@@ -478,16 +440,19 @@ int main(int argc, char** argv) {
     }
     std::printf("  %d chords, %d freezes, %d shimmer changes, %d presets, %d Space modes, %d stops, %d suspends\n",
                 events[0], events[1], events[2], events[3], events[4], events[5], events[6]);
-    std::printf("  peak %.2f dBFS (limit %.2f), %lld samples over it, %lld not finite\n", db(peak), db(kPeakMax), overPeak,
-                nonFinite);
+    std::printf("  peak %.2f dBFS (limit %.2f), %lld samples over it, %lld not finite, %u guard trips\n", db(peak),
+                db(kPeakMax), overPeak, nonFinite, trips);
+    if (limitWarnings)
+        std::printf("  WARNING: %d windows had the limiter working over %.0f%% of the time (marked ?)\n", limitWarnings,
+                    100.0 * kLimitWarn);
     std::printf("  CPU: the plugin %.1f s for %.2f h of audio (%.0fx real time, %.2f%% of a block on average, the "
                 "slowest block %.0f us, at %.1f s, %.2f s after %s); %.1f s in all\n",
                 cpu, audioS / 3600.0, audioS / std::max(cpu, 1e-9), 100.0 * cpu / audioS, worstBlockS * 1e6,
                 static_cast<double>(worstAt) / kSr, static_cast<double>(worstAfter) / kSr, worstEvent, wall);
-    fail = fail || nonFinite > 0 || overPeak > 0;
+    fail = fail || nonFinite > 0 || overPeak > 0 || trips > 0;
     if (firstBad >= 0) std::printf("  first bad sample at %.3f s\n", static_cast<double>(firstBad) / kSr);
-    std::printf("soak: %s (non-finite: none; peaks <= -1 dBFS; mean |DC| <= -60 dBFS; loudness within %.0f LU of the "
-                "first window)\n",
+    std::printf("soak: %s (non-finite: none; guard trips: none; peaks <= -1 dBFS; mean |DC| <= -60 dBFS; loudness "
+                "within %.0f LU of the first window)\n",
                 fail ? "FAIL" : "PASS", kDriftMax);
     return fail ? 1 : 0;
 }

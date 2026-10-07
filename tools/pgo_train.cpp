@@ -242,6 +242,8 @@ void chords(Player& p) {   // every chord type in a voicing, strummed, Leading o
 void grounds(Player& p) {   // every partial, the colour's intervals, Body's vowels, Breath, the registers
     for (int id : {P_G_SUB, P_G_ROOT, P_G_FIFTH, P_G_OCT, P_G_COLOR}) p.set(id, 0.9f);
     p.set(P_G_BREATH, 0.8f);
+    p.set(P_G_SWAY, 0.8f);   // the scan moving fast: reads crossing frames
+    p.set(P_G_SWAYRATE, 1.5f);
     p.set(P_G_BEAT, 1.5f);
     p.set(P_G_GRAVITY, 1.0f);
     p.set(P_G_WIDTH, 1.0f);

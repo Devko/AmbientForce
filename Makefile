@@ -151,13 +151,14 @@ $(BUILD)/demos: tools/demos.cpp $(SRC) $(HDR) $(GEN) | $(BUILD)
 
 # The soak test: HOURS of audio (default 1) rendered offline through the plugin's entry points, a
 # long ambient set (chords every 20-90 s, Freeze, Shimmer, presets, Space modes, Stops, suspends;
-# seeded: SEED), failing on a non-finite sample, a peak over -1 dBFS, DC or loudness drift
-# (tools/soak.cpp). M1 runs 1 h; the 24 h soak is M2's gate.
+# seeded: SEED), failing on a non-finite sample, a trip of the engine's guard, a peak over -1 dBFS,
+# DC or loudness drift (tools/soak.cpp). M1 runs 1 h; the 24 h soak is M2's gate. HOURS= or SEED=
+# left empty: the defaults.
 HOURS ?= 1
 SEED  ?= 1
 soak: $(BUILD)/soak
-	$(BUILD)/soak $(HOURS) $(SEED)
-$(BUILD)/soak: tools/soak.cpp $(SRC) $(HDR) $(GEN) | $(BUILD)
+	$(BUILD)/soak $(or $(HOURS),1) $(or $(SEED),1)
+$(BUILD)/soak: tools/soak.cpp tools/loudness.h $(SRC) $(HDR) $(GEN) | $(BUILD)
 	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(SRC) $< -o $@
 
 # --- device -----------------------------------------------------------------------------------
