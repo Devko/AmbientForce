@@ -295,4 +295,10 @@ private:
     float sendL_[kChunk] = {}, sendR_[kChunk] = {};
 };
 
+// Process-wide, summed over every instance, for the soak (tools/soak.cpp), which only sees the
+// plugin's entry points: the guard's trips (render() calls it zeroed) and the samples the limiter's
+// gain computer ran on. Relaxed atomics, one add a piece at most; they wrap, so read differences.
+uint32_t guardTrips();
+uint32_t limitedSamples();
+
 } // namespace af

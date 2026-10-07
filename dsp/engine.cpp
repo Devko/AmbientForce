@@ -3,6 +3,7 @@
 #include "stages.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -14,6 +15,8 @@ uint64_t g_stageNs[STG_COUNT] = {};
 #endif
 
 namespace {
+
+std::atomic<uint32_t> g_guardTrips{0}, g_limited{0};   // guardTrips(), limitedSamples()
 
 constexpr float kTiltPivotHz = 800.0f;
 constexpr float kTiltDb = 6.0f;             // the shelf's highs (and, the other way, lows) at tilt 1
@@ -469,6 +472,7 @@ void Engine::render(float* outL, float* outR, int n) {
         if (!piece(outL + o, outR + o, m)) {
             // Not finite: the whole call is zeros and the DSP starts afresh.
             ++guards_;
+            g_guardTrips.fetch_add(1, std::memory_order_relaxed);
             clearDsp();
             o = 0;
             break;
@@ -594,6 +598,7 @@ bool Engine::output(float* L, float* R, int n) {
         }
         // Released all but 0.1% with nothing over the knee: back at 1, the next piece only looks.
         limitD_ = pk <= kKnee && d < kLimitLand ? 0.0f : d;
+        g_limited.fetch_add(static_cast<uint32_t>(n), std::memory_order_relaxed);
     }
 
     fade_.apply(L, R, n);
@@ -624,5 +629,8 @@ Engine::Info Engine::info() const {
     i.spaceDecayS = spaceParams_.reverb.decayS;
     return i;
 }
+
+uint32_t guardTrips() { return g_guardTrips.load(std::memory_order_relaxed); }
+uint32_t limitedSamples() { return g_limited.load(std::memory_order_relaxed); }
 
 } // namespace af

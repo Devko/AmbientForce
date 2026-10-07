@@ -979,7 +979,7 @@ within -16 ± 1 LUFS, with a peak ≤ -1 dBFS.
 | init chord | Init preset, one triad held |
 | drone | Ground only, every partial on, body and breath |
 | bloom 6x2 | Bloom 6 voices, unison 2, Couple FM, no Ground |
-| worst | 6-note chords re-struck every 2 s, unison 2, FM, Ground at full, Space Abyss with shimmer 1 and freeze off |
+| worst | 6-note chords re-struck every 2 s, unison 2, FM, Ground at full, Sway 1 at 2 Hz on Bloom and Ground, Bloom Smear 1 and Breath 1, Space Abyss with shimmer 1 and freeze off |
 
 **`pgo_train.cpp`:** plays every factory preset through the phrase and every Space mode.
 
