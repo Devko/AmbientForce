@@ -752,8 +752,48 @@ void testWidth() {
 
 // Tone: a gentle low-pass (Q 0.707), flat under the cutoff, -3 dB at it, 12 dB an octave above it:
 // a saw drone on C2 under a Tone of 1 kHz against 16 kHz, harmonic by harmonic.
+// A jump of the Tone glides across its step: from 40 Hz to 16 kHz and back, switched where the
+// drone under the two cutoffs differs most, it steps no further than it moves anyway. Twins with
+// each cutoff throughout (the same seed, the same phases) say where that is.
+void toneJump(float from, float to) {
+    af::GroundPatch a = steady(af::TB_CELLO_TASTO, 1.0f, 0.7f);
+    a.sub = a.octave = a.color = 0.5f;
+    a.cutoffHz = from;
+    af::GroundPatch b = a;
+    b.cutoffHz = to;
+    af::Ground g, ta, tb;
+    for (af::Ground* x : {&g, &ta, &tb}) x->seed(46);
+    g.set(a, af::HarmonyPatch{});
+    ta.set(a, af::HarmonyPatch{});
+    tb.set(b, af::HarmonyPatch{});
+    for (af::Ground* x : {&g, &ta, &tb}) x->setTarget(45);
+    const Buf g0 = play(g, kSec).L, a0 = play(ta, kSec).L, b0 = play(tb, kSec).L;
+    const size_t half = a0.size() / 2;
+    const float steadyStep = std::max(maxStep(a0, half), maxStep(b0, half));
+    float apart = 0.0f;
+    for (size_t i = half; i < a0.size(); ++i) apart = std::max(apart, std::fabs(a0[i] - b0[i]));
+    float lg = g0.back(), la = a0.back(), lb = b0.back();
+    for (int k = 0; k < 2 * kSec / kHostBlock && std::fabs(la - lb) < 0.6f * apart; ++k) {
+        lg = play(g, kHostBlock).L.back();
+        la = play(ta, kHostBlock).L.back();
+        lb = play(tb, kHostBlock).L.back();
+    }
+    CHECK(std::fabs(la - lb) >= 0.6f * apart && std::fabs(la - lb) > 5.0f * steadyStep);   // a step would show
+    g.set(b, af::HarmonyPatch{});
+    const Buf g1 = play(g, kSec / 5).L, b1 = play(tb, kSec / 5).L;
+    const float jump = std::max(maxStep(g1), std::fabs(g1[0] - lg));
+    float end = 0.0f;   // 150 ms on: what the filter held at the jump has died away (at 40 Hz, slowly)
+    for (size_t i = 3 * kSec / 20; i < g1.size(); ++i) end = std::max(end, std::fabs(g1[i] - b1[i]));
+    std::printf("  Tone %.0f -> %.0f Hz: largest step %.5f against %.5f steady (the cutoffs %.3f apart there); %.1e off "
+                "the twin 150 ms on\n", from, to, jump, steadyStep, std::fabs(la - lb), end);
+    CHECK(jump <= 3.0f * steadyStep);
+    CHECK(end < 1e-5f);
+}
+
 void testTone() {
     std::printf("== ground: Tone\n");
+    toneJump(40.0f, 16000.0f);
+    toneJump(16000.0f, 40.0f);
     af::GroundPatch p = steady(af::TB_SAW, 1.0f, 0.0f);
     p.width = 0.0f;
     auto render = [&p](float cutoff) {
@@ -927,6 +967,40 @@ void testOddSequences() {
                     in, steadyStep, back);
         CHECK(out <= 3.0f * steadyStep && in <= 3.0f * steadyStep);
         CHECK(back < 1e-6f);
+    }
+    {   // The engine's idle gate: render() skipped while !audible(), zeros in its place. A mute
+        // leaves it audible until the step that ramps it down has run.
+        af::GroundPatch p;
+        p.fadeS = 0.05f;
+        af::Ground g;
+        g.seed(47);
+        g.set(p, af::HarmonyPatch{});
+        g.setTarget(50);
+        Buf x = play(g, kSec).L;
+        const float steadyStep = maxStep(x, x.size() / 2);
+        auto block = [&g, &x]() {   // one block as the engine would run it
+            const Out o = g.audible() ? play(g, kHostBlock) : Out{Buf(kHostBlock), Buf(kHostBlock), Buf(kHostBlock), Buf(kHostBlock)};
+            x.insert(x.end(), o.L.begin(), o.L.end());
+        };
+        p.mute = true;
+        g.set(p, af::HarmonyPatch{});
+        const bool rampsFirst = g.audible();
+        block();
+        const bool thenIdle = !g.audible();
+        for (int b = 0; b < kSec / 2 / kHostBlock; ++b) block();
+        p.mute = false;
+        g.set(p, af::HarmonyPatch{});
+        const bool back = g.audible();
+        for (int b = 0; b < kSec / 10 / kHostBlock; ++b) block();
+        const float jump = maxStep(x, static_cast<size_t>(kSec - 1));
+        std::printf("  render skipped while not audible: largest step %.5f against %.5f steady\n", jump, steadyStep);
+        CHECK(rampsFirst && thenIdle && back);
+        CHECK(jump <= 3.0f * steadyStep);
+        p.level = 0.0f;   // level 0 the same way
+        g.set(p, af::HarmonyPatch{});
+        CHECK(g.audible());
+        block();
+        CHECK(!g.audible() && g.sounding());
     }
 }
 

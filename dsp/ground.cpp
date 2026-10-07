@@ -244,8 +244,15 @@ Ground::Step Ground::control(float spaceSend, int n) {
     const float b = breath_ > 0.0f ? breath_ * sinCycle(static_cast<float>(breathPhase_)) : 0.0f;
     const float cutoff = clampf(cutoff_ * exp2Fast(kBreathOct * b), 20.0f, 0.45f * kRate);
     if (cutoff != toneHz_) {
+        const float g = svfG(cutoff), jump = exp2Fast(kToneJump);
+        if (gain_ > 0.0f && toneHz_ > 0.0f && (cutoff > toneHz_ * jump || cutoff * jump < toneHz_)) {
+            s.toneGlides = true;   // a jump of the knob: across the step, evenly in octaves
+            s.toneG0 = toneG_;
+            s.toneRate = std::pow(g / toneG_, 1.0f / static_cast<float>(n));
+        }
         toneHz_ = cutoff;
-        toneUpdate_ = SvfUpdate::of(splat2(svfG(cutoff)), splat2(kToneK));
+        toneG_ = g;
+        toneUpdate_ = SvfUpdate::of(splat2(g), splat2(kToneK));
     }
 
     s.pos = scan_.step(pos_, dt);
@@ -341,8 +348,8 @@ void Ground::partials(const Step& s, const Wavetable& want, float* accL, float* 
     }
 }
 
-// Body and Tone, L and R together, into yL / yR. The formants' updates are worked out per sample
-// only while they glide. The states and the glide run as locals: the members could alias the float
+// Body and Tone, L and R together, into yL / yR. The formants' and the Tone's updates are worked
+// out per sample only while they glide. The states and the glide run as locals: the members could alias the float
 // buffers, and would be loaded and stored again every sample.
 void Ground::filters(const Step& s, const float* accL, const float* accR, float* yL, float* yR) {
     const int n = s.n;
@@ -361,7 +368,9 @@ void Ground::filters(const Step& s, const float* accL, const float* accR, float*
     const f2 bandPass[3] = {splat2(0.0f), kForm, splat2(0.0f)};   // unity at the formant
     Glide<2, 2> formant = formant_;
     SvfState toneSvf = toneSvf_, f1Svf = f1Svf_, f2Svf = f2Svf_;
-    const SvfUpdate tu = toneUpdate_;
+    const f2 kTone = splat2(kToneK);
+    SvfUpdate tu = s.toneGlides ? SvfUpdate::of(splat2(s.toneG0), kTone) : toneUpdate_;
+    float toneG = s.toneG0;
     const bool glides = body && formant.moving();
     SvfUpdate u1 = tu, u2 = tu;
     if (body) {
@@ -381,6 +390,10 @@ void Ground::filters(const Step& s, const float* accL, const float* accR, float*
             }
             const f2 b1 = f1Svf.tick(v, u1, bandPass), b2 = f2Svf.tick(v, u2, bandPass);
             v = v * splat2(1.0f - kBodyDry * w) + (b1 + splat2(kF2) * b2) * splat2(kBodyWet * w);
+        }
+        if (s.toneGlides) {   // lands on the step's own coefficients at its last sample
+            toneG *= s.toneRate;
+            tu = j == n - 1 ? toneUpdate_ : SvfUpdate::fast(splat2(toneG), kTone);
         }
         store2(yL + j, yR + j, toneSvf.tick(v, tu, lowPass));
     }

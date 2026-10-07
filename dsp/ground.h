@@ -39,9 +39,10 @@
 //   It shapes the drone toward a choir, lifting a harmonic on a formant by 4.7 dB at most and
 //   keeping the level within 2.5 dB of the dry's; at 0 it costs nothing.
 // - Tone: a gentle low-pass SVF (Q 0.707, no peak) after the sum, in stereo. Its coefficients are
-//   worked out once per control step: Breath moves the cutoff at most 0.023 octaves a step, and a
-//   jump of the knob steps them, which the filter takes without a click (its state carries on;
-//   2.5 kHz to 150 Hz at the drone's peak moves it less than the drone moves itself).
+//   worked out once per control step: Breath moves the cutoff at most 0.023 octaves a step. A
+//   cutoff that moves more than kToneJump octaves in a step (a jump of the knob) glides there
+//   across the step instead, evenly in octaves, the coefficients worked out for every sample: an
+//   opening from 40 Hz to 16 kHz in one step would otherwise let the drone's top in at once.
 // - Breath: a sine LFO at breathHz moves the level by +-3 dB and the cutoff by +-1 octave, both
 //   times breath.
 // - Width: partial i is panned to width * kPan[i], equal power (unity in the middle, as
@@ -56,10 +57,12 @@
 // kHeadroom (ground.cpp says how it was set). The send is taken after level, fade and breath:
 // level 0, mute or silence send nothing.
 //
-// Mute: while sounding(), render() must be called every block, muted or not. Muted it is cheap
-// (nothing is read: the oscillators are skipped along, and the fades, glides and scans keep
-// running), its gain ramps to 0 over a step, and unmuted it ramps back where it would have been,
-// without a click. audible() says whether anything can be heard: the engine's idle gate.
+// Mute: render() may be skipped while !audible() (the engine's idle gate); Ground then stands
+// still, its fades, glides and scans paused where they were. audible() stays true after a mute or
+// a level of 0 until the gain has ramped down (the next step), so a skipped Ground has always
+// reached silence first, and unmuted it ramps up from there: no click either way. Rendered while
+// muted it is cheap too (nothing is read: the oscillators are skipped along), and its fades,
+// glides and scans keep running, so unmuted it is where it would have been.
 //
 // Control rate: once per control step of kChunk samples the glide, fade, dip, LifeScan, breath,
 // Tone, Body and the partials' pitches take one step; the gains ramp across the step and Body's
@@ -67,8 +70,8 @@
 // each a control step of its own length.
 //
 // Cost, as ARM instructions per 128-sample block (qemu's count, the device's flags): every
-// partial on 39.5k, the default drone (Sub, Root, Fifth, Octave) 33.7k, Root alone 16.4k; each
-// partial about 5.8k, Body 5.4k more, Breath 0.6k (the Tone's coefficients, once a step). A table
+// partial on 40.0k, the default drone (Sub, Root, Fifth, Octave) 34.3k, Root alone 17.0k; each
+// partial about 5.8k, Body 5.3k more, Breath 0.6k (the Tone's coefficients, once a step). A table
 // change reads both tables for its 20 ms. By PolyForce's ~1 ns an instruction that is 1.4%, 1.2%
 // and 0.6% of a block, against CONCEPT.md 11's 0.8%; the device bench (Task 11) has the final word.
 //
@@ -114,6 +117,7 @@ public:
     static constexpr float kPan[PT_COUNT] = {0.0f, -0.3f, 0.3f, -0.6f, 0.6f};
     static constexpr int kTableFade = 882;   // 20 ms: a new table fades in over this many samples
     static constexpr int kDip = 1764;        // 40 ms: a Register change dips out, and back, over this
+    static constexpr float kToneJump = 0.125f;   // octaves in a step past which the Tone glides
 
     Ground();
     // The random numbers (the scan's sway phase and smear, the oscillators' and the breath's start
@@ -128,14 +132,15 @@ public:
     // Silent, no target, every phase back to where the seed puts it. The patch stays.
     void reset();
     // Adds into outL/outR, and adds the send into sendL/sendR at `spaceSend` (a gain, 0..1). n <= 128
-    // (any n works; it is cut into control steps). Off: returns at once. While sounding(), call it
-    // every block, muted or not (see Mute above).
+    // (any n works; it is cut into control steps). Off: returns at once. It may be skipped while
+    // !audible() (see Mute above).
     void render(const TableSet& tables, float* outL, float* outR, float* sendL, float* sendR,
                 float spaceSend, int n);
-    // Fading in, held or fading out, muted or not: while it is, render() must be called.
+    // Fading in, held or fading out, muted or not.
     bool sounding() const { return sounding_; }
-    // Sounding, not muted and its level over 0: something can be heard.
-    bool audible() const { return sounding_ && !mute_ && level_ > 0.0f; }
+    // Something can be heard, or is still ramping down: sounding, and either the gain hasn't reached
+    // 0 yet or it is neither muted nor at level 0. While it is false, render() may be skipped.
+    bool audible() const { return sounding_ && (gain_ > 0.0f || (!mute_ && level_ > 0.0f)); }
 
     // For tests and the engine's Info: the target note (-1: none); the MIDI note the root sits on
     // (its octave chosen; -1: off); the root's pitch now and where it glides to, in fractional
@@ -155,6 +160,8 @@ private:
         float g0 = 0.0f, g1 = 0.0f, s0 = 0.0f, s1 = 0.0f, w0 = 0.0f, w1 = 0.0f;
         float pos = 0.0f;
         float inc[PT_COUNT] = {};
+        bool toneGlides = false;    // the cutoff jumps: g from toneG0, times toneRate a sample
+        float toneG0 = 0.0f, toneRate = 1.0f;
     };
 
     int base() const { return 12 * (register_ + 1); }   // Register's C
@@ -205,6 +212,7 @@ private:
     float gain_ = 0.0f, send_ = 0.0f;    // the output's gain and the send's, as the last step ended
     float wet_ = 0.0f;                   // Body's share (0..1) as the last step ended
     float toneHz_ = -1.0f;               // the cutoff toneUpdate_ was worked out for
+    float toneG_ = 0.0f;                 // its g
     SvfUpdate toneUpdate_{};
     Glide<2, 2> formant_;                // Body's two formants' g
     SvfState toneSvf_, f1Svf_, f2Svf_;
