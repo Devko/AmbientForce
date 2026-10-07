@@ -54,6 +54,7 @@ struct LifePos {
     float sway = 0.0f;     // 0..1: depth of the slow back-and-forth (+-0.25 of the table at 1)
     float swayHz = 0.05f;  // 0.002..2
     float smear = 0.0f;    // 0..1: fast random micro-motion of the position (+-0.03 at 1)
+    float swayBeats = 0.0f;   // synced: one sway in quarter notes (common.h kBarDivBeats); 0: free, at swayHz
 };
 
 namespace lifeosc {
@@ -99,15 +100,22 @@ public:
         t_ = 1.0f;   // the next step starts a new leg, from the centre
         rate_ = 0.0f;
     }
-    // The position 0..1 for the next control step, `seconds` after the last.
-    float step(const LifePos& p, float seconds) {
+    // The position 0..1 for the next control step, `seconds` after the last. Synced (p.swayBeats > 0,
+    // with a clock): the sway's phase is the clock's, already moved on to this step's end, so every
+    // scan on one clock sways together, on the bar while MPC plays; without a clock a synced sway
+    // runs free at 120 BPM. Free: its own phase, at swayHz.
+    float step(const LifePos& p, float seconds, const BeatClock* clock = nullptr) {
         // A NaN or an infinity would stay in the phase and the walk for good: it counts as nothing.
         seconds = std::isfinite(seconds) && seconds > 0.0f ? seconds : 0.0f;
-        const float hz = p.swayHz > 0.0f ? std::min(p.swayHz, 2.0f) : 0.0f;
-        // Double: at 0.002 Hz the phase moves 1.5e-6 a step, which a float near 1 would round by
-        // up to 2% (a slower sway in half of each cycle).
-        sway_ += static_cast<double>(hz) * seconds;
-        sway_ -= floorFast(sway_);
+        if (p.swayBeats > 0.0f && clock) {
+            sway_ = clock->phase(static_cast<double>(p.swayBeats));
+        } else {
+            const float hz = p.swayBeats > 0.0f ? 2.0f / p.swayBeats : p.swayHz > 0.0f ? std::min(p.swayHz, 2.0f) : 0.0f;
+            // Double: at 0.002 Hz the phase moves 1.5e-6 a step, which a float near 1 would round by
+            // up to 2% (a slower sway in half of each cycle).
+            sway_ += static_cast<double>(hz) * seconds;
+            sway_ -= floorFast(sway_);
+        }
         t_ += seconds * rate_;
         if (t_ >= 1.0f) {
             from_ = to_;

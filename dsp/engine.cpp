@@ -367,6 +367,7 @@ void Engine::setTransport(double bpm, double beats, bool playing, bool beatsVali
     transport_.valid = beatsValid && std::isfinite(beats);
     transport_.beats = transport_.valid ? beats : 0.0;
     transport_.playing = playing;
+    transportAt_ = samples_;   // the position is this block's first sample's
     space_.set(spaceParams_, transport_);
     if (was && !playing) stop();
     else if (!was && playing) fading_ = false;   // playing again: a fade turns round
@@ -472,6 +473,7 @@ void Engine::render(float* outL, float* outR, int n) {
             if (!awake_) break;   // the fade just ended
         }
         const int m = std::min(n - o, kChunk - phase);
+        clockStrata(samples_ + static_cast<uint64_t>(o));
         if (!piece(outL + o, outR + o, m)) {
             // Not finite: the whole call is zeros and the DSP starts afresh.
             ++guards_;
@@ -488,6 +490,16 @@ void Engine::render(float* outL, float* outR, int n) {
         if (!awake_) idle_ = true;
     }
     samples_ += static_cast<uint64_t>(n);
+}
+
+// The strata's synced cycles (Breath, the sways) read MPC's position at a piece's first sample: the
+// block's, moved on at the tempo by the samples since. Stopped, their clocks run on by themselves.
+void Engine::clockStrata(uint64_t at) {
+    const bool locked = transport_.playing && transport_.valid;
+    const double since = static_cast<double>(static_cast<int64_t>(at - transportAt_));
+    const double beats = transport_.beats + since * transport_.bpm / (60.0 * static_cast<double>(kRate));
+    ground_.setTransport(transport_.bpm, beats, locked);
+    bloom_.setTransport(transport_.bpm, beats, locked);
 }
 
 // One piece of n <= kChunk samples, all within one control step: the strata into the dry bus and

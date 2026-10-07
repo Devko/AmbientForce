@@ -1,5 +1,6 @@
 ambientforce 1
-volume=-7.1
+about=hold a pad, feel it throb; pads jump the root
+volume=-7.4
 h_key=1
 h_scale=7
 g_level=0.9
@@ -15,7 +16,9 @@ g_fifth=0.8
 g_oct=0.5
 g_color=0.3
 g_colint=3
-g_breath=0.8
+g_breath=1
+g_breathsync=1
+g_breathdiv=0
 g_space=0.5
 g_width=0.8
 b_mute=1

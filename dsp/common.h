@@ -51,6 +51,34 @@ inline constexpr Division kLfoDivs[] = {
 };
 inline constexpr int kNumLfoDivs = static_cast<int>(sizeof kLfoDivs / sizeof kLfoDivs[0]);
 
+// The strata's synced cycles (Ground's Breath, the sways): Free runs at the rate knob, Sync one cycle
+// per division of 4/4 bars, a quarter note to 64 bars. The names are surface.py's options, in order.
+inline constexpr const char* kSyncNames[] = {"Free", "Sync"};
+inline constexpr const char* kBarDivNames[] = {"1/4", "1/2", "1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars",
+                                               "32 Bars", "64 Bars"};
+inline constexpr float kBarDivBeats[] = {1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f, 64.0f, 128.0f, 256.0f};
+inline constexpr int kNumBarDivs = static_cast<int>(sizeof kBarDivBeats / sizeof kBarDivBeats[0]);
+static_assert(sizeof kBarDivNames / sizeof kBarDivNames[0] == kNumBarDivs, "a name per division");
+
+// A stratum's beat count for its synced cycles: MPC's song position while the transport plays
+// (set() before each render, at its first sample), and on from where it was at the tempo while it
+// is stopped, so a synced cycle keeps its length then and locks back to the bar when MPC plays.
+// The stratum moves it on by each control step's samples (advance()) and reads its cycles from it.
+struct BeatClock {
+    double beats = 0.0;   // quarter notes
+    double bpm = 120.0;
+    void set(double tempo, double songBeats, bool locked) {
+        bpm = std::isfinite(tempo) && tempo >= 1.0 ? tempo : 120.0;
+        if (locked && std::isfinite(songBeats)) beats = songBeats;
+    }
+    void advance(int samples) { beats += static_cast<double>(samples) * bpm / (60.0 * static_cast<double>(kRate)); }
+    // A cycle of `periodBeats` quarter notes: where it stands (0..1), `offset` cycles on.
+    double phase(double periodBeats, double offset = 0.0) const {
+        const double c = beats / periodBeats + offset;
+        return c - std::floor(c);
+    }
+};
+
 inline double divSeconds(double beats, double bpm) { return beats * 60.0 / bpm; }
 
 // A synced LFO's phase (0..1) from MPC's song position: the LFO stays on the beat whatever happens

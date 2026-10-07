@@ -842,6 +842,122 @@
    "display": "string"
   },
   {
+   "key": "g_breathrate",
+   "name": "Breath Rate",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "g_breathsync",
+   "name": "Breath Sync",
+   "options": [
+    "Free",
+    "Sync"
+   ],
+   "default": "Free"
+  },
+  {
+   "key": "g_breathdiv",
+   "name": "Breath Div",
+   "options": [
+    "1/4",
+    "1/2",
+    "1 Bar",
+    "2 Bars",
+    "4 Bars",
+    "8 Bars",
+    "16 Bars",
+    "32 Bars",
+    "64 Bars"
+   ],
+   "default": "8 Bars"
+  },
+  {
+   "key": "g_breathdiv__open",
+   "name": "Breath Div List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "g_breathdiv",
+   "type": "enum"
+  },
+  {
+   "key": "g_swaysync",
+   "name": "Gnd Rate Sync",
+   "options": [
+    "Free",
+    "Sync"
+   ],
+   "default": "Free"
+  },
+  {
+   "key": "g_swaydiv",
+   "name": "Gnd Rate Div",
+   "options": [
+    "1/4",
+    "1/2",
+    "1 Bar",
+    "2 Bars",
+    "4 Bars",
+    "8 Bars",
+    "16 Bars",
+    "32 Bars",
+    "64 Bars"
+   ],
+   "default": "8 Bars"
+  },
+  {
+   "key": "g_swaydiv__open",
+   "name": "Gnd Rate Div List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "g_swaydiv",
+   "type": "enum"
+  },
+  {
+   "key": "b_swaysync",
+   "name": "Blm Rate Sync",
+   "options": [
+    "Free",
+    "Sync"
+   ],
+   "default": "Free"
+  },
+  {
+   "key": "b_swaydiv",
+   "name": "Blm Rate Div",
+   "options": [
+    "1/4",
+    "1/2",
+    "1 Bar",
+    "2 Bars",
+    "4 Bars",
+    "8 Bars",
+    "16 Bars",
+    "32 Bars",
+    "64 Bars"
+   ],
+   "default": "8 Bars"
+  },
+  {
+   "key": "b_swaydiv__open",
+   "name": "Blm Rate Div List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "b_swaydiv",
+   "type": "enum"
+  },
+  {
    "key": "preset",
    "name": "Preset",
    "min": 0,

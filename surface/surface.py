@@ -256,6 +256,26 @@ num("m_motion", "Motion", "lin", -1, 1, 0, "bipct", help="still (-) to drifting 
 num("m_glow", "Glow", "lin", -1, 1, 0, "bipct", help="dark, warm (-) to bright, airy (+); 0 is the preset")
 num("m_density", "Density", "lin", -1, 1, 0, "bipct", help="sparse, clear (-) to thick, full (+); 0 is the preset")
 
+# --- free or synced: Ground's Breath and the two sways (dsp/common.h kSyncNames, kBarDivBeats; BeatClock) ---
+# Free (the default everywhere: phasing, docs/CONCEPT.md 7.2, needs free cycles) runs at the rate knob; Sync runs one
+# cycle per division of 4/4 bars, locked to MPC's bar position while the transport plays and on at the tempo while it
+# is stopped. After the macros, so every earlier parameter keeps its index. Breath Rate runs from 128 times slower to
+# 128 times faster than Ground's breath always ran (0.07 Hz: 30.5 min to 0.11 s), its default the knob's middle, so
+# the default reads back as exactly 0.07 Hz and every preset breathes as it did (test/params_test.cpp).
+SYNC = ["Free", "Sync"]
+BAR_DIVS = ["1/4", "1/2", "1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars", "32 Bars", "64 Bars"]
+num("g_breathrate", "Breath Rate", "log", 0.07 / 128, 0.07 * 128, 0.07, "period",
+    help="one free breath's length, 0.1 s to 30 min")
+enum("g_breathsync", "Breath Sync", SYNC, "Free", help="Free at Breath Rate, or Sync to MPC's bars")
+enum("g_breathdiv", "Breath Div", BAR_DIVS, "8 Bars", help="one synced breath: a quarter note to 64 bars")
+popup_flag("g_breathdiv")
+enum("g_swaysync", "Gnd Rate Sync", SYNC, "Free", help="Free at Ground Rate, or Sync to MPC's bars")
+enum("g_swaydiv", "Gnd Rate Div", BAR_DIVS, "8 Bars", help="one synced drone sway, 1/4 to 64 bars")
+popup_flag("g_swaydiv")
+enum("b_swaysync", "Blm Rate Sync", SYNC, "Free", help="Free at Bloom Rate, or all voices on the bars")
+enum("b_swaydiv", "Blm Rate Div", BAR_DIVS, "8 Bars", help="one synced chord sway, 1/4 to 64 bars")
+popup_flag("b_swaydiv")
+
 # No RANDOMIZE: an instant jump of every sound value under a drone that holds for minutes is not music. The
 # instrument's answer is Evolve (docs/CONCEPT.md 7.3): mutation ranges declared here, taken from the preset's
 # own state and glided to through a scene, never jumped.
@@ -464,7 +484,8 @@ SPANS = {"full": (35, 1229), "left": (35, 621), "right": (659, 1245)}   # x0..x1
 STRATA = ("Ground", "Bloom", "Space")             # the strata whose cards name them
 SEG_ROWS = {"g_colint": 2}                        # six short options: two rows of three
 LIST_LABELS = {"g_reg": "REGISTER", "g_colint": "COLOR", "s_shint": "INTERVAL", "s_mode": "TYPE",
-               "b_tableb": "TABLE B", "b_fmode": "FILTER"}
+               "b_tableb": "TABLE B", "b_fmode": "FILTER", "g_breathsync": "SYNC", "g_breathdiv": "DIV",
+               "g_swaysync": "SYNC", "g_swaydiv": "DIV", "b_swaysync": "SYNC", "b_swaydiv": "DIV"}
 
 
 def list_label(key):
@@ -578,13 +599,15 @@ def build_layout():
     bank_card(L, R1, "GROUND", ground)
     bank_card(L, R2, "TABLE AND VOICE", ground2)
 
-    # DRONE: Ground's five partials, its place and its beating; then its motion and tone again.
+    # DRONE: Ground's five partials, its place and its beating; then its motion: the breath and the sway, each with
+    # its depth, its free rate and whether it runs free or on the bars.
     partials = ["g_sub", "g_root", "g_fifth", "g_oct", "g_color", "g_colint", "g_pan", "g_beat"]
-    motion = ["g_gravity", "g_fade", "g_breath", "g_body", "g_level", "g_cutoff", "g_age", "g_sway"]
-    L.page("DRONE", partials + motion)
+    breath, sway = ["g_breath", "g_breathrate", "g_breathsync", "g_breathdiv"], ["g_sway", "g_swayrate", "g_swaysync",
+                                                                                 "g_swaydiv"]
+    L.page("DRONE", partials + breath + sway)
     L.header()
     bank_card(L, R1, "PARTIALS", partials)
-    bank_card(L, R2, "MOTION AND TONE", motion)
+    bank_halves(L, R2, ("BREATH", breath), ("SWAY", sway))
 
     bloom = ["b_level", "b_cutoff", "b_age", "b_sway", "b_blend", "b_swell", "b_space", "b_width"]
     bloom2 = ["b_table", "b_release", "b_reso", "b_fmode", "b_tail", "b_vel", "b_listen", "b_mute"]
@@ -593,13 +616,14 @@ def build_layout():
     bank_card(L, R1, "BLOOM", bloom)
     bank_card(L, R2, "TABLE, FILTER AND TAIL", bloom2)
 
-    # BLOOM OSC: Table B and how it couples to the first table, the scan's smear and rate, unison; then the voice.
-    osc = ["b_tableb", "b_boct", "b_couple", "b_camt", "b_smear", "b_swayrate", "b_unison", "b_detune"]
-    voice = ["b_breath", "b_pan", "b_age", "b_sway", "b_blend", "b_cutoff", "b_swell", "b_release"]
-    L.page("BLOOM OSC", osc + voice)
+    # BLOOM OSC: Table B and how it couples to the first table and blends with it, unison, the breath noise; then
+    # the sway (depth, free rate, free or on the bars) and the voice's place in its life and in the stereo field.
+    osc = ["b_tableb", "b_boct", "b_couple", "b_camt", "b_blend", "b_unison", "b_detune", "b_breath"]
+    sway, voice = ["b_sway", "b_swayrate", "b_swaysync", "b_swaydiv"], ["b_age", "b_smear", "b_pan", "b_width"]
+    L.page("BLOOM OSC", osc + sway + voice)
     L.header()
     bank_card(L, R1, "OSCILLATORS", osc)
-    bank_card(L, R2, "VOICE", voice)
+    bank_halves(L, R2, ("SWAY", sway), ("VOICE", voice))
 
     # SPACE: the reverb; then its tail (Freeze, Shimmer, Rise) and the levels into and out of it.
     L.group("SPACE")

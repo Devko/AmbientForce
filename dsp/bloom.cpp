@@ -464,6 +464,7 @@ void Bloom::begin(Voice& v) {
 
 void Bloom::control(int m) {
     const float dt = static_cast<float>(m) * (1.0f / kRate);
+    clock_.advance(m);   // a synced sway reads it at this step's end
     lv_ = lvT_ + (lv_ - lvT_) * exp2Fast(-static_cast<float>(m) * kLog2e / (kLevelS * kRate));
     if (std::fabs(lv_ - lvT_) < 1e-5f) lv_ = lvT_;
     const float sens = p_.velSens;
@@ -557,7 +558,7 @@ void Bloom::control(int m) {
             v.restLeft = 0;
             v.retrig = false;   // a note waiting to swell again here now starts afresh
         }
-        v.pos = v.scan.step(p_.pos, dt);
+        v.pos = v.scan.step(p_.pos, dt, &clock_);
     }
     panDirty_ = false;
 }

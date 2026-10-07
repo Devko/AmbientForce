@@ -44,7 +44,10 @@
 //   across the step instead, evenly in octaves, the coefficients worked out for every sample: an
 //   opening from 40 Hz to 16 kHz in one step would otherwise let the drone's top in at once.
 // - Breath: a sine LFO at breathHz moves the level by +-3 dB and the cutoff by +-1 octave, both
-//   times breath.
+//   times breath. Synced (breathBeats > 0) it breathes once every breathBeats quarter notes on
+//   the stratum's BeatClock instead, at its top on each division's downbeat: on the bar while MPC
+//   plays, at the tempo while it is stopped (setTransport). The sway syncs the same way (LifePos
+//   swayBeats).
 // - Width: partial i is panned to width * kPan[i], equal power (unity in the middle, as
 //   PolyForce pans): Sub in the middle, Root and Octave to the left, Fifth and Color to the right.
 // - A new table (another one chosen, or the slot's table published over the sine it played
@@ -107,7 +110,8 @@ struct GroundPatch {
     int registerOct = 2;            // the root's octave: 1 (C1..B1), 2 (C2..), 3 (C3..)
     float body = 0.0f;              // 0: off; 0..1/3 fades in an "a" vowel; then a -> o -> u
     float breath = 0.3f;            // 0..1: a slow swell of level and brightness
-    float breathHz = 0.07f;         // 0..5
+    float breathHz = 0.07f;         // 0..10, free
+    float breathBeats = 0.0f;       // synced: one breath in quarter notes (kBarDivBeats); 0: free, at breathHz
     float width = 0.5f;             // 0..1: the partials spread across the stereo field
 };
 
@@ -134,6 +138,9 @@ public:
     void setTarget(int rootNote);
     // Silent, no target, every phase back to where the seed puts it. The patch stays.
     void reset();
+    // MPC's tempo and, while it plays (locked), its position at the next render's first sample: the
+    // synced Breath's and sway's clock. Not locked, the clock runs on at the tempo.
+    void setTransport(double bpm, double beats, bool locked) { clock_.set(bpm, beats, locked); }
     // Adds into outL/outR, and adds the send into sendL/sendR at `spaceSend` (a gain, 0..1). n <= 128
     // (any n works; it is cut into control steps). Off: returns at once. It may be skipped while
     // !audible() (see Mute above).
@@ -183,7 +190,7 @@ private:
     int table_ = TB_CELLO_TASTO;
     LifePos pos_{};
     float level_ = 0.7f * 0.7f, cutoff_ = 2500.0f, beat_ = 0.3f, gravity_ = 6.0f, fade_ = 4.0f;
-    float body_ = 0.0f, breath_ = 0.3f, breathHz_ = 0.07f;
+    float body_ = 0.0f, breath_ = 0.3f, breathHz_ = 0.07f, breathBeats_ = 0.0f;
     int wantRegister_ = 2;               // the Register asked for; register_ follows it (a dip)
     float ratio_[PT_COUNT] = {};         // each partial's frequency over the root's
     float gainL_[PT_COUNT] = {}, gainR_[PT_COUNT] = {};   // level times pan, where set() aims them
@@ -212,6 +219,7 @@ private:
     float fadeDb_ = -60.0f;
     float dip_ = 1.0f;                   // a Register change's gain: 1 none, 0 the bottom
     double breathPhase_ = 0.0;           // cycles, 0..1
+    BeatClock clock_;                    // the synced cycles' beats (setTransport)
     float gain_ = 0.0f, send_ = 0.0f;    // the output's gain and the send's, as the last step ended
     float wet_ = 0.0f;                   // Body's share (0..1) as the last step ended
     float toneHz_ = -1.0f;               // the cutoff toneUpdate_ was worked out for

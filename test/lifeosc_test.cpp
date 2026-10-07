@@ -350,6 +350,30 @@ void testSway() {
     CHECK(same);
     a.reset(0.25f);
     CHECK(std::fabs(a.step(af::LifePos{0.5f, 1.0f, 0.0f, 0.0f}, 0.0f) - 0.75f) < 1e-4f);   // a quarter cycle in: the top
+
+    // Synced (swayBeats, on a BeatClock): the sway is the clock's, one cycle per 4 beats, at Age on the downbeat and
+    // rising; two scans of other seeds sway together, and a jump of the clock takes them both with it.
+    af::BeatClock clock;
+    const af::LifePos bar{0.5f, 1.0f, 0.05f, 0.0f, 4.0f};
+    bool onBar = true, together = true;
+    for (double beat : {0.0, 1.0, 2.0, 3.0, 4.0, 101.0, 102.5}) {
+        clock.set(120.0, beat, true);
+        const float v = a.step(bar, kStepS, &clock);
+        const float want = 0.5f + 0.25f * static_cast<float>(std::sin(2.0 * 3.14159265358979 * beat / 4.0));
+        onBar = onBar && std::fabs(v - want) < 1e-3f;
+        together = together && b.step(bar, kStepS, &clock) == v;
+    }
+    CHECK(onBar && together);
+    // Not locked (MPC stopped), the clock runs on at the tempo: at 120 BPM a 4-beat sway takes 2 s.
+    clock.set(120.0, 0.0, true);
+    float first = a.step(bar, 0.0f, &clock), back = -1.0f;
+    for (int i = 0; i < static_cast<int>(2.0f / kStepS); ++i) {
+        clock.set(120.0, 1e9, false);   // the transport says nothing it may lock to
+        clock.advance(32);
+        back = a.step(bar, kStepS, &clock);
+    }
+    std::printf("  synced to 1 bar: %.4f at the downbeat, %.4f two seconds on, stopped\n", first, back);
+    CHECK(std::fabs(first - 0.5f) < 1e-4f && std::fabs(back - first) < 2e-3f);
 }
 
 // Check 5: Smear at 1 wanders within Age +- 0.03, smoothly, changing direction every 50-200 ms

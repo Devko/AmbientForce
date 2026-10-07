@@ -536,6 +536,103 @@ void testMidiMapping() {
     CHECK(maxDiff(x, y) == 0.0 && rms(x.L) > 0.0);
 }
 
+// Ground's Breath synced to 1 Bar, through the plugin with MPC playing at 120 BPM (a bar is 2 s): at its top once a
+// bar, on the downbeat, and on the bar again after the transport jumps; with MPC stopped, on at the tempo. Free
+// breath and sway don't listen to the transport at all.
+void testSync() {
+    std::printf("== synced cycles: Breath on the bar\n");
+    constexpr long kBar = 88200;   // samples: 4 beats at 120 BPM
+    // The RMS of both channels over 100 ms around sample `at` of the last run, in dB.
+    const auto level = [](const Host& h, long at) {
+        double e = 0.0;
+        int n = 0;
+        for (long i = std::max(0L, at - 2205); i < std::min(static_cast<long>(h.L.size()), at + 2205); ++i, ++n)
+            e += static_cast<double>(h.L[static_cast<size_t>(i)]) * h.L[static_cast<size_t>(i)] +
+                 static_cast<double>(h.R[static_cast<size_t>(i)]) * h.R[static_cast<size_t>(i)];
+        return n ? 10.0 * std::log10(e / (2.0 * n) + 1e-20) : -200.0;
+    };
+    // Where, within a bar, the breath tops over `bars` bars of the last run from sample `from`: the phase of the
+    // level's swing at the bar's rate (a sine fitted to it every 10 ms), as samples after `from` (0..kBar).
+    const auto top = [&level](const Host& h, long from, int bars) {
+        double c = 0.0, s = 0.0;
+        for (long i = 0; i < bars * kBar; i += 441) {
+            const double l = level(h, from + i), w = 2.0 * M_PI * static_cast<double>(i) / kBar;
+            c += l * std::cos(w);
+            s += l * std::sin(w);
+        }
+        double t = std::atan2(s, c) / (2.0 * M_PI);
+        if (t < 0.0) t += 1.0;
+        return static_cast<long>(std::lround(t * kBar)) % kBar;
+    };
+    // How far apart two places in the bar are, either way round, in ms.
+    const auto apart = [](long a, long b) {
+        long d = ((a - b) % kBar + kBar) % kBar;
+        if (d > kBar / 2) d = kBar - d;
+        return static_cast<double>(d) / 44.1;
+    };
+    Host h;
+    // The drone alone and steady (Bloom muted, no sway, no beating, no reverb), breathing fully, once a bar.
+    h.set(af::P_B_MUTE, 1.0f);
+    h.set(af::P_G_SWAY, 0.0f);
+    h.set(af::P_G_BEAT, 0.0f);
+    h.set(af::P_S_RETURN, 0.0f);
+    h.set(af::P_G_FADE, 0.05f);
+    h.set(af::P_G_BREATH, 1.0f);
+    h.set(af::P_G_BREATHSYNC, 1.0f);
+    h.set(af::P_G_BREATHDIV, 2.0f);   // 1 Bar
+    h.set(af::P_H_ONSTOP, static_cast<float>(af::OS_KEEP));
+    CHECK(h.display(af::P_G_BREATHDIV) == "1 Bar" && h.display(af::P_G_BREATHSYNC) == "Sync");
+    h.log.time.flags |= vst::kVstTransportPlaying;
+    h.on(48);
+    h.run(kBlocksPerSec);   // in, at beat 2
+    // Four bars from the downbeat of beat 4: the top on every downbeat, the bottom half a bar on, 4 dB under or more.
+    const double startBeat = h.log.time.ppqPos;
+    h.run(static_cast<int>(10.5 * 44100.0 / kBlock));
+    const long downbeat = std::lround((4.0 - startBeat) * 0.5 * 44100.0);
+    double depth = 99.0;
+    for (int k = 0; k < 4; ++k)
+        depth = std::min(depth, level(h, downbeat + k * kBar) - level(h, downbeat + k * kBar + kBar / 2));
+    const double off = apart(top(h, downbeat, 4), 0);
+    std::printf("  1 bar at 120 BPM: the top %.0f ms from the downbeat, %.1f dB over the bar's middle\n", off, depth);
+    CHECK(off <= 30.0 && depth >= 4.0 && h.finite);
+    // MPC jumps to beat 101, a beat past a downbeat: the tops land on beats 104, 108, ..., 1.5 s on and every 2 s.
+    h.log.time.ppqPos = 101.0;
+    h.run(static_cast<int>(8.5 * 44100.0 / kBlock));
+    const double jumped = apart(top(h, 0, 4), 3 * kBar / 4);
+    std::printf("  after a jump to beat 101: the top %.0f ms from beat 104's place in the bar\n", jumped);
+    CHECK(jumped <= 30.0);
+    // Stopped (On Stop: Keep), it breathes on at the tempo from where it was: the tops stay on the same grid.
+    const double stopBeat = h.log.time.ppqPos;
+    h.log.time.flags &= ~vst::kVstTransportPlaying;
+    h.run(static_cast<int>(8.5 * 44100.0 / kBlock));
+    const long next = std::lround(std::fmod(4.0 - std::fmod(stopBeat, 4.0), 4.0) * 0.5 * 44100.0);
+    const double stopped = apart(top(h, 0, 4), next);
+    std::printf("  stopped: the top %.0f ms from where the bar would be\n", stopped);
+    CHECK(stopped <= 30.0 && h.finite && rms(h.L) > 0.001);
+
+    // Free (the default): the breath and both sways ignore the transport, sample for sample, whatever its tempo and
+    // position, playing or not.
+    Host x, y;
+    x.log.time.flags |= vst::kVstTransportPlaying;
+    y.log.time.flags |= vst::kVstTransportPlaying;
+    y.log.time.tempo = 87.0;
+    y.log.time.ppqPos = 13.37;
+    for (Host* k : {&x, &y}) {
+        k->set(af::P_G_BREATH, 1.0f);
+        k->set(af::P_G_BREATHRATE, 0.4f);
+        k->set(af::P_H_ONSTOP, static_cast<float>(af::OS_KEEP));
+        k->on(48);
+        k->on(55);
+    }
+    x.run(2 * kBlocksPerSec);
+    y.run(2 * kBlocksPerSec);
+    CHECK(maxDiff(x, y) == 0.0 && rms(x.L) > 0.001);
+    x.log.time.flags &= ~vst::kVstTransportPlaying;
+    x.run(kBlocksPerSec);
+    y.run(kBlocksPerSec);
+    CHECK(maxDiff(x, y) == 0.0);
+}
+
 void testStress() {
     std::printf("== stress: floods, extremes, random values\n");
     Host h;
@@ -612,6 +709,7 @@ int main() {
     testStatusLine();
     testProcessLegacy();
     testMidiMapping();
+    testSync();
     paramsTests();
     presetTests();
     testStress();

@@ -43,6 +43,8 @@ constexpr OptionList kOptionLists[] = {
     list(P_B_TABLE, kTableNames), list(P_B_TABLEB, kTableNames), list(P_B_COUPLE, kCoupleNames),
     list(P_B_UNISON, kUnisonNames), list(P_B_TAIL, kTailNames),
     list(P_S_MODE, Reverb::kModeNames), list(P_S_FREEZE, kOnOff), list(P_S_SHINT, Reverb::kIntervalNames),
+    list(P_G_BREATHSYNC, kSyncNames), list(P_G_BREATHDIV, kBarDivNames), list(P_G_SWAYSYNC, kSyncNames),
+    list(P_G_SWAYDIV, kBarDivNames), list(P_B_SWAYSYNC, kSyncNames), list(P_B_SWAYDIV, kBarDivNames),
 };
 
 constexpr bool sameText(const char* a, const char* b) {
@@ -223,7 +225,7 @@ constexpr float kHorizonToneOct = -0.5f;    // both Tones and Space Damp, x 2^(-
 constexpr float kHorizonRiseUp = 0.6f;      // Rise toward 1 by 60% far, toward 0 near
 // Motion, still (-1) to moving (+1).
 constexpr float kMotionSwayUp = 0.8f;       // both Sways toward 1 by 80% (toward 0 still)
-constexpr float kMotionRateOct = 2.0f;      // both Rates x 2^(2 m): a quarter .. 4x
+constexpr float kMotionRateOct = 2.0f;      // both Rates and Breath Rate x 2^(2 m): a quarter .. 4x (free only)
 constexpr float kMotionSmearUp = 0.6f;      // Bloom Smear toward 1 by 60%
 constexpr float kMotionBreathUp = 0.7f;     // Ground Breath toward 1 by 70%
 constexpr float kMotionBeatOct = 1.5f;      // Ground Beat x 2^(1.5 m) moving (capped at 3 Hz), to 0 still
@@ -271,6 +273,7 @@ void applyMacros(Patch& p, const Macros& m) {
         b.pos.sway = toward(b.pos.sway, x, 0.0f, 1.0f, 1.0f, kMotionSwayUp);
         g.pos.swayHz = clampTo(P_G_SWAYRATE, octaves(g.pos.swayHz, kMotionRateOct * x));
         b.pos.swayHz = clampTo(P_B_SWAYRATE, octaves(b.pos.swayHz, kMotionRateOct * x));
+        g.breathHz = clampTo(P_G_BREATHRATE, octaves(g.breathHz, kMotionRateOct * x));   // synced cycles keep their bars
         b.pos.smear = toward(b.pos.smear, x, 0.0f, 1.0f, 1.0f, kMotionSmearUp);
         g.breath = toward(g.breath, x, 0.0f, 1.0f, 1.0f, kMotionBreathUp);
         g.beatHz = fadeOrScale(g.beatHz, x, kMotionBeatOct, PARAM_SPECS[P_G_BEAT].hi);
@@ -304,6 +307,8 @@ Patch patchFromKnobs(const float* norm) {
     auto V = [norm](int id) { return paramValue(id, norm[id]); };
     auto I = [&V](int id) { return static_cast<int>(V(id)); };   // options and whole numbers: rounded already
     auto On = [&I](int id) { return I(id) != 0; };
+    // A synced cycle's length in quarter notes, 0 when it runs free (Free/Sync and its division).
+    auto synced = [&On, &I](int sync, int div) { return On(sync) ? kBarDivBeats[I(div)] : 0.0f; };
     Patch p;
     p.volumeDb = V(P_VOLUME);
     p.tilt = V(P_O_TILT);
@@ -342,6 +347,9 @@ Patch patchFromKnobs(const float* norm) {
     g.registerOct = I(P_G_REG) + 1;   // Low, Mid, High: C1, C2, C3
     g.body = V(P_G_BODY);
     g.breath = V(P_G_BREATH);
+    g.breathHz = V(P_G_BREATHRATE);
+    g.breathBeats = synced(P_G_BREATHSYNC, P_G_BREATHDIV);
+    g.pos.swayBeats = synced(P_G_SWAYSYNC, P_G_SWAYDIV);
     g.width = V(P_G_WIDTH);
     p.groundSpace = taper(V(P_G_SPACE));
     p.groundPan = V(P_G_PAN);
@@ -358,6 +366,7 @@ Patch patchFromKnobs(const float* norm) {
     b.pos.sway = V(P_B_SWAY);
     b.pos.swayHz = V(P_B_SWAYRATE);
     b.pos.smear = V(P_B_SMEAR);
+    b.pos.swayBeats = synced(P_B_SWAYSYNC, P_B_SWAYDIV);
     b.tableB = I(P_B_TABLEB);
     b.bOctave = I(P_B_BOCT);
     b.blend = V(P_B_BLEND);

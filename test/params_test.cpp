@@ -46,6 +46,8 @@ const struct {
     {"s_shint", "+12"}, {"s_rise", "20%"}, {"s_return", "80%"},
     {"o_tilt", "0%"},
     {"m_horizon", "0%"}, {"m_motion", "0%"}, {"m_glow", "0%"}, {"m_density", "0%"},
+    {"g_breathrate", "14 s"}, {"g_breathsync", "Free"}, {"g_breathdiv", "8 Bars"}, {"g_swaysync", "Free"},
+    {"g_swaydiv", "8 Bars"}, {"b_swaysync", "Free"}, {"b_swaydiv", "8 Bars"},
 };
 
 void testDefaults() {
@@ -111,7 +113,7 @@ void testPopups() {
         CHECK(of >= 0 && af::PARAM_INFO[of].kind == af::Kind::Synth && af::PARAM_INFO[of].nopts > 2 &&
               std::string(af::PARAM_INFO[i].name) == std::string(af::PARAM_INFO[of].name) + " List");
     }
-    CHECK(popups == 8);   // Key, Scale, Chord, Memory, the three tables, Space Type
+    CHECK(popups == 11);   // Key, Scale, Chord, Memory, the three tables, Space Type, the three Divs
 }
 
 bool near(float a, float b) { return std::fabs(a - b) <= 1e-4f * std::max(1.0f, std::fabs(b)); }
@@ -137,6 +139,10 @@ void testPatchMap() {
           near(g.color, dg.color) && g.colorInterval == dg.colorInterval && g.registerOct == dg.registerOct &&
           near(g.body, dg.body) && near(g.breath, dg.breath) && near(g.breathHz, dg.breathHz) &&
           near(g.width, dg.width) && near(p.groundSpace, d.groundSpace) && near(p.groundPan, d.groundPan));
+    // Free, as Ground always ran: the Breath Rate's default is the knob's middle and reads back as Ground's own 0.07 Hz
+    // bit for bit, so no preset that leaves it breathes any other way; nothing synced.
+    CHECK(af::PARAM_INFO[af::P_G_BREATHRATE].def == 0.5f && g.breathHz == dg.breathHz && g.breathHz == 0.07f &&
+          g.breathBeats == 0.0f && dg.breathBeats == 0.0f && g.pos.swayBeats == 0.0f && p.bloom.pos.swayBeats == 0.0f);
     const af::BloomPatch &b = p.bloom, &db = d.bloom;
     CHECK(b.listen == db.listen && b.mute == db.mute && near(b.level, db.level) && near(b.cutoffHz, db.cutoffHz) &&
           near(b.reso, db.reso) && b.filterMode == db.filterMode && b.table == db.table && near(b.pos.age, db.pos.age) &&
@@ -201,9 +207,31 @@ void testPatchMap() {
     const int bars[] = {0, 1, 2, 4, 8, 16, 32, 64, -1};
     bool memory = af::PARAM_INFO[af::P_H_MEMORY].nopts == 9;
     for (int k = 0; memory && k < 9; ++k) memory = with(af::P_H_MEMORY, static_cast<float>(k)).harmony.memoryBars == bars[k];
+    // Free / Sync and the divisions: free is 0, synced the division's quarter notes (1/4 = 1 .. 64 bars = 256).
+    const struct {
+        int sync, div;
+        float (*field)(const af::Patch&);
+    } synced[] = {
+        {af::P_G_BREATHSYNC, af::P_G_BREATHDIV, [](const af::Patch& q) { return q.ground.breathBeats; }},
+        {af::P_G_SWAYSYNC, af::P_G_SWAYDIV, [](const af::Patch& q) { return q.ground.pos.swayBeats; }},
+        {af::P_B_SWAYSYNC, af::P_B_SWAYDIV, [](const af::Patch& q) { return q.bloom.pos.swayBeats; }},
+    };
+    bool divs = af::kNumBarDivs == 9 && af::kBarDivBeats[0] == 1.0f && af::kBarDivBeats[2] == 4.0f && af::kBarDivBeats[8] == 256.0f;
+    for (const auto& c : synced) {
+        divs = divs && af::PARAM_INFO[c.div].nopts == af::kNumBarDivs;
+        for (int k = 0; divs && k < af::kNumBarDivs; ++k) {
+            float n[af::P_COUNT];
+            std::copy(norm, norm + af::P_COUNT, n);
+            n[c.div] = af::paramNorm(c.div, static_cast<float>(k));
+            divs = divs && c.field(af::patchFromParams(n)) == 0.0f;   // Free: the division waits
+            n[c.sync] = 1.0f;
+            divs = divs && c.field(af::patchFromParams(n)) == af::kBarDivBeats[k];
+        }
+    }
+    CHECK(divs);
     int synthLists = 0;
     for (int i = 0; i < af::P_COUNT; ++i) synthLists += af::PARAM_INFO[i].kind == af::Kind::Synth && af::PARAM_INFO[i].nopts > 0;
-    CHECK(memory && synthLists == static_cast<int>(std::size(lists)) + 1);
+    CHECK(memory && synthLists == static_cast<int>(std::size(lists)) + 1 + 2 * static_cast<int>(std::size(synced)));
     // Whole numbers, the taper, the continuous values in their units.
     CHECK(with(af::P_B_BOCT, -2.0f).bloom.bOctave == -2 && with(af::P_B_BOCT, 1.0f).bloom.bOctave == 1);
     CHECK(near(with(af::P_G_LEVEL, 0.5f).ground.level, 0.25f) && with(af::P_B_LEVEL, 0.0f).bloom.level == 0.0f &&
@@ -261,11 +289,13 @@ std::vector<Field> fields(const af::Patch& p) {
         {"g.smear", g.pos.smear}, {"g.beatHz", g.beatHz}, {"g.gravityS", g.gravityS}, {"g.fadeS", g.fadeS},
         {"g.sub", g.sub}, {"g.root", g.root}, {"g.fifth", g.fifth}, {"g.octave", g.octave}, {"g.color", g.color},
         {"g.colorInterval", f(g.colorInterval)}, {"g.registerOct", f(g.registerOct)}, {"g.body", g.body},
-        {"g.breath", g.breath}, {"g.breathHz", g.breathHz}, {"g.width", g.width},
+        {"g.breath", g.breath}, {"g.breathHz", g.breathHz}, {"g.breathBeats", g.breathBeats},
+        {"g.swayBeats", g.pos.swayBeats}, {"g.width", g.width},
         {"groundSpace", p.groundSpace}, {"groundPan", p.groundPan},
         {"b.listen", f(b.listen)}, {"b.mute", f(b.mute)}, {"b.level", b.level}, {"b.cutoffHz", b.cutoffHz},
         {"b.reso", b.reso}, {"b.filterMode", f(b.filterMode)}, {"b.table", f(b.table)}, {"b.age", b.pos.age},
-        {"b.sway", b.pos.sway}, {"b.swayHz", b.pos.swayHz}, {"b.smear", b.pos.smear}, {"b.tableB", f(b.tableB)},
+        {"b.sway", b.pos.sway}, {"b.swayHz", b.pos.swayHz}, {"b.smear", b.pos.smear},
+        {"b.swayBeats", b.pos.swayBeats}, {"b.tableB", f(b.tableB)},
         {"b.bOctave", f(b.bOctave)}, {"b.blend", b.blend}, {"b.couple", f(b.couple)}, {"b.coupleAmt", b.coupleAmt},
         {"b.unison", f(b.unison)}, {"b.detuneCents", b.detuneCents}, {"b.swellS", b.swellS},
         {"b.releaseS", b.releaseS}, {"b.velSens", b.velSens}, {"b.breath", b.breath}, {"b.tail", f(b.tail)},
@@ -302,7 +332,7 @@ std::vector<MacroSpec> macroSpecs() {
                        {"rise", 1, 0, 1}}},
         {P_M_MOTION, {{"g.sway", 1, 0, 1}, {"b.sway", 1, 0, 1}, {"g.swayHz", 1, lo(P_G_SWAYRATE), hi(P_G_SWAYRATE)},
                       {"b.swayHz", 1, lo(P_B_SWAYRATE), hi(P_B_SWAYRATE)}, {"b.smear", 1, 0, 1}, {"g.breath", 1, 0, 1},
-                      {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}}},
+                      {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}, {"g.breathHz", 1, lo(P_G_BREATHRATE), hi(P_G_BREATHRATE)}}},
         {P_M_GLOW, {{"g.cutoffHz", 1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)}, {"b.cutoffHz", 1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)},
                     {"tilt", 1, lo(P_O_TILT), hi(P_O_TILT)}, {"r.dampHz", 1, lo(P_S_DAMP), hi(P_S_DAMP)},
                     {"r.shimmer", 1, 0, 1}, {"g.body", -1, 0, 1}, {"volumeDb", 1, lo(P_VOLUME), hi(P_VOLUME)}}},
@@ -324,6 +354,7 @@ void testMacros() {
     // bit, through patchFromParams as the audio thread builds it.
     std::vector<std::vector<float>> presets;   // each one's 0..1
     bool same = true;
+    int asBefore = 0;
     for (int k = 0; k < af::kNumFactoryPresets; ++k) {
         Host h;
         CHECK(h.load(af::kFactoryPresets[k].text) == 1);
@@ -331,6 +362,17 @@ void testMacros() {
         for (int i = 0; i < af::P_COUNT; ++i) norm[static_cast<size_t>(i)] = h.get(i);
         for (int id : {af::P_M_HORIZON, af::P_M_MOTION, af::P_M_GLOW, af::P_M_DENSITY})
             CHECK(af::paramValue(id, norm[static_cast<size_t>(id)]) == 0.0f);
+        // A preset that leaves Breath Rate and the Syncs alone breathes and sways as it always did: Ground's own
+        // 0.07 Hz, bit for bit, nothing on the bars.
+        const std::string text = af::kFactoryPresets[k].text;
+        if (text.find("g_breathrate=") == std::string::npos && text.find("sync=") == std::string::npos) {
+            const af::Patch q = af::patchFromKnobs(norm.data());
+            const bool free = sameBits(q.ground.breathHz, af::GroundPatch{}.breathHz) && q.ground.breathBeats == 0.0f &&
+                              q.ground.pos.swayBeats == 0.0f && q.bloom.pos.swayBeats == 0.0f;
+            if (!free) std::printf("  %s: not as it breathed before Breath Rate\n", af::kFactoryPresets[k].name);
+            CHECK(free);
+            ++asBefore;
+        }
         const auto a = fields(af::patchFromParams(norm.data())), b = fields(af::patchFromKnobs(norm.data()));
         for (size_t f = 0; f < a.size(); ++f)
             if (!sameBits(a[f].v, b[f].v)) {
@@ -339,7 +381,7 @@ void testMacros() {
             }
         presets.push_back(std::move(norm));
     }
-    CHECK(same && presets.size() == static_cast<size_t>(af::kNumFactoryPresets));
+    CHECK(same && presets.size() == static_cast<size_t>(af::kNumFactoryPresets) && asBefore >= af::kNumFactoryPresets - 2);
 
     // Each macro swept from -1 to +1 on every factory preset: its own fields each one way, inside their range;
     // nothing else moves (bit for bit); and each field it owns moves on some preset.

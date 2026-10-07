@@ -167,6 +167,10 @@ public:
     // release, the new ones start (with the strum).
     void moveTo(const Chord& c, float vel);
     void reset();                         // every voice free and silent at once; the seed's numbers again
+    // MPC's tempo and, while it plays (locked), its position at the next render's first sample: a
+    // synced sway's clock (LifePos swayBeats), on which every voice sways together. Not locked, the
+    // clock runs on at the tempo.
+    void setTransport(double bpm, double beats, bool locked) { clock_.set(bpm, beats, locked); }
     // Adds the dry into outL/outR and the send, at spaceSend 0..1 (gliding across the call from the
     // last call's), into sendL/sendR. n <= kMaxBlock (more is rendered kMaxBlock at a time).
     void render(const TableSet& tables, float* outL, float* outR, float* sendL, float* sendR,
@@ -282,6 +286,7 @@ private:
     uint32_t seed_ = 1;
     uint32_t rng_ = 1;                    // the breath's white noise
     uint64_t played_ = 0;                 // notes played so far: each voice's age
+    BeatClock clock_;                     // a synced sway's beats (setTransport)
     float attackRate_ = 0.0f;             // the attack's progress per sample
     float releaseLog2_ = 0.0f;            // log2 of the release's factor per sample
     float boost_ = 0.0f;                  // the handoff's B for this Release (0: not worked out yet)

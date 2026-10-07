@@ -85,7 +85,8 @@ void Ground::set(const GroundPatch& p, const HarmonyPatch& h) {
     fade_ = clampParam(p.fadeS, 0.05f, 30.0f, 4.0f);
     body_ = lifeosc::unit(p.body);
     breath_ = lifeosc::unit(p.breath);
-    breathHz_ = clampParam(p.breathHz, 0.0f, 5.0f, 0.0f);
+    breathHz_ = clampParam(p.breathHz, 0.0f, 10.0f, 0.0f);
+    breathBeats_ = clampParam(p.breathBeats, 0.0f, 1024.0f, 0.0f);
     wantRegister_ = std::min(std::max(p.registerOct, 1), 3);
     if (!sounding_) register_ = wantRegister_;   // nothing to dip: the next start uses it
 
@@ -238,9 +239,15 @@ Ground::Step Ground::control(float spaceSend, int n) {
         s.ending = fadeDb_ <= kFloorDb;
     }
 
-    // Breath: +-3 dB and +-1 octave of cutoff at 1. The Tone's coefficients for this step.
-    breathPhase_ += static_cast<double>(breathHz_ * dt);
-    breathPhase_ -= floorFast(breathPhase_);
+    // Breath: +-3 dB and +-1 octave of cutoff at 1. The Tone's coefficients for this step. Synced:
+    // the clock's phase at this step's end, a quarter cycle on (the top on the downbeat).
+    clock_.advance(n);
+    if (breathBeats_ > 0.0f) {
+        breathPhase_ = clock_.phase(static_cast<double>(breathBeats_), 0.25);
+    } else {
+        breathPhase_ += static_cast<double>(breathHz_ * dt);
+        breathPhase_ -= floorFast(breathPhase_);
+    }
     const float b = breath_ > 0.0f ? breath_ * sinCycle(static_cast<float>(breathPhase_)) : 0.0f;
     const float cutoff = clampf(cutoff_ * exp2Fast(kBreathOct * b), 20.0f, 0.45f * kRate);
     if (cutoff != toneHz_) {
@@ -255,7 +262,7 @@ Ground::Step Ground::control(float spaceSend, int n) {
         toneUpdate_ = SvfUpdate::of(splat2(g), splat2(kToneK));
     }
 
-    s.pos = scan_.step(pos_, dt);
+    s.pos = scan_.step(pos_, dt, &clock_);
 
     // The output's gain and the send's, ramped across the step from where the last one ended.
     s.g0 = gain_;
