@@ -174,6 +174,7 @@ public:
         uint64_t samples = 0;         // rendered so far
         float limiterGain = 1.0f;
         bool limiting = false;        // the last piece ran the limiter's gain computer
+        bool gliding = false;         // the volume, the return or a pan is still on its way
         float spaceDecayS = 0.0f;     // the decay Space was given (the tail's hold applied)
     };
 

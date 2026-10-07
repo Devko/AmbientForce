@@ -3,6 +3,7 @@
 #include "trace.h"
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <system_error>
@@ -61,16 +62,28 @@ void run(Builder* b) {
     // seconds at every load of the plugin (4-5 s under emulation), on the cores the UI runs on.
     // MPC's audio workers are SCHED_FIFO on cores of their own anyway. If it fails: normal priority.
     (void)setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);
+    // Each build's time goes to the trace (this thread may write it; Phase 0 times them on the device).
+    using Clock = std::chrono::steady_clock;
+    const auto ms = [](Clock::time_point a) { return std::chrono::duration<double, std::milli>(Clock::now() - a).count(); };
+    const Clock::time_point all = Clock::now();
+    int built = 0;
     TableSet& set = sharedTables();
     for (int id = 0; id < TB_COUNT && !b->stop.load(std::memory_order_relaxed); ++id) {
         if (set.t[id].load(std::memory_order_acquire)) continue;
         try {
+            const Clock::time_point t0 = Clock::now();
             std::unique_ptr<Wavetable> t(new Wavetable);
-            if (buildTable(id, *t, &b->stop)) set.t[id].store(t.release(), std::memory_order_release);
+            if (buildTable(id, *t, &b->stop)) {
+                set.t[id].store(t.release(), std::memory_order_release);
+                ++built;
+                AF_TRACE_QUIETLY("tables: %s built in %.0f ms", tableName(id), ms(t0));
+            }
         } catch (...) {
             AF_TRACE_QUIETLY("tables: could not build %s, its slots play the sine", tableName(id));
         }
     }
+    AF_TRACE_QUIETLY("tables: %d built in %.2f s%s", built, ms(all) * 1e-3,
+                     b->stop.load(std::memory_order_relaxed) ? ", stopped before the end" : "");
 }
 
 // With b.mtx held. Never throws.

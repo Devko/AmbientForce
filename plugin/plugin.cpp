@@ -87,11 +87,50 @@ struct RawMidi {
 // hasn't said). A lock here would be one on the audio thread.
 static_assert(std::atomic<long long>::is_always_lock_free, "the suspend times need lock-free 64-bit atomics");
 
+// The trace (plugin/trace.h) is for Phase 0's questions: what MPC sends around Stop, and what MIDI
+// reaches the plugin. The audio thread (processReplacing, and effProcessEvents, which MPC may call
+// there) never writes it: file I/O and a lock. It leaves notes in lock-free slots, and the host's
+// threads trace them at their next call (hostTrace(): a suspend or a resume, a parameter set, a
+// display read).
+
+// What the audio thread made of the last suspend: two numbers under a sequence lock.
+struct ResumeNote {
+    std::atomic<uint32_t> seq{0};        // odd while the audio thread writes; +2 a note
+    std::atomic<long long> awayMs{0};    // from the suspend to the resume
+    std::atomic<bool> told{false};       // the host said it resumed (else: the first block after)
+    std::atomic<uint32_t> traced{0};     // the seq the host's side has traced
+};
+
+// The MIDI events that came in while the trace is on, as they came (channel and all): a ring with
+// one writer (the audio thread) and one reader (a host thread at a time). Full, an event is dropped
+// and counted.
+struct MidiLog {
+    static constexpr uint32_t kSize = 256;   // a power of two: the counts wrap through it evenly
+    RawMidi ev[kSize] = {};
+    std::atomic<uint32_t> head{0}, tail{0};   // events written, events read (both wrapping)
+    std::atomic<uint32_t> dropped{0};
+    std::atomic<bool> draining{false};        // a host thread is reading
+
+    void push(const RawMidi& m) {
+        const uint32_t h = head.load(std::memory_order_relaxed);
+        if (h - tail.load(std::memory_order_acquire) >= kSize) {
+            dropped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        ev[h % kSize] = m;
+        head.store(h + 1, std::memory_order_release);
+    }
+};
+
 struct Plugin {
     AEffect             fx;          // must stay the first member: MPC hands us &fx back
     audioMasterCallback master = nullptr;
     Surface             surface;
     std::atomic<long long> suspendMs{-1}, resumeMs{-1};
+    // The trace's notes (above), and whether it is on, as the host's threads last found it.
+    ResumeNote          resumeNote;
+    MidiLog             midiLog;
+    std::atomic<bool>   tracingOn{false};
     af::Engine          engine{af::sharedTables()};
     std::string         chunk;       // effGetChunk buffer: must outlive the call
 
@@ -113,12 +152,79 @@ struct Plugin {
 
 Plugin* self(AEffect* e) { return static_cast<Plugin*>(e->object); }
 
+// The audio thread's note of a resume (runBlock).
+void noteResume(Plugin* p, long long awayMs, bool told) {
+    ResumeNote& n = p->resumeNote;
+    const uint32_t s = n.seq.load(std::memory_order_relaxed);
+    n.seq.store(s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    n.awayMs.store(awayMs, std::memory_order_relaxed);
+    n.told.store(told, std::memory_order_relaxed);
+    n.seq.store(s + 2, std::memory_order_release);
+}
+
+// One MIDI event as the trace reads it: "midi ch 2 note-on 60 vel 100 @12" (@: its sample in the block).
+void traceMidi(const void* fx, const RawMidi& m) {
+    const int d1 = m.d1, d2 = m.d2;
+    char what[48];
+    switch (m.status & 0xF0) {
+        case 0x80: std::snprintf(what, sizeof what, "note-off %d vel %d", d1, d2); break;
+        case 0x90: std::snprintf(what, sizeof what, "note-on %d vel %d", d1, d2); break;
+        case 0xA0: std::snprintf(what, sizeof what, "poly pressure %d %d", d1, d2); break;
+        case 0xB0: std::snprintf(what, sizeof what, "cc %d %d", d1, d2); break;
+        case 0xC0: std::snprintf(what, sizeof what, "program %d", d1); break;
+        case 0xD0: std::snprintf(what, sizeof what, "pressure %d", d1); break;
+        case 0xE0: std::snprintf(what, sizeof what, "pitch bend %d", ((d2 & 0x7F) << 7 | (d1 & 0x7F)) - 8192); break;
+        default:
+            trace("%p midi %02X %d %d @%d", fx, m.status, d1, d2, static_cast<int>(m.delta));
+            return;
+    }
+    trace("%p midi ch %d %s @%d", fx, (m.status & 0x0F) + 1, what, static_cast<int>(m.delta));
+}
+
+// A host thread's call: whether the trace is on (for the audio thread's next events), then what the
+// audio thread left since the last call.
+void hostTrace(Plugin* p) {
+    const bool on = tracing();
+    p->tracingOn.store(on, std::memory_order_relaxed);
+    const void* fx = &p->fx;
+
+    // MIDI: one reader at a time; another host thread at it now leaves it to that one.
+    MidiLog& log = p->midiLog;
+    if (!log.draining.exchange(true, std::memory_order_acquire)) {
+        const uint32_t h = log.head.load(std::memory_order_acquire);
+        for (uint32_t t = log.tail.load(std::memory_order_relaxed); t != h; ++t) {
+            const RawMidi m = log.ev[t % MidiLog::kSize];
+            log.tail.store(t + 1, std::memory_order_release);
+            if (on) traceMidi(fx, m);
+        }
+        const uint32_t lost = log.dropped.exchange(0, std::memory_order_relaxed);
+        if (on && lost) trace("%p midi: %u more events dropped (the trace's ring was full)", fx, lost);
+        log.draining.store(false, std::memory_order_release);
+    }
+
+    // The resume.
+    ResumeNote& n = p->resumeNote;
+    const uint32_t s = n.seq.load(std::memory_order_acquire);
+    uint32_t done = n.traced.load(std::memory_order_relaxed);
+    if (s == done || (s & 1u)) return;   // nothing new, or being written: the next call
+    const long long away = n.awayMs.load(std::memory_order_relaxed);
+    const bool told = n.told.load(std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (n.seq.load(std::memory_order_relaxed) != s) return;   // written over meanwhile: the next call
+    if (!n.traced.compare_exchange_strong(done, s)) return;   // another host thread has it
+    if (on)
+        trace("%p resumed %lld ms after the suspend (%s): %s", fx, away, told ? "the host said so" : "the first block after",
+              away >= 0 && static_cast<double>(away) * 1e-3 <= Engine::kStopWindowS ? "On Stop" : "reset");
+}
+
 // The host stopped processing (effMainsChanged 0, effStopProcess), or said it starts again
 // (effMainsChanged 1, effStartProcess). The first suspend counts from when it came; a suspend after
 // a resume the audio thread hasn't seen yet starts over (the latest one wins: a reset covers a
 // Stop). What MPC sends on Stop is a Phase 0 question: the trace shows it.
 // The suspend's length is read on the surface's clock (the tests' own, when they set one).
 void suspended(Plugin* p) {
+    hostTrace(p);
     const long long now = Surface::nowMs();
     if (tracing()) trace("%p suspend at %lld ms", static_cast<void*>(&p->fx), now);
     if (p->suspendMs.load() < 0 || p->resumeMs.load() >= 0) {
@@ -127,6 +233,7 @@ void suspended(Plugin* p) {
     }
 }
 void resumed(Plugin* p) {
+    hostTrace(p);
     const long long now = Surface::nowMs();
     if (tracing()) trace("%p resume at %lld ms", static_cast<void*>(&p->fx), now);
     if (p->suspendMs.load() >= 0 && p->resumeMs.load() < 0) p->resumeMs.store(now);
@@ -162,6 +269,7 @@ float getParameter(AEffect* e, int32_t i) {
 
 void setParameter(AEffect* e, int32_t i, float v) {
     try {
+        hostTrace(self(e));
         Surface& s = self(e)->surface;
         const bool traced = i >= 0 && i < P_COUNT && tracing();
         const float before = traced ? s.get(i) : 0.0f;   // what MPC last read back
@@ -243,13 +351,9 @@ void runBlock(Plugin* p, float* L, float* R, int n, const Transport& tr) {
         long long back = p->resumeMs.exchange(-1);
         const bool told = back >= 0;
         if (!told) back = Surface::nowMs();
-        const double awayS = static_cast<double>(back - went) * 1e-3;
-        // What MPC does around Stop, for Phase 0 (the trace is off unless asked for).
-        if (tracing())
-            trace("%p resumed %lld ms after the suspend (%s): %s", static_cast<void*>(&p->fx), back - went,
-                  told ? "the host said so" : "this block", awayS <= Engine::kStopWindowS ? "On Stop" : "reset");
+        noteResume(p, back - went, told);   // for the trace, written on a host thread
         p->engine.suspend();
-        p->engine.resume(awayS);
+        p->engine.resume(static_cast<double>(back - went) * 1e-3);
     }
     p->engine.setTransport(tr.bpm, tr.beats, tr.playing, tr.valid);
 
@@ -352,12 +456,19 @@ void process(AEffect* e, float** in, float** out, int32_t n) {
 // a flood of note-ons or controllers must not leave a note stuck by crowding out its note-off.
 constexpr int kEndReserve = 64;
 
+// Audio thread (MPC may send events there): no trace, no allocation; the trace's ring takes every
+// MIDI event, as it came, while the trace is on.
 void onMidi(Plugin* p, const VstEvents* evs) {
     if (!evs) return;
-    for (int32_t i = 0; i < evs->numEvents && p->nMidi < kMaxMidi; ++i) {
+    const bool logged = p->tracingOn.load(std::memory_order_relaxed);
+    for (int32_t i = 0; i < evs->numEvents; ++i) {
         const VstEvent* ev = evs->events[i];
         if (!ev || ev->type != vst::kVstMidiType) continue;
         const auto* me = reinterpret_cast<const VstMidiEvent*>(ev);
+        if (logged)
+            p->midiLog.push({me->deltaFrames, static_cast<uint8_t>(me->midiData[0]), static_cast<uint8_t>(me->midiData[1]),
+                             static_cast<uint8_t>(me->midiData[2])});
+        if (p->nMidi >= kMaxMidi) continue;
         const uint8_t st = static_cast<uint8_t>(me->midiData[0]);
         const uint8_t d1 = static_cast<uint8_t>(me->midiData[1] & 0x7F), d2 = static_cast<uint8_t>(me->midiData[2] & 0x7F);
         const int type = st & 0xF0;
@@ -384,6 +495,7 @@ intptr_t dispatch(Plugin* p, int32_t op, int32_t idx, intptr_t val, void* ptr) {
         case vst::effGetParamName: copyStr(ptr, validIdx ? PARAM_INFO[idx].name : "", kTextCap); return 0;
         case vst::effGetParamLabel: copyStr(ptr, "", 8); return 0;
         case vst::effGetParamDisplay:
+            hostTrace(p);
             if (!validIdx) copyStr(ptr, "", kTextCap);
             else if (idx == P_STATUS) copyStr(ptr, statusText(p), kTextCap);
             else copyStr(ptr, p->surface.display(idx), kTextCap);

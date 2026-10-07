@@ -83,12 +83,16 @@ void Engine::Glide::aim(int samples) {
     if (step == 0.0f) now = to;
 }
 
+// A step under half an ulp of `now` doesn't move it (a target change of a couple of hundred ulps
+// over 441 samples): there, as past the target, it lands.
 inline float Engine::Glide::next() {
     if (step != 0.0f) {
-        now += step;
-        if (step > 0.0f ? now >= to : now <= to) {
+        const float x = now + step;
+        if (x == now || (step > 0.0f ? x >= to : x <= to)) {
             now = to;
             step = 0.0f;
+        } else {
+            now = x;
         }
     }
     return now;
@@ -616,6 +620,7 @@ Engine::Info Engine::info() const {
     i.samples = samples_;
     i.limiterGain = 1.0f - limitD_;
     i.limiting = limiting_;
+    i.gliding = !(volume_.still() && ret_.still() && gPanL_.still() && gPanR_.still() && bPanL_.still() && bPanR_.still());
     i.spaceDecayS = spaceParams_.reverb.decayS;
     return i;
 }

@@ -4,12 +4,17 @@
 // params). Built with ASan/UBSan by `make test`, for the Force's CPU under qemu by `make test-arm`.
 #include "host.h"
 #include "../plugin/surface.h"
+#include "../plugin/trace.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace aft {
@@ -266,6 +271,60 @@ void testStop() {
     CHECK(s.run(kBlocksPerSec) > 0.0f && s.finite);
 }
 
+// The trace (Phase 0: what MPC does around Stop, what MIDI it sends): the audio thread only leaves
+// notes, and the lines are written at the host's next call, on its own thread.
+void testTrace() {
+    std::printf("== the trace: the resume and MIDI, written from the host's thread\n");
+    if (af::tracing()) {   // on already (a flag file of the developer's): its log is elsewhere
+        std::printf("  skipped: the trace is on already\n");
+        return;
+    }
+    const std::string dir = fixtureDir() + "/trace";
+    std::filesystem::create_directories(dir);
+    setenv("AF_TRACE_DIR", dir.c_str(), 1);
+    std::ofstream(dir + "/ambientforce.trace").put('\n');
+    const auto wait = [] { std::this_thread::sleep_for(std::chrono::milliseconds(1100)); };
+    wait();   // the trace looks for its flag file once a second
+    const auto log = [&dir] {
+        std::ifstream f(dir + "/ambientforce.log");
+        return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    };
+    Host h;
+    h.on(60);
+    h.run(10);
+    {
+        Turn t(100);
+        h.e->dispatcher(h.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
+        h.e->dispatcher(h.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);
+    }
+    h.run(1);   // the audio thread takes the resume
+    const std::string before = log();
+    h.display(af::P_STATUS);   // a host call
+    const std::string after = log();
+    CHECK(before.find("suspend at") != std::string::npos && before.find("resumed") == std::string::npos);
+    CHECK(after.find("resumed 100 ms after the suspend (the host said so): On Stop") != std::string::npos);
+    // MIDI as it came in (channel 2 here), traced at the host's next call, not from the block.
+    h.midi(0x91, 60, 100, 12);
+    h.midi(0xB1, 64, 127);
+    h.midi(0xE1, 0x00, 0x40);   // the bend's middle
+    h.run(1);
+    const std::string quiet = log();
+    h.display(af::P_STATUS);
+    const std::string traced = log();
+    CHECK(quiet.find("midi ch 2") == std::string::npos);
+    CHECK(traced.find("midi ch 2 note-on 60 vel 100 @12") != std::string::npos &&
+          traced.find("midi ch 2 cc 64 127 @0") != std::string::npos &&
+          traced.find("midi ch 2 pitch bend 0 @0") != std::string::npos);
+    // More than the ring holds between two host calls: the rest dropped and counted.
+    for (int i = 0; i < 300; ++i) h.off(60, i % kBlock);
+    h.run(1);
+    h.display(af::P_STATUS);
+    CHECK(log().find("midi: 44 more events dropped") != std::string::npos);
+    std::filesystem::remove(dir + "/ambientforce.trace");
+    unsetenv("AF_TRACE_DIR");
+    wait();   // off again for whatever comes next
+}
+
 void testProcessLegacy() {
     std::printf("== process() (accumulating)\n");
     Host a, b;
@@ -425,6 +484,7 @@ int main() {
     testGetters();
     testPlay();
     testStop();
+    testTrace();
     testProcessLegacy();
     testMidiMapping();
     paramsTests();

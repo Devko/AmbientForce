@@ -987,6 +987,18 @@ void testGlides() {
     const Out t = render(r, 0.05);
     CHECK(std::max(peak(t.L, 200, 221), peak(t.R, 200, 221)) > 0.0f &&
           std::max(peak(t.L, 485, t.L.size()), peak(t.R, 485, t.R.size())) == 0.0f);
+
+    // A change too small for its step a sample to move the gain (under half an ulp): it lands all
+    // the same. 0.0001 dB is about 100 ulps over 1, a step of a quarter ulp.
+    Engine v(sines());
+    Patch pv = bloomSine();
+    v.setPatch(pv);
+    v.noteOn(69, 127);
+    render(v, 0.2);
+    pv.volumeDb = 0.0001f;
+    v.setPatch(pv);
+    render(v, 0.05);
+    CHECK(!v.info().gliding);
 }
 
 // On Stop changed while a fade is under way: Keep turns it round, Cut resets; the transport
