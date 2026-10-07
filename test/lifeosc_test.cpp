@@ -18,20 +18,8 @@
 namespace aft {
 namespace {
 
-using cd = std::complex<double>;
 constexpr int kOscBlock = 128;   // MPC's block
 constexpr float kStepS = static_cast<float>(af::kChunk) / af::kRate;
-
-// The tables the checks play, each built once per run.
-const af::Wavetable& table(int id) {
-    static af::Wavetable t[af::TB_COUNT];
-    static bool built[af::TB_COUNT] = {};
-    if (!built[id]) {
-        CHECK(af::buildTable(id, t[id]));
-        built[id] = true;
-    }
-    return t[id];
-}
 
 // n samples of one oscillator (either read) at a fixed pitch and position, in blocks of `block`.
 template <class Osc>
@@ -41,79 +29,13 @@ Buf play(Osc& o, const af::Wavetable& t, float inc, float pos, int n, int block 
     return x;
 }
 
-// The test's own FFT (radix-2, forward).
-void fft(std::vector<cd>& a) {
-    const size_t n = a.size();
-    for (size_t i = 1, j = 0; i < n; ++i) {
-        size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        if (i < j) std::swap(a[i], a[j]);
-    }
-    std::vector<cd> w(n / 2);
-    for (size_t k = 0; k < n / 2; ++k) w[k] = std::polar(1.0, -2.0 * kPi * static_cast<double>(k) / static_cast<double>(n));
-    for (size_t len = 2; len <= n; len <<= 1)
-        for (size_t i = 0; i < n; i += len)
-            for (size_t k = 0; k < len / 2; ++k) {
-                const cd u = a[i + k], v = a[i + k + len / 2] * w[k * (n / len)];
-                a[i + k] = u + v;
-                a[i + k + len / 2] = u - v;
-            }
-}
-
-// A spectrum as each bin's sine amplitude (a sine of peak A on a bin reads A). Blackman-Harris:
-// its sidelobes are under -92 dB, so a strong partial's leakage can't fill a -90 dB measurement.
-struct Spectrum {
-    std::vector<double> amp;
-    double binHz = 0.0;
-    explicit Spectrum(const Buf& x) {   // x.size(): a power of two
-        const size_t n = x.size();
-        std::vector<cd> a(n);
-        double wsum = 0.0;
-        for (size_t i = 0; i < n; ++i) {
-            const double p = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(n);
-            const double w = 0.35875 - 0.48829 * std::cos(p) + 0.14128 * std::cos(2.0 * p) - 0.01168 * std::cos(3.0 * p);
-            a[i] = x[i] * w;
-            wsum += w;
-        }
-        fft(a);
-        amp.resize(n / 2);
-        for (size_t k = 0; k < n / 2; ++k) amp[k] = 2.0 * std::abs(a[k]) / wsum;
-        binHz = static_cast<double>(af::kRate) / static_cast<double>(n);
-    }
-    // The strongest bin within `bins` of hz: a partial's amplitude (up to 0.8 dB low between bins).
-    double at(double hz, int bins = 3) const {
-        const long c = std::lround(hz / binHz);
-        double m = 0.0;
-        for (long k = std::max(1L, c - bins); k <= std::min(static_cast<long>(amp.size()) - 1, c + bins); ++k)
-            m = std::max(m, amp[static_cast<size_t>(k)]);
-        return m;
-    }
-};
-
-// Frequency by rising zero crossings (interpolated), over x[from..to).
-double zeroCrossHz(const Buf& x, size_t from, size_t to) {
-    double first = -1.0, last = 0.0;
-    int n = 0;
-    for (size_t i = from + 1; i < to; ++i)
-        if (x[i - 1] < 0.0f && x[i] >= 0.0f) {
-            const double t = static_cast<double>(i - 1) + x[i - 1] / static_cast<double>(x[i - 1] - x[i]);
-            if (first < 0.0) first = t;
-            else {
-                last = t;
-                ++n;
-            }
-        }
-    return n > 0 ? static_cast<double>(af::kRate) * n / (last - first) : 0.0;
-}
-
 // Check 1: the sine table plays a clean 440 Hz at full scale.
 void testPitch() {
     std::printf("== lifeosc: pitch\n");
     af::TableOsc o;
     o.reset();
     const float inc = 440.0f / af::kRate;
-    const Buf x = play(o, table(af::TB_SINE), inc, 0.0f, 1 << 16);
+    const Buf x = play(o, testTable(af::TB_SINE), inc, 0.0f, 1 << 16);
     const Spectrum s(x);
     size_t top = 1;
     for (size_t k = 1; k < s.amp.size(); ++k)
@@ -139,7 +61,7 @@ void aliasSweep(const char* name, double limit) {
         Osc o;
         o.reset();
         const float inc = af::noteHz(static_cast<float>(note)) / af::kRate;
-        const Buf x = play(o, table(af::TB_SAW), inc, 0.0f, 1 << 16);
+        const Buf x = play(o, testTable(af::TB_SAW), inc, 0.0f, 1 << 16);
         const Spectrum s(x);
         const double f0 = static_cast<double>(inc) * af::kRate;
         double worst = 0.0;
@@ -169,7 +91,7 @@ void testAliasing() {
 // same phase, the position switched at a block edge) does step, so the check has teeth.
 void testGlide() {
     std::printf("== lifeosc: position glide\n");
-    const af::Wavetable& t = table(af::TB_SINE_BLOOM);
+    const af::Wavetable& t = testTable(af::TB_SINE_BLOOM);
     const float inc = 220.0f / af::kRate;
     auto at = [](int block) { return static_cast<size_t>(block * kOscBlock); };   // a block's first sample
     af::TableOsc o;
@@ -223,7 +145,7 @@ void testGlide() {
 // render that changes runs from the old level to the new one, sample by sample.
 void testMipCrossfade() {
     std::printf("== lifeosc: mip level crossfade\n");
-    const af::Wavetable& t = table(af::TB_SAW);
+    const af::Wavetable& t = testTable(af::TB_SAW);
     const float edge = af::kAliasLimit / 64.0f;   // above it, level 5 (32 harmonics) instead of level 4 (64)
     const float lo = edge * (1.0f - 1e-6f), hi = edge * (1.0f + 1e-6f);
     CHECK(af::mipFor(lo) == 4 && af::mipFor(hi) == 5);
@@ -345,10 +267,10 @@ void testModel() {
     std::printf("== lifeosc: every read against a plain model\n");
     const auto t0 = std::chrono::steady_clock::now();
     ModelRun h, l;
-    modelRuns<af::TableOsc>(table(af::TB_FELT_PIANO), true, 0x1234567u, 40, 50, h);
-    modelRuns<af::TableOscLinear>(table(af::TB_FELT_PIANO), false, 0x2345678u, 40, 50, l);
-    modelRuns<af::TableOsc>(table(af::TB_SAW), true, 0x3456789u, 4, 50, h);
-    modelRuns<af::TableOscLinear>(table(af::TB_SAW), false, 0x456789au, 4, 50, l);
+    modelRuns<af::TableOsc>(testTable(af::TB_FELT_PIANO), true, 0x1234567u, 40, 50, h);
+    modelRuns<af::TableOscLinear>(testTable(af::TB_FELT_PIANO), false, 0x2345678u, 40, 50, l);
+    modelRuns<af::TableOsc>(testTable(af::TB_SAW), true, 0x3456789u, 4, 50, h);
+    modelRuns<af::TableOscLinear>(testTable(af::TB_SAW), false, 0x456789au, 4, 50, l);
     const double ms = 1e3 * std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::printf("  4400 renders in %.0f ms\n", ms);
     for (const ModelRun* r : {&h, &l}) {
@@ -471,7 +393,7 @@ Buf coupled(int mode, float amt, float blend, int tableA, double hzA, int tableB
     Buf x(static_cast<size_t>(n));
     float scratch[2 * af::kChunk];
     for (int i = 0; i < n; i += af::kChunk)
-        af::renderCoupled(a, table(tableA), static_cast<float>(hzA) / af::kRate, b, table(tableB),
+        af::renderCoupled(a, testTable(tableA), static_cast<float>(hzA) / af::kRate, b, testTable(tableB),
                           static_cast<float>(hzB) / af::kRate, 0.5f, mode, amt, blend, &x[static_cast<size_t>(i)], scratch,
                           std::min(af::kChunk, n - i));
     return x;
@@ -512,7 +434,7 @@ void testCouple() {
         const Buf b1 = coupled(af::CP_RING, 1.0f, 1.0f, af::TB_SAW, f1, af::TB_SQUARE, f2, 4096);
         af::TableOscLinear o;
         o.reset();
-        CHECK(b1 == play(o, table(af::TB_SQUARE), static_cast<float>(f2) / af::kRate, 0.5f, 4096, af::kChunk));
+        CHECK(b1 == play(o, testTable(af::TB_SQUARE), static_cast<float>(f2) / af::kRate, 0.5f, 4096, af::kChunk));
     }
     {   // Mix at blend 0 doesn't read B but keeps it going: two sines in tune, one step at blend 0,
         // then half of each. In step they add up to full scale; had B stood still for the step
@@ -525,7 +447,7 @@ void testCouple() {
         Buf x(64 * af::kChunk);
         float scratch[2 * af::kChunk];
         for (int k = 0; k < 64; ++k)
-            af::renderCoupled(a, table(af::TB_SINE), inc, b, table(af::TB_SINE), inc, 0.5f, af::CP_MIX, 0.0f,
+            af::renderCoupled(a, testTable(af::TB_SINE), inc, b, testTable(af::TB_SINE), inc, 0.5f, af::CP_MIX, 0.0f,
                               k == 0 ? 0.0f : 0.5f, &x[static_cast<size_t>(k * af::kChunk)], scratch, af::kChunk);
         std::printf("  Mix, blend 0 for a step, then 0.5: peak %.4f\n", peak(x, af::kChunk));
         CHECK(std::fabs(peak(x, af::kChunk) - 1.0f) < 1e-3f);
@@ -536,7 +458,7 @@ void testCouple() {
         // throughout and coupling them at the blend gives. (The pitches are worked out once for
         // both: the device build may divide by the rate in one place and multiply by its
         // reciprocal in another, an ulp apart.)
-        const af::Wavetable& t = table(af::TB_SINE_BLOOM);
+        const af::Wavetable& t = testTable(af::TB_SINE_BLOOM);
         const float edge = af::kAliasLimit / 64.0f, incLo = edge * 0.99f, incHi = edge * 1.01f;
         const float incA0 = incLo * 0.5f, incA1 = incHi * 0.5f;   // the level below's edge, an octave down
         CHECK(af::mipFor(incA0) != af::mipFor(incA1) && af::mipFor(incLo) != af::mipFor(incHi));
@@ -572,7 +494,7 @@ void testCouple() {
         CHECK(coupled(af::CP_RING, 0.0f, 0.3f, af::TB_SINE_BLOOM, f1, af::TB_SAW, f2, 4096) == mix);
     }
     {   // skip() leaves an oscillator where render() would: the phase, the level, the position.
-        const af::Wavetable& t = table(af::TB_SINE_BLOOM);
+        const af::Wavetable& t = testTable(af::TB_SINE_BLOOM);
         af::TableOscLinear r, s;
         r.reset(0.2f);
         s.reset(0.2f);
@@ -599,7 +521,7 @@ void testDeterminism() {
         Buf x(44100);
         for (size_t i = 0; i < x.size(); i += af::kChunk) {
             const int n = static_cast<int>(std::min<size_t>(af::kChunk, x.size() - i));
-            o.render(table(af::TB_SINE_BLOOM), 196.0f / af::kRate, s.step(p, kStepS), &x[i], n);
+            o.render(testTable(af::TB_SINE_BLOOM), 196.0f / af::kRate, s.step(p, kStepS), &x[i], n);
         }
         return x;
     };
@@ -615,7 +537,7 @@ void testDeterminism() {
 // its start.
 void testPhase() {
     std::printf("== lifeosc: phase over a long run\n");
-    const af::Wavetable& t = table(af::TB_SINE);
+    const af::Wavetable& t = testTable(af::TB_SINE);
     const float inc = 1000.3f / af::kRate;
     af::TableOsc o;
     const double start = 1.0 - 1.0 / 4096.0;
@@ -646,26 +568,26 @@ void testEdges() {
     o.reset();
     float x[af::kChunk];
     std::fill(x, x + af::kChunk, 7.0f);
-    o.render(table(af::TB_SAW), 0.01f, 0.0f, x, 0);
+    o.render(testTable(af::TB_SAW), 0.01f, 0.0f, x, 0);
     CHECK(x[0] == 7.0f);
     bool finite = true;
     for (float inc : {0.0f, -0.1f, 0.7f, 2.0f, std::nanf("")})
         for (float pos : {-1.0f, 0.0f, 0.5f, 1.0f, 3.0f, std::nanf("")}) {
-            o.render(table(af::TB_SINE_BLOOM), inc, pos, x, af::kChunk);
+            o.render(testTable(af::TB_SINE_BLOOM), inc, pos, x, af::kChunk);
             for (float v : x) finite = finite && std::isfinite(v) && std::fabs(v) < 4.0f;
         }
     CHECK(finite);
     af::TableOsc a, b;
     a.reset();
     b.reset();
-    CHECK(play(a, table(af::TB_SQUARE), 0.01f, 0.0f, 512) == play(b, table(af::TB_SQUARE), 0.01f, 0.83f, 512));
+    CHECK(play(a, testTable(af::TB_SQUARE), 0.01f, 0.0f, 512) == play(b, testTable(af::TB_SQUARE), 0.01f, 0.83f, 512));
     // pos 1 sits on the last frame: the same as a position just short of it, give or take its
     // share of the next-to-last.
     af::TableOsc c, d;
     c.reset();
     d.reset();
-    const Buf e1 = play(c, table(af::TB_SINE_BLOOM), 0.01f, 1.0f, 512);
-    const Buf e2 = play(d, table(af::TB_SINE_BLOOM), 0.01f, 1.0f - 1e-6f, 512);
+    const Buf e1 = play(c, testTable(af::TB_SINE_BLOOM), 0.01f, 1.0f, 512);
+    const Buf e2 = play(d, testTable(af::TB_SINE_BLOOM), 0.01f, 1.0f - 1e-6f, 512);
     float diff = 0.0f;
     for (size_t i = 0; i < e1.size(); ++i) diff = std::max(diff, std::fabs(e1[i] - e2[i]));
     CHECK(diff < 1e-3f);
@@ -704,7 +626,7 @@ void testEdges() {
         af::TableOsc p, q;
         p.reset(phase);
         q.reset(0.0f);
-        CHECK(play(p, table(af::TB_SINE), 0.01f, 0.0f, 256) == play(q, table(af::TB_SINE), 0.01f, 0.0f, 256));
+        CHECK(play(p, testTable(af::TB_SINE), 0.01f, 0.0f, 256) == play(q, testTable(af::TB_SINE), 0.01f, 0.0f, 256));
     }
 }
 

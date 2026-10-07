@@ -21,10 +21,11 @@
 // 3 at the fastest sway (depth 1, 2 Hz), 1 in 10 at 0.5 Hz, 1 in 30 at full Smear, and 1 in 250
 // at Bloom's and Ground's default settings. By PolyForce's calibration (its ARM instructions per
 // block against its device bench: about 1 ns an instruction), a Hermite oscillator over a pair of
-// frames is about 0.29% of a 128-frame block and a linear one over one frame about 0.09%. So the
-// lifetime oscillators (A, Ground's partials) read with Hermite and Bloom's oscillator B, mostly a
-// digital wave, linearly (renderCoupled()). The device bench (Task 11) has the final word; if
-// Bloom runs over, its unison drops from 2 to 1 first (CONCEPT.md 11, the caps' order).
+// frames is about 0.29% of a 128-frame block and a linear one over one frame about 0.09%. So
+// Bloom's oscillator A reads with Hermite and its oscillator B, mostly a digital wave, linearly
+// (renderCoupled()); Ground's five partials read linearly too (ground.h: a drone lives low, where
+// the linear read's images stay 65 dB down or more). The device bench (Task 11) has the final word;
+// if Bloom runs over, its unison drops from 2 to 1 first (CONCEPT.md 11, the caps' order).
 //
 // Known limits, for the voices (Ground, Bloom):
 // - FM widens A's spectrum, but A's mip level comes from A's own pitch, so at high notes with deep
@@ -404,8 +405,8 @@ private:
     uint32_t step_ = 0;
 };
 
-using TableOsc = TableOscT<true>;         // the lifetime oscillator: A, and Ground's partials
-using TableOscLinear = TableOscT<false>;  // half the reads: Bloom's oscillator B
+using TableOsc = TableOscT<true>;         // the lifetime oscillator: Bloom's A
+using TableOscLinear = TableOscT<false>;  // half the reads: Bloom's oscillator B, Ground's partials
 
 // --- Couple: oscillator A with oscillator B -----------------------------------------------------
 //

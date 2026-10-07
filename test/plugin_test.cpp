@@ -349,6 +349,7 @@ int main() {
     engineTests();
     tablesTests();   // early: it starts, stops and restarts the shared builder itself, from no instance alive
     lifeoscTests();
+    groundTests();
     bloomTests();
     reverbTests();
     testBasics();
