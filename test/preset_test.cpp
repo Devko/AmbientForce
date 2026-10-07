@@ -1,9 +1,10 @@
 // From SubForce test/preset_test.cpp (8846421), sft -> aft; AmbientForce's parameters, RANDOMIZE left out.
 // Saved state, presets and the surface: chunk round trips, the preset stepper and buttons, user
 // presets, the browser, favorites, stepping (options and popups too), pushing values back to MPC,
-// and every factory preset playing.
+// and every factory preset playing the demo phrase at its level.
 #include "host.h"
 #include "../plugin/presets.h"
+#include "../tools/phrase.h"
 #include "factory_presets.h"
 
 #include <cmath>
@@ -322,31 +323,32 @@ void testStepping() {
     }
 }
 
+// Every factory preset plays the demo phrase (tools/phrase.h: two chords of 12 s and 16 s of release,
+// in the preset's key) finite, at the level `make preset-levels` matched it to (-16 LUFS, within 1 LU:
+// a preset edited since, or an engine change that moved its level, shows here) and under -1 dBFS. The
+// whole 40 s, as the level match measures it.
 void testFactory() {
-    std::printf("== factory presets\n");
+    std::printf("== factory presets: the demo phrase at -16 LUFS\n");
     CHECK(af::kNumFactoryPresets >= 1);
-    int quiet = 0, loud = 0;
+    CHECK(afl::waitForTables());   // a slot still on the sine would play another sound
     for (int i = 0; i < af::kNumFactoryPresets; ++i) {
         Host h;
         const std::string key = std::string("builtin:") + af::kFactoryPresets[i].name;
         std::string text;
         CHECK(af::presetText(key, text));
         CHECK(h.load(text) == 1);   // the stepper / browser path is tested above; here, the sound
-        h.on(36 + (i * 7) % 24, 100);
-        float peak = h.run(kBlocksPerSec);
-        h.off(36 + (i * 7) % 24);
-        peak = std::max(peak, h.run(kBlocksPerSec / 2));
-        if (peak < 0.01f) {
-            ++quiet;
-            std::printf("  %s: peak %.4f\n", af::kFactoryPresets[i].name, peak);
-        }
-        if (peak > 1.0f) {
-            ++loud;
-            std::printf("  %s: peak %.2f\n", af::kFactoryPresets[i].name, peak);
-        }
-        CHECK(h.finite);
+        std::vector<float> L, R;
+        afl::render(h.e, h.log.time, afl::phrase(text), L, R);
+        const double lufs = afl::lufs(L, R);
+        const float peak = afl::peakOf(L, R);
+        const bool level = std::fabs(lufs - afl::kTargetLufs) <= afl::kTolLu;
+        std::printf("  %-10s %-18s %6.1f LUFS  peak %6.1f dBFS%s\n", af::kFactoryPresets[i].category,
+                    af::kFactoryPresets[i].name, lufs, 20.0 * std::log10(std::max(peak, 1e-9f)),
+                    level ? "" : "  (make preset-levels)");
+        CHECK(afl::allFinite(L, R));
+        CHECK(level);
+        CHECK(peak <= afl::kPeakCap);
     }
-    CHECK(quiet == 0 && loud == 0);
 }
 
 } // namespace
