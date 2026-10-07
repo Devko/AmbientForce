@@ -357,6 +357,7 @@ int main() {
     testPlay();
     testProcessLegacy();
     testMidiMapping();
+    paramsTests();
     presetTests();
     testStress();
 

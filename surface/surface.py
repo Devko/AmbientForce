@@ -23,9 +23,10 @@ knob, its label and the DSP can never disagree.
 Before writing anything the layout is checked the way shadow_skin.py would (unknown keys,
 option counts, when=, Q-Link sets) plus geometry with shadow_skin's own sizes (inside the plugin
 area, no overlaps within a page, nothing in a card's title band, open popup lists inside the
-plugin area, bitmap-font glyphs) and the parameter names MPC shows (short, unique), so a broken
-page fails here instead of on the device. The layout machinery and its checks are PolyForce's; the
-page groups (several pages under one tab) are EffectForce's.
+plugin area, options that fit their popup field or segment, bitmap-font glyphs) and the
+parameter names MPC shows (short, unique), so a broken page fails here instead of on the device.
+The layout machinery and its checks are PolyForce's; the page groups (several pages under one
+tab) are EffectForce's.
 
 Run: python3 surface/surface.py   (make surface does this)
 """
@@ -111,6 +112,114 @@ def popup_flag(of):
 
 readout("status", "Status")            # index 0 must stay a read-only readout: MPC sets it at load
 num("volume", "Volume", "lin", -60, 6, -6, "db")
+
+# Every default and range below is the engine's own (dsp/engine.h Patch and the headers it holds), so Init
+# plays what a Patch{} plays: test/params_test.cpp holds the two together. Levels and sends are the exception,
+# by unit: their knobs have the family's audio taper (gain = knob^2, plugin/patch_map.cpp), so Level 70% is a
+# gain of 0.49. Hold, Freeze and the mutes are segments, not toggle tiles: a tile's release echo is a second tap.
+ON_OFF = ["Off", "On"]
+LISTEN = ["Notes", "Harmony", "Free"]                                                 # dsp/harmony.h Listen
+# The table library in tableName() order (dsp/lifetime.h TableId): lifetime tables, then the digital waves.
+TABLES = ["Felt Piano", "Celesta", "Glass Harmonica", "Cello Tasto", "Choir Ah-Oo", "Reed Organ", "Sine Bloom",
+          "Tape Strings", "Sine", "Triangle", "Saw", "Square"]
+
+# --- the harmony brain (dsp/harmony.h HarmonyPatch; Hold and On Stop are the engine's) ---
+enum("h_key", "Key", ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"], "C")
+popup_flag("h_key")
+enum("h_scale", "Scale", ["Major", "Minor", "Dorian", "Lydian", "Mixolydian", "Phrygian", "Maj Pent", "Min Pent",
+                          "Hirajoshi", "In-Sen", "Whole Tone", "Chromatic"], "Major")          # Scale
+popup_flag("h_scale")
+enum("h_tuning", "Tuning", ["Equal", "Just", "Pythagorean"], "Just")                           # Tuning
+enum("h_input", "Input", ["As Played", "Snap", "Degrees"], "Snap")                             # Input
+enum("h_chord", "Chord", ["Off", "Triad", "Seventh", "Sus2", "Sus4", "Add9", "Quartal", "Fifths", "Cluster",
+                          "Spread"], "Triad")                                                  # ChordType
+popup_flag("h_chord")
+enum("h_voicing", "Voicing", ["Close", "Open", "Drop 2", "Spread"], "Open")                    # Voicing
+enum("h_leading", "Leading", ON_OFF, "On")
+num("h_strum", "Strum", "pow", 0, 2, 0, "time")
+# memoryBars: Off 0, the bars, Forever -1 (patch_map.cpp kMemoryBars).
+enum("h_memory", "Memory", ["Off", "1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars", "32 Bars", "64 Bars", "Forever"],
+     "Forever")
+popup_flag("h_memory")
+enum("h_hold", "Hold", ON_OFF, "Off")
+enum("h_onstop", "On Stop", ["Keep", "Fade", "Cut"], "Fade")                                   # dsp/engine.h OnStop
+
+# --- Ground, the drone (dsp/ground.h GroundPatch) ---
+enum("g_listen", "Ground Listen", LISTEN, "Harmony")
+enum("g_mute", "Ground Mute", ON_OFF, "Off")
+num("g_level", "Ground Level", "lin", 0, 1, 0.7, "pct")
+num("g_cutoff", "Ground Tone", "log", 40, 16000, 2500, "hz")
+enum("g_table", "Ground Table", TABLES, "Cello Tasto")
+popup_flag("g_table")
+num("g_age", "Ground Age", "lin", 0, 1, 0.5, "pct")
+num("g_sway", "Ground Sway", "lin", 0, 1, 0.3, "pct")
+num("g_swayrate", "Gnd SwayRate", "log", 0.002, 2, 0.05, "period")
+num("g_beat", "Ground Beat", "lin", 0, 3, 0.3, "hz2")
+num("g_gravity", "Gravity", "pow", 0, 30, 6, "time")
+num("g_fade", "Ground Fade", "log", 0.05, 30, 4, "time")
+num("g_sub", "Ground Sub", "lin", 0, 1, 0.3, "pct")
+num("g_root", "Ground Root", "lin", 0, 1, 1, "pct")
+num("g_fifth", "Ground Fifth", "lin", 0, 1, 0.5, "pct")
+num("g_oct", "Gnd Octave", "lin", 0, 1, 0.25, "pct")
+num("g_color", "Ground Color", "lin", 0, 1, 0, "pct")
+enum("g_colint", "Color Int", ["min3", "maj3", "4th", "min7", "9th", "11th"], "9th")           # ColorInterval
+enum("g_reg", "Ground Reg", ["Low", "Mid", "High"], "Mid")                                     # registerOct 1..3
+num("g_body", "Ground Body", "lin", 0, 1, 0, "pct")
+num("g_breath", "Ground Breath", "lin", 0, 1, 0.3, "pct")
+num("g_space", "Ground Space", "lin", 0, 1, 0.4, "pct")
+num("g_width", "Ground Width", "lin", 0, 1, 0.5, "pct")
+num("g_pan", "Ground Pan", "lin", -1, 1, 0, "pan")
+
+# --- Bloom, the chords (dsp/bloom.h BloomPatch) ---
+enum("b_listen", "Bloom Listen", LISTEN, "Notes")
+enum("b_mute", "Bloom Mute", ON_OFF, "Off")
+num("b_level", "Bloom Level", "lin", 0, 1, 0.7, "pct")
+num("b_cutoff", "Bloom Tone", "log", 20, 20000, 5000, "hz")
+num("b_reso", "Bloom Reso", "lin", 0, 1, 0.1, "pct")
+enum("b_fmode", "Bloom Filter", ["LP", "BP", "HP"], "LP")                                      # FilterMode
+enum("b_table", "Bloom Table", TABLES, "Felt Piano")
+popup_flag("b_table")
+num("b_age", "Bloom Age", "lin", 0, 1, 0.6, "pct")
+num("b_sway", "Bloom Sway", "lin", 0, 1, 0.25, "pct")
+num("b_swayrate", "Blm SwayRate", "log", 0.002, 2, 0.07, "period")
+num("b_smear", "Bloom Smear", "lin", 0, 1, 0.1, "pct")
+enum("b_tableb", "Bloom Table B", TABLES, "Sine")
+popup_flag("b_tableb")
+num("b_boct", "Bloom B Oct", "int", -2, 2, 0, "oct")
+num("b_blend", "Bloom Blend", "lin", 0, 1, 0, "pct")
+enum("b_couple", "Bloom Couple", ["Mix", "FM", "AM", "Ring"], "Mix")                           # dsp/lifeosc.h Couple
+num("b_camt", "Couple Amt", "lin", 0, 1, 0, "pct")
+enum("b_unison", "Bloom Unison", ["1", "2"], "1")
+num("b_detune", "Bloom Detune", "lin", 0, 50, 8, "cents")
+num("b_swell", "Bloom Swell", "log", 0.005, 30, 2.5, "time")
+num("b_release", "Blm Release", "log", 0.01, 30, 6, "time")
+num("b_vel", "Bloom Vel", "lin", 0, 1, 0.4, "pct")
+num("b_breath", "Bloom Breath", "lin", 0, 1, 0.05, "pct")
+enum("b_tail", "Bloom Tail", ["Voice", "Space"], "Space")                                      # Tail
+num("b_space", "Bloom Space", "lin", 0, 1, 0.5, "pct")
+num("b_width", "Bloom Width", "lin", 0, 1, 0.6, "pct")
+num("b_pan", "Bloom Pan", "lin", -1, 1, 0, "pan")
+
+# --- Space, the reverb (dsp/space.h Params, dsp/reverb.h Reverb::Params), and the output ---
+enum("s_mode", "Space Type", ["Room", "Hall", "Plate", "Space", "Haze", "Abyss"], "Hall")       # Reverb::Mode
+popup_flag("s_mode")
+num("s_size", "Space Size", "lin", 0, 1, 0.5, "pct")
+num("s_decay", "Space Decay", "log", 0.1, 30, 2.5, "time")
+num("s_predelay", "Pre-Delay", "pow", 0, 250, 20, "ms")
+num("s_damp", "Space Damp", "log", 1000, 20000, 6000, "hz")
+num("s_lowcut", "Space Low Cut", "log", 20, 1000, 150, "hz")
+num("s_mod", "Space Mod", "lin", 0, 1, 0.3, "pct")
+num("s_width", "Space Width", "lin", 0, 1, 1, "pct")
+enum("s_freeze", "Freeze", ON_OFF, "Off")
+num("s_shimmer", "Shimmer", "lin", 0, 1, 0, "pct")
+enum("s_shint", "Shimmer Int", ["+12", "+7", "+19", "-12"], "+12")                             # Reverb::Interval
+num("s_rise", "Space Rise", "lin", 0, 1, 0.2, "pct")
+num("s_return", "Space Level", "lin", 0, 1, 0.8, "pct")
+num("o_tilt", "Tilt", "lin", -1, 1, 0, "bipct")
+
+# No RANDOMIZE: an instant jump of every sound value under a drone that holds for minutes is not music. The
+# instrument's answer is Evolve (docs/CONCEPT.md 7.3): mutation ranges declared here, taken from the preset's
+# own state and glided to through a scene, never jumped.
 
 # --- presets ---
 stepper("preset", "Preset")
@@ -256,8 +365,9 @@ class Layout:
     def knob(self, cx, cy, key, size="big"):
         self.add('knob cx=%d cy=%d r=%d label="%s" key=%s' % (cx, cy, knob_radius(key, size), PARAMS[key]["name"], key))
 
-    def hseg(self, cx, cy, key, sw, label=None):
-        self.add('enum_h cx=%d cy=%d sw=%d key=%s%s' % (cx, cy, sw, key, ' label="%s"' % label if label else ""))
+    def hseg(self, cx, cy, key, sw, label=None, rows=1):   # rows > 1: the first row centred on cy, the rest below
+        self.add('enum_h cx=%d cy=%d sw=%d%s key=%s%s' % (cx, cy, sw, " rows=%d" % rows if rows > 1 else "", key,
+                                                         ' label="%s"' % label if label else ""))
 
     def vseg(self, cx, cy, key, sw=124, label=None):
         self.add('enum_v cx=%d cy=%d sw=%d key=%s%s' % (cx, cy, sw, key, ' label="%s"' % label if label else ""))
@@ -290,15 +400,163 @@ class Layout:
         self.add('list x=%d y=%d w=%d cols=%d rows=%d th=%d gap=%d key=%s' % (x, y, w, cols, rows, th, gap, key))
 
 
+# A card's row of controls: one Q-Link bank, left to right in Q-Link order. Each control has its own width (a knob's
+# box with its labels, a popup's field, a list's segments); row() spaces them evenly, so a row of 8 knobs lands on
+# S8 and one of 4 in a half card on L4 / R4. Popups and segments sit at the height that lines them up with the
+# knobs, and are labelled with the parameter's name without its stratum (the card says which), unless a page
+# says otherwise.
+KNOB_W = 130
+SPANS = {"full": (35, 1229), "left": (35, 621), "right": (659, 1245)}   # x0..x1 of the controls in a card
+# A long list's field: wide enough for its longest option in MPC's 26 px value text plus the chevron (44 px);
+# check_layout() measures it.
+POPUP_W = {"h_key": 80, "h_scale": 180, "h_chord": 140, "h_memory": 136, "g_table": 236, "b_table": 236,
+           "b_tableb": 236, "s_mode": 120}
+SEG_W = {"h_tuning": 110, "h_input": 100, "s_freeze": 80, "h_hold": 80, "h_leading": 80, "g_mute": 72, "b_mute": 72,
+         "b_fmode": 72, "b_unison": 64, "b_couple": 76, "s_shint": 76, "g_colint": 46}   # else 88
+SEG_ROWS = {"g_colint": 2}            # six short options: two rows of three
+LIST_LABELS = {"g_reg": "REGISTER", "g_colint": "COLOR", "s_shint": "INTERVAL", "s_mode": "TYPE",
+               "b_tableb": "TABLE B", "b_fmode": "FILTER"}
+
+
+def list_label(key):
+    name = PARAMS[key]["name"]
+    for stratum in ("Ground ", "Bloom ", "Space "):
+        if name.startswith(stratum):
+            name = name[len(stratum):]
+    return LIST_LABELS.get(key, name.upper())
+
+
+def control_w(key):
+    p = PARAMS[key]
+    if "options" not in p:
+        return KNOB_W
+    if key + "__open" in PARAMS:
+        return POPUP_W[key]
+    rows, sw = SEG_ROWS.get(key, 0), SEG_W.get(key, 88)
+    if rows:
+        per = -(-len(p["options"]) // rows)
+        return per * sw + (per - 1) * 2
+    return sw
+
+
+def control(L, cx, top, key, label=None):
+    """A knob, a long list's popup (its label above) or a short list's segments (vertical, under their label)."""
+    p = PARAMS[key]
+    label = label or list_label(key)
+    if "options" not in p:
+        L.knob(cx, top + 126, key)
+    elif key + "__open" in PARAMS:
+        L.text(cx, top + 82, label)
+        L.popup(cx, top + 126, POPUP_W[key], key)
+    elif key in SEG_ROWS:
+        L.hseg(cx, top + 142, key, SEG_W[key], label, rows=SEG_ROWS[key])
+    else:
+        L.vseg(cx, top + (170 if len(p["options"]) >= 4 else 160), key, SEG_W.get(key, 88), label)
+
+
+def row(L, top, keys, span="full", labels=None):
+    x0, x1 = SPANS[span]
+    widths = [control_w(k) for k in keys]
+    gap = (x1 - x0 - sum(widths)) / max(1, len(keys) - 1)
+    x = float(x0)
+    for k, w in zip(keys, widths):
+        control(L, int(round(x + w / 2.0)), top, k, (labels or {}).get(k))
+        x += w + gap
+
+
+def bank_card(L, top, title, keys, labels=None):
+    """A full-width card holding one Q-Link bank."""
+    L.card(24, top, 1232, 270, title)
+    row(L, top, keys, "full", labels)
+
+
+def bank_halves(L, top, left, right):
+    """A Q-Link bank as two half cards of four: (title, keys) each."""
+    for x, span, (title, keys) in ((24, "left", left), (648, "right", right)):
+        L.card(x, top, 608, 270, title)
+        row(L, top, keys, span)
+
+
 def build_layout():
     """Every page, in groups (see Layout). Each page has its own Q-Link set: the Force's 8 knobs show the first 8
-    keys, the next bank the other 8 (shadow_skin qlink_for_slot)."""
+    keys, the next bank the other 8 (shadow_skin qlink_for_slot). The first bank is a page's top card, the second
+    its bottom card, both in Q-Link order: the knob under your hand is the control in the same place on the screen."""
     L = Layout()
 
+    # PLAY: the page you live on (docs/CONCEPT.md 9): the levels, Freeze and Hold, how Bloom sounds and swells and
+    # the volume; then the harmony, and the tone of the landscape. The preset in the header.
+    L.group("PLAY")
+    play = ["g_level", "b_level", "s_return", "s_freeze", "h_hold", "b_age", "b_swell", "volume"]
+    harmony, tone = ["h_key", "h_scale", "h_chord", "g_gravity"], ["b_cutoff", "g_cutoff", "s_decay", "s_shimmer"]
+    L.page("PLAY", play + harmony + tone)
+    L.header(status_w=700)
+    L.stepper(998, 121, 516, "preset")
+    bank_card(L, R1, "PLAY", play)
+    bank_halves(L, R2, ("HARMONY", harmony), ("TONE AND SPACE", tone))
+
+    # HARMONY: the harmony brain (CONCEPT 6); then how long it remembers, what Stop does, and who listens.
+    harmony = ["h_key", "h_scale", "h_tuning", "h_input", "h_chord", "h_voicing", "h_leading", "h_strum"]
+    memory = ["h_memory", "h_hold", "h_onstop", "g_listen", "b_listen", "volume", "g_gravity", "b_swell"]
+    L.page("HARMONY", harmony + memory)
+    L.header()
+    bank_card(L, R1, "HARMONY", harmony)
+    bank_card(L, R2, "MEMORY AND LISTEN", memory, {"g_listen": "GROUND", "b_listen": "BLOOM"})
+
+    # STRATA: a page per stratum, then one for its details. The stratum pages share their first bank (CONCEPT 9):
+    # Level, Tone, Shape, Motion, Character, then Gravity / Swell where Echo goes in M2, Space, Width.
+    L.group("STRATA")
+    ground = ["g_level", "g_cutoff", "g_age", "g_sway", "g_beat", "g_gravity", "g_space", "g_width"]
+    ground2 = ["g_table", "g_swayrate", "g_fade", "g_body", "g_breath", "g_reg", "g_listen", "g_mute"]
+    L.page("GROUND", ground + ground2)
+    L.header()
+    bank_card(L, R1, "GROUND", ground)
+    bank_card(L, R2, "TABLE AND VOICE", ground2)
+
+    # DRONE: Ground's five partials, its place and its beating; then its motion and tone again.
+    partials = ["g_sub", "g_root", "g_fifth", "g_oct", "g_color", "g_colint", "g_pan", "g_beat"]
+    motion = ["g_gravity", "g_fade", "g_breath", "g_body", "g_level", "g_cutoff", "g_age", "g_sway"]
+    L.page("DRONE", partials + motion)
+    L.header()
+    bank_card(L, R1, "PARTIALS", partials)
+    bank_card(L, R2, "MOTION AND TONE", motion)
+
+    bloom = ["b_level", "b_cutoff", "b_age", "b_sway", "b_blend", "b_swell", "b_space", "b_width"]
+    bloom2 = ["b_table", "b_release", "b_reso", "b_fmode", "b_tail", "b_vel", "b_listen", "b_mute"]
+    L.page("BLOOM", bloom + bloom2)
+    L.header()
+    bank_card(L, R1, "BLOOM", bloom)
+    bank_card(L, R2, "TABLE, FILTER AND TAIL", bloom2)
+
+    # BLOOM OSC: Table B and how it couples to the first table, the scan's smear and rate, unison; then the voice.
+    osc = ["b_tableb", "b_boct", "b_couple", "b_camt", "b_smear", "b_swayrate", "b_unison", "b_detune"]
+    voice = ["b_breath", "b_pan", "b_age", "b_sway", "b_blend", "b_cutoff", "b_swell", "b_release"]
+    L.page("BLOOM OSC", osc + voice)
+    L.header()
+    bank_card(L, R1, "OSCILLATORS", osc)
+    bank_card(L, R2, "VOICE", voice)
+
+    # SPACE: the reverb; then its tail (Freeze, Shimmer, Rise) and the levels into and out of it.
+    L.group("SPACE")
+    space = ["s_mode", "s_size", "s_decay", "s_predelay", "s_damp", "s_lowcut", "s_mod", "s_width"]
+    tail, levels = ["s_freeze", "s_shimmer", "s_shint", "s_rise"], ["s_return", "g_space", "b_space", "o_tilt"]
+    L.page("SPACE", space + tail + levels)
+    L.header()
+    bank_card(L, R1, "SPACE", space)
+    bank_halves(L, R2, ("TAIL", tail), ("LEVELS AND TILT", levels))
+
+    # MIX: each stratum's level, place, send and mute; then the return, the output, and the widths.
+    mix_g, mix_b = ["g_level", "g_pan", "g_space", "g_mute"], ["b_level", "b_pan", "b_space", "b_mute"]
+    out, width = ["s_return", "o_tilt", "volume", "s_freeze"], ["g_width", "b_width", "s_width", "s_shimmer"]
+    L.page("MIX", mix_g + mix_b + out + width)
+    L.header()
+    bank_halves(L, R1, ("GROUND", mix_g), ("BLOOM", mix_b))
+    bank_halves(L, R2, ("RETURN AND OUTPUT", out), ("WIDTH AND SHIMMER", width))
+
     # BROWSE: categories left, presets right, the loaded preset and actions below. The browser has no knobs of
-    # its own: the Q-Links keep the preset stepper and the volume.
+    # its own: the Q-Links keep the preset stepper, the volume and the sound's main controls between them.
     L.group("BROWSE")
-    L.page("PRESETS", ["preset", "volume"])
+    L.page("PRESETS", ["preset", "g_level", "b_level", "s_return", "b_age", "b_swell", "b_cutoff", "volume",
+                       "h_key", "h_scale", "h_chord", "g_gravity", "g_cutoff", "s_decay", "s_shimmer", "s_freeze"])
     L.header()
     L.card(24, R1, 360, 552, "CATEGORIES")
     L.tiles(44, 206, 320, 2, 8, 48, 8, "cat")
@@ -570,8 +828,9 @@ def check_names(layout_tabs, geo, errors):
 def check_layout(text, groups):
     """Raise SystemExit on anything shadow_skin.py would refuse, plus geometry mistakes: outside the plugin
     area, overlaps on one screen (a page mode with everything shown in every mode), controls or text in a
-    card's title band, open popup lists that leave the plugin area, unknown bitmap glyphs; and the page groups
-    (Layout): every page in one group, in layout order, with exactly one Q-Link set titled like the page."""
+    card's title band, open popup lists that leave the plugin area, options too long for their popup field or
+    segment, unknown bitmap glyphs; and the page groups (Layout): every page in one group, in layout order, with
+    exactly one Q-Link set titled like the page."""
     params = PARAMS
     geo = Geometry(_top_level(text))
     errors = []
@@ -683,6 +942,20 @@ def check_layout(text, groups):
                 panel = Geometry.popup_panel(w, len(p["options"]))
                 if not _inside(panel):
                     errors.append("%s: popup %s: its open list %s leaves the plugin area" % (T, key, panel))
+                # The field shows the option in MPC's 26 px value text, beside the chevron (shadow_skin: rw - 44).
+                for o in p["options"]:
+                    if ttf_width(LIVE_FONT, 26, o) > w["w"] - 44:
+                        errors.append("%s: popup %s: %r does not fit its %d px field" % (T, key, o, w["w"]))
+            if kind in ("enum_h", "enum_v"):
+                # Segment text: the option in capitals, in the title font at 0.42 of the segment's height (shadow_skin's
+                # label overlays). Capitals: "m3" and "M3" would both read "M3".
+                sw = w.get("sw") or (135 if kind == "enum_v" else 117)
+                shown = [o.upper() for o in p["options"]]
+                for o in shown:
+                    if ttf_width(TITLE_FONT, max(10, int((30 if kind == "enum_v" else 33) * 0.42)), o) > sw - 6:
+                        errors.append("%s: %s %s: %r does not fit its %d px segment" % (T, kind, key, o, sw))
+                if len(set(shown)) < len(shown):
+                    errors.append("%s: %s %s: options that differ only in case read the same in capitals" % (T, kind, key))
             for r in geo.rects(w, params):
                 placed.append((r, "%s %s" % (kind, key), mode))
         for i, (r, what, mode) in enumerate(placed):
@@ -714,7 +987,8 @@ def check_layout(text, groups):
 # --- C++ header --------------------------------------------------------------------------------
 CURVE = {"readout": "Readout", "enum": "Enum", "lin": "Lin", "log": "Log", "int": "Int", "pow": "Pow"}
 FMT = {"none": "None", "enum": "Enum", "pct": "Percent", "bipct": "Bipolar", "hz": "Hz", "time": "Time",
-       "semi": "Semi", "count": "Count", "db": "Db", "text": "Text", "lfohz": "LfoHz"}
+       "semi": "Semi", "count": "Count", "db": "Db", "text": "Text", "lfohz": "LfoHz", "period": "Period",
+       "hz2": "Hz2", "cents": "Cents", "oct": "Oct", "ms": "Ms", "pan": "Pan"}
 KIND = {"synth": "Synth", "ui": "Ui", "readout": "Readout", "stepper": "Stepper", "button": "Button",
         "tile": "Tile", "toggle": "Toggle", "popup": "Popup", "meter": "Meter"}
 
