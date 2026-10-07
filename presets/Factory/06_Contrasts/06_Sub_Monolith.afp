@@ -1,0 +1,24 @@
+ambientforce 1
+volume=-7.4
+h_key=8
+h_scale=5
+g_listen=0
+g_level=1
+g_cutoff=300
+g_table=11
+g_sway=0
+g_beat=0
+g_gravity=0.12
+g_fade=0.08
+g_sub=0.5
+g_fifth=0
+g_oct=0.4
+g_reg=0
+g_breath=0
+g_space=0.1
+g_width=0.15
+b_mute=1
+s_mode=0
+s_size=0.3
+s_decay=0.8
+s_return=0.5
