@@ -139,7 +139,7 @@ struct Turn {
     long long was;
 };
 
-void engineTests();      // engine_test.cpp: the engine on its own (the stub: sines, voices, release)
+void engineTests();      // engine_test.cpp: the engine on its own (Listen routing, keys, Stop, the mix, the output)
 void reverbTests();      // reverb_test.cpp: the Reverb and Space on their own
 void harmonyTests();     // harmony_test.cpp: the harmony brain on its own (scales, chords, memory)
 void tablesTests();      // tables_test.cpp: the table library, the life models, the builder thread

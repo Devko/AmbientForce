@@ -118,8 +118,8 @@ void testBasics() {
     h.e->setParameter(h.e, af::P_PRE_SAVE, std::nanf(""));
     h.set(af::P_VOLUME, 0.0f);
     h.on(60);
-    h.run(kBlocksPerSec / 4);
-    CHECK(h.finite && rms(h.L) > 0.01);
+    h.run(kBlocksPerSec);   // Bloom swells over 2.5 s, Ground fades in over 4
+    CHECK(h.finite && rms(h.L) > 0.005);
     h.e->setParameter(h.e, af::P_STATUS, 0.7f);   // the status readout ignores writes
     CHECK(h.get(af::P_STATUS) == 0.0f);
 }
@@ -162,126 +162,179 @@ void testPlay() {
     CHECK(h.run(8) == 0.0f);   // nothing before a note
     h.on(48, 100, 64);         // starts at sample 64 of the next block
     h.run(1);
-    float before = 0.0f;
-    for (int i = 0; i < 64; ++i) before = std::max(before, std::fabs(h.L[static_cast<size_t>(i)]));
-    CHECK(before == 0.0f && std::fabs(h.L[127]) > 0.0f);
-    const float peak = h.run(kBlocksPerSec);
-    CHECK(h.finite && peak > 0.05f && peak < 1.0f);
-    bool mono = true;
-    for (size_t i = 0; i < h.L.size(); ++i) mono = mono && h.L[i] == h.R[i];
-    CHECK(mono);
-    CHECK(h.voices() == 1);
-    CHECK(h.display(af::P_STATUS).compare(0, 9, "VOICES 1 ") == 0);
-    h.off(48);
-    h.run(kBlocksPerSec / 2);   // the release is 300 ms
-    CHECK(h.run(4) == 0.0f);
-    CHECK(h.voices() == 0);
+    float before = 0.0f, after = 0.0f;
+    for (size_t i = 0; i < 64; ++i) before = std::max(before, std::fabs(h.L[i]));
+    for (size_t i = 64; i < 128; ++i) after = std::max(after, std::fabs(h.L[i]));
+    CHECK(before == 0.0f && after > 0.0f);
+    const float peak = h.run(3 * kBlocksPerSec);   // past Bloom's swell (2.5 s)
+    std::printf("  the default patch, one key: peak %.3f, RMS %.1f dBFS\n", peak, db(rms(h.L)));
+    CHECK(h.finite && peak > 0.05f && peak <= 0.8913f);
+    bool stereo = false;
+    for (size_t i = 0; i < h.L.size(); ++i) stereo = stereo || h.L[i] != h.R[i];
+    CHECK(stereo);   // Width spreads Ground's partials and Bloom's notes
+    // The default: Bloom plays the key's triad, Ground the root under it.
+    CHECK(h.voices() == 4);
+    CHECK(h.display(af::P_STATUS).compare(0, 9, "VOICES 4 ") == 0);
+    h.off(48);   // Bloom hands its tails to Space (1.5 s); Ground stays on the harmony (Forever)
+    h.run(2 * kBlocksPerSec);
+    CHECK(h.voices() == 1 && h.run(4) > 0.0f);
+    // All sound off (CC 120) is immediate, and forgets the harmony.
+    h.midi(0xB0, 120, 0);
+    CHECK(h.run(1) == 0.0f);
+    CHECK(h.voices() == 0 && h.run(kBlocksPerSec) == 0.0f);
+    // All notes off (CC 123) releases the keys; what the harmony holds goes on sounding.
+    h.on(57);
+    h.run(kBlocksPerSec);
+    h.midi(0xB0, 123, 0);
+    CHECK(h.run(1) > 0.0f);
+    h.run(2 * kBlocksPerSec);
+    CHECK(h.voices() == 1 && h.run(4) > 0.0f);
+    CHECK(h.finite);
+}
 
-    // Pitch: A3 is 220 Hz, A4 440 Hz.
+// Stop: MPC suspending and resuming processing, and its transport stopping. On Stop is Fade (8 s).
+void testStop() {
+    std::printf("== Stop: suspend, resume, the transport\n");
+    // A suspend resumed within 250 ms is a Stop: the landscape fades.
     Host p;
-    p.on(57, 100);
-    p.run(kBlocksPerSec / 4);
-    p.run(kBlocksPerSec);
-    CHECK(std::fabs(pitchHz(p.L) - 220.0) < 0.1);
-    p.off(57);
-    p.on(69, 100);
-    p.run(kBlocksPerSec / 2);   // past the release of the 220 Hz
-    p.run(kBlocksPerSec);
-    CHECK(std::fabs(pitchHz(p.L) - 440.0) < 0.2);
-    // The volume: 0 dB is 6 dB over the default -6 dB.
-    const double quiet = rms(p.L);
-    p.set(af::P_VOLUME, 0.0f);
-    p.run(kBlocksPerSec / 4);
-    p.run(kBlocksPerSec / 2);
-    CHECK(std::fabs(20.0 * std::log10(rms(p.L) / quiet) - 6.0) < 0.1);
-
-    // All sound off (CC 120) is immediate; all notes off (CC 123) releases.
-    p.midi(0xB0, 120, 0);
-    CHECK(p.run(1) == 0.0f);
     p.on(57);
-    p.run(10);
-    p.midi(0xB0, 123, 0);
+    p.run(kBlocksPerSec);
+    {
+        Turn t(100);   // the suspend and the resume 100 ms apart
+        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
+        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);
+    }
     CHECK(p.run(1) > 0.0f);
-    p.run(kBlocksPerSec / 2);
-    CHECK(p.run(2) == 0.0f);
-    // Suspend (MPC stopping the track) silences too.
+    p.run(8 * kBlocksPerSec + kBlocksPerSec / 4);
+    CHECK(p.run(4) == 0.0f && p.voices() == 0);
+    // A longer suspend resets: here a second (the tests' clock moves a second per host event), and
+    // the host never says it resumes, so the next block is when it did.
+    p.on(57);
+    p.run(kBlocksPerSec);
+    p.e->dispatcher(p.e, vst::effStopProcess, 0, 0, nullptr, 0.0f);
+    CHECK(p.run(1) == 0.0f && p.voices() == 0);
     p.on(57);
     p.run(10);
     p.e->dispatcher(p.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
+    p.e->dispatcher(p.e, vst::effStartProcess, 0, 0, nullptr, 0.0f);   // a second later
     CHECK(p.run(1) == 0.0f);
+    // A resume without a suspend does nothing; of two suspends before a resume, the first counts.
     p.on(57);
     p.run(10);
-    p.e->dispatcher(p.e, vst::effStopProcess, 0, 0, nullptr, 0.0f);
-    CHECK(p.run(1) == 0.0f);
+    p.e->dispatcher(p.e, vst::effStartProcess, 0, 0, nullptr, 0.0f);
+    CHECK(p.run(1) > 0.0f);
+    {
+        Turn t(100);
+        p.e->dispatcher(p.e, vst::effStopProcess, 0, 0, nullptr, 0.0f);
+        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
+        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);   // 200 ms after the first
+        p.e->dispatcher(p.e, vst::effStartProcess, 0, 0, nullptr, 0.0f);
+    }
+    CHECK(p.run(1) > 0.0f);   // a Stop: fading, not reset
     CHECK(p.finite);
+
+    // The transport stopping is a Stop too.
+    Host s;
+    s.log.time.flags |= vst::kVstTransportPlaying;
+    s.on(57);
+    s.run(kBlocksPerSec);
+    s.off(57);
+    s.log.time.flags &= ~vst::kVstTransportPlaying;
+    CHECK(s.run(1) > 0.0f);
+    s.run(8 * kBlocksPerSec + kBlocksPerSec / 4);
+    CHECK(s.run(4) == 0.0f && s.voices() == 0);
+    // Playing again wakes nothing; a note does.
+    s.log.time.flags |= vst::kVstTransportPlaying;
+    CHECK(s.run(kBlocksPerSec) == 0.0f);
+    s.on(60);
+    CHECK(s.run(kBlocksPerSec) > 0.0f && s.finite);
 }
 
 void testProcessLegacy() {
     std::printf("== process() (accumulating)\n");
     Host a, b;
-    a.on(45, 110, 300);   // one 1024-frame call (split into 512-frame sub-blocks inside)
-    std::vector<float> L(1024, 0.25f), R(1024, 0.25f);   // process() adds to what is there
-    float* out[2] = {L.data(), R.data()};
-    a.e->process(a.e, nullptr, out, 1024);
+    a.on(45, 110, 300);   // 1024-frame calls (split into 512-frame sub-blocks inside)
+    constexpr int kCalls = 16;
+    std::vector<float> L(1024 * kCalls, 0.25f), R(1024 * kCalls, 0.25f);   // process() adds to what is there
+    for (int c = 0; c < kCalls; ++c) {
+        float* out[2] = {L.data() + c * 1024, R.data() + c * 1024};
+        a.e->process(a.e, nullptr, out, 1024);
+    }
     // The same note at the same sample through processReplacing in 128-frame blocks: sample 300 is
     // in the third block, 44 frames in.
-    std::vector<float> L2(1024), R2(1024);
-    for (int k = 0; k < 8; ++k) {
+    std::vector<float> L2(1024 * kCalls), R2(1024 * kCalls);
+    for (int k = 0; k < 8 * kCalls; ++k) {
         if (k == 2) b.on(45, 110, 300 - 256);
         float* o[2] = {L2.data() + k * 128, R2.data() + k * 128};
         b.e->processReplacing(b.e, nullptr, o, 128);
     }
     double before = 0.0, diff = 0.0, energy = 0.0;
     for (int i = 0; i < 300; ++i) before = std::max(before, std::fabs(static_cast<double>(L[i]) - 0.25));
-    for (int i = 0; i < 1024; ++i) {
+    for (size_t i = 0; i < L.size(); ++i) {
         diff = std::max(diff, std::fabs(static_cast<double>(L[i]) - 0.25 - L2[i]));
+        diff = std::max(diff, std::fabs(static_cast<double>(R[i]) - 0.25 - R2[i]));
         energy += std::fabs(L2[i]);
     }
     CHECK(before == 0.0 && energy > 1.0);
     CHECK(diff < 1e-6);   // block sizes don't change the sound
 }
 
+// Two hosts against each other, sample for sample: the same seed, the same events.
+double maxDiff(const Host& a, const Host& b) {
+    double d = 0.0;
+    for (size_t i = 0; i < a.L.size() && i < b.L.size(); ++i)
+        d = std::max(d, std::max(std::fabs(static_cast<double>(a.L[i]) - b.L[i]), std::fabs(static_cast<double>(a.R[i]) - b.R[i])));
+    return d;
+}
+
 void testMidiMapping() {
     std::printf("== MIDI: velocity, the pedal, CC 121\n");
-    // Velocity 0 is a note-off; velocity scales the level.
+    // Velocity 0 is a note-off: Bloom lets go, Ground stays on the harmony.
     Host v;
     v.on(57, 127);
-    v.run(kBlocksPerSec / 4);
-    const double loud = rms(v.L);
+    v.run(kBlocksPerSec);
+    CHECK(v.voices() == 4);
     v.on(57, 0);
-    v.run(kBlocksPerSec / 2);
-    CHECK(v.run(2) == 0.0f);
-    v.on(57, 64);
-    v.run(kBlocksPerSec / 4);
-    CHECK(std::fabs(rms(v.L) / loud - 64.0 / 127.0) < 0.01);
-    // CC 64 holds the note after its key goes up.
+    v.run(2 * kBlocksPerSec);
+    CHECK(v.voices() == 1);
+    // Velocity scales Bloom (Vel 0.4): a soft key is quieter than a hard one, Ground the same.
+    Host loud, soft;
+    loud.on(57, 127);
+    soft.on(57, 32);
+    loud.run(3 * kBlocksPerSec);
+    soft.run(3 * kBlocksPerSec);
+    std::printf("  velocity 127 against 32: %+.1f dB\n", db(rms(loud.L) / rms(soft.L)));
+    CHECK(rms(loud.L) > 1.2 * rms(soft.L));
+    // CC 64 holds the chord after its key goes up, until the pedal comes up.
     Host h;
     h.on(57);
     h.midi(0xB0, 64, 127);
     h.off(57);
-    h.run(kBlocksPerSec / 2);
-    CHECK(rms(h.L) > 0.02);
+    h.run(2 * kBlocksPerSec);
+    CHECK(h.voices() == 4);
     h.midi(0xB0, 64, 0);
-    h.run(kBlocksPerSec / 2);
-    CHECK(h.run(2) == 0.0f);
+    h.run(2 * kBlocksPerSec);
+    CHECK(h.voices() == 1);
     // CC 121 (reset all controllers) puts the pedal back up: what it held is released.
     h.midi(0xB0, 64, 127);
     h.on(60);
     h.off(60);
-    h.run(kBlocksPerSec / 2);
-    CHECK(rms(h.L) > 0.02);
+    h.run(kBlocksPerSec);
+    CHECK(h.voices() == 4);
     h.midi(0xB0, 121, 0);
-    h.run(kBlocksPerSec / 2);
-    CHECK(h.run(2) == 0.0f);
+    h.run(2 * kBlocksPerSec);
+    CHECK(h.voices() == 1);
     // Bend, the mod wheel and pressure reach the engine and change nothing yet.
-    h.on(69);
-    h.midi(0xE0, 0x7F, 0x7F);
-    h.midi(0xB0, 1, 127);
-    h.midi(0xD0, 100, 0);
-    h.midi(0xA0, 69, 100);
-    h.run(kBlocksPerSec / 4);
-    h.run(kBlocksPerSec / 2);
-    CHECK(std::fabs(pitchHz(h.L) - 440.0) < 0.2);
+    Host x, y;
+    x.on(69);
+    y.on(69);
+    x.midi(0xE0, 0x7F, 0x7F);
+    x.midi(0xB0, 1, 127);
+    x.midi(0xD0, 100, 0);
+    x.midi(0xA0, 69, 100);
+    x.run(kBlocksPerSec);
+    y.run(kBlocksPerSec);
+    CHECK(maxDiff(x, y) == 0.0 && rms(x.L) > 0.0);
 }
 
 void testStress() {
@@ -293,8 +346,8 @@ void testStress() {
         for (int i = 0; i < 60; ++i) h.off(36 + i, kBlock - 1);   // after every note-on of the block
         h.run(1);
     }
-    h.run(kBlocksPerSec);
-    CHECK(h.run(2) == 0.0f);
+    h.run(2 * kBlocksPerSec);
+    CHECK(h.voices() == 1);   // Bloom let every key go; Ground stays on the harmony
     // Every sound parameter at random values, notes going: finite and bounded.
     uint32_t s = 12345;
     auto rnd = [&s] {
@@ -323,7 +376,7 @@ void testStress() {
     }
     CHECK(h.finite);
     std::printf("  peak over 40 random patches: %.2f\n", worst);
-    CHECK(worst < 2.0f);
+    CHECK(worst <= 0.8913f);   // the limiter's ceiling
 }
 
 } // namespace
@@ -355,6 +408,7 @@ int main() {
     testBasics();
     testGetters();
     testPlay();
+    testStop();
     testProcessLegacy();
     testMidiMapping();
     paramsTests();

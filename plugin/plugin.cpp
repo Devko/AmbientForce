@@ -82,12 +82,17 @@ struct RawMidi {
     uint8_t status, d1, d2;
 };
 
+// Suspend and resume reach the audio thread as times (ms): when the host suspended processing (-1:
+// it hasn't since the audio thread last looked), and when it said processing resumes (-1: it
+// hasn't said). A lock here would be one on the audio thread.
+static_assert(std::atomic<long long>::is_always_lock_free, "the suspend times need lock-free 64-bit atomics");
+
 struct Plugin {
     AEffect             fx;          // must stay the first member: MPC hands us &fx back
     audioMasterCallback master = nullptr;
     Surface             surface;
-    std::atomic<bool>   panic{false};
-    af::Engine          engine{kSampleRate};
+    std::atomic<long long> suspendMs{-1}, resumeMs{-1};
+    af::Engine          engine{af::sharedTables()};
     std::string         chunk;       // effGetChunk buffer: must outlive the call
 
     // audio thread only
@@ -107,6 +112,30 @@ struct Plugin {
 };
 
 Plugin* self(AEffect* e) { return static_cast<Plugin*>(e->object); }
+
+// Milliseconds for the suspend's length: the surface's clock (the tests' own, when they set one).
+long long nowMs() {
+    if (Surface::clock) return Surface::clock();
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<long long>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
+}
+
+// The host stopped processing (effMainsChanged 0, effStopProcess), or said it starts again
+// (effMainsChanged 1, effStartProcess). The first suspend counts from when it came; a suspend after
+// a resume the audio thread hasn't seen yet starts over (the latest one wins: a reset covers a
+// Stop). What MPC sends on Stop is a Phase 0 question: the trace shows it.
+void suspended(Plugin* p) {
+    if (tracing()) trace("%p suspend", static_cast<void*>(&p->fx));
+    if (p->suspendMs.load() < 0 || p->resumeMs.load() >= 0) {
+        p->resumeMs.store(-1);
+        p->suspendMs.store(nowMs());
+    }
+}
+void resumed(Plugin* p) {
+    if (tracing()) trace("%p resume", static_cast<void*>(&p->fx));
+    if (p->suspendMs.load() >= 0 && p->resumeMs.load() < 0) p->resumeMs.store(nowMs());
+}
 
 // Copies at most cap - 1 bytes, never cutting a UTF-8 character in half.
 void copyStr(void* dst, const std::string& s, size_t cap) {
@@ -212,7 +241,15 @@ void runBlock(Plugin* p, float* L, float* R, int n, const Transport& tr) {
             }
         }
     }
-    if (p->panic.exchange(false)) p->engine.reset();
+    // Processing resumed after a suspend: the engine applies On Stop (back within 250 ms) or
+    // resets. Without a resume from the host, this block is when it resumed.
+    const long long went = p->suspendMs.exchange(-1);
+    if (went >= 0) {
+        long long back = p->resumeMs.exchange(-1);
+        if (back < 0) back = nowMs();
+        p->engine.suspend();
+        p->engine.resume(static_cast<double>(back - went) * 1e-3);
+    }
     p->engine.setTransport(tr.bpm, tr.beats, tr.playing, tr.valid);
 
     // Events in time order (insertion sort: no allocation; MPC already sends them sorted),
@@ -353,9 +390,11 @@ intptr_t dispatch(Plugin* p, int32_t op, int32_t idx, intptr_t val, void* ptr) {
         case vst::effSetSampleRate:   // MPC OS is fixed at 44.1 kHz; the engine is built for it
         case vst::effSetBlockSize: return 1;
         case vst::effMainsChanged:
-            if (val == 0) p->panic.store(true);   // suspended: silence when processing resumes
+            if (val == 0) suspended(p);
+            else resumed(p);
             return 1;
-        case vst::effStopProcess: p->panic.store(true); return 0;
+        case vst::effStopProcess: suspended(p); return 0;
+        case vst::effStartProcess: resumed(p); return 0;
         case vst::effProcessEvents: onMidi(p, static_cast<const VstEvents*>(ptr)); return 1;
         case vst::effCanDo: {
             const char* s = static_cast<const char*>(ptr);
