@@ -1,0 +1,27 @@
+ambientforce 1
+volume=-9.8
+h_key=6
+h_scale=1
+h_chord=9
+g_listen=0
+g_level=0.55
+g_gravity=0.25
+g_fade=0.4
+g_beat=0.1
+g_sub=0
+g_fifth=0.25
+g_oct=0.2
+g_breath=0.15
+b_level=0.75
+b_cutoff=6000
+b_table=3
+b_age=0.2
+b_sway=0.3
+b_swayrate=0.2
+b_swell=0.5
+b_release=1.8
+b_vel=0.6
+b_breath=0.3
+b_tail=0
+b_width=0.7
+s_return=0

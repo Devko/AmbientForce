@@ -1,0 +1,27 @@
+ambientforce 1
+volume=-9.0
+h_key=4
+h_scale=6
+h_chord=0
+g_mute=1
+b_level=0.4
+b_cutoff=10000
+b_table=1
+b_age=0.3
+b_sway=0.2
+b_smear=0.15
+b_swell=0.005
+b_release=3
+b_vel=0.5
+b_space=1
+b_width=0.9
+s_mode=5
+s_size=0.9
+s_decay=30
+s_predelay=20
+s_damp=8000
+s_lowcut=200
+s_mod=0.6
+s_shimmer=0.45
+s_rise=0
+s_return=0.8
