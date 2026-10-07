@@ -8,12 +8,18 @@
 //   the Fifth is 3/2 and Color its tuning's ratio for the interval (Just: m3 6/5, M3 5/4, 4th 4/3,
 //   m7 9/5, 9th 9/4, 11th 8/3; Pythagorean, its stacked fifths: 32/27, 81/64, 4/3, 16/9, 9/4,
 //   8/3); under Equal they are 7 and 3, 4, 5, 10, 14, 17 semitones.
-// - Root and Fifth, the interval the ear follows and the beat it hears, read with Hermite
-//   (TableOsc); Sub, Octave and Color, quieter by default, linearly (TableOscLinear), for half the
-//   reads (lifeosc.h: their images at worst -64 dB under a saw's fundamental, less on lifetime
-//   frames). A partial at level 0 isn't read; it is skipped along, so it comes back in step.
-// - The root: the target's pitch class in octave Register (C1 = 24, C2 = 36, C3 = 48), tuned by
-//   tunedPitch(). Only the pitch class counts: Register places the octave.
+// - Every partial reads linearly (TableOscLinear), half the reads of Hermite: a drone lives low,
+//   and the linear read's images stay far down there. On Saw (the brightest table) at the highest
+//   root, B3, with the Tone open, they are at most -74 dB under Root's fundamental, -70.5 dB under
+//   the Fifth's (at 11.2 kHz) and -66 dB under Color's 11th (654 Hz, at 14.2 kHz); lifeosc.h holds
+//   the linear read to -60 dB, and lifetime frames, quieter at the top, leave less. A partial at
+//   level 0 isn't read; it is skipped along, so it comes back in step.
+// - The root: the target's pitch class (its octave doesn't count), tuned by tunedPitch(). From
+//   silence it sits in Register's octave (C1 = 24, C2 = 36, C3 = 48). A new root while it sounds
+//   takes the octave of its pitch class nearest where the root is now, the shortest glide (B to C
+//   rises a semitone), kept within base - 6 .. base + 17, base being Register's C.
+// - Register changed while it sounds doesn't glide: the drone dips out over kDip samples (40 ms),
+//   moves by the octaves at the bottom, and comes back over as long.
 // - Beat is the rate, in Hz, at which Root and Fifth beat where they meet: Root's 3rd harmonic
 //   against Fifth's 2nd. Each partial moves by beatHz * kBeat[i] in Hz, not cents, so the rate is
 //   the same in every register; a harmonic moves k times as far as its fundamental, so Root at
@@ -23,20 +29,23 @@
 //   rates around the one Beat sets. In Just the ratios are exact: the beating dialled in is all
 //   there is.
 // - Gravity: the root glides to a new target in semitones (log pitch), exponentially with time
-//   constant gravityS / 3, so it is 95% there after gravityS. Gravity 0 jumps. A target that
-//   starts the drone from silence is jumped to, never glided to.
-// - Fade: linear in dB from -60 to 0 over fadeS when the drone starts, and back when it stops
-//   (target -1). At -60 it stops rendering and sounding() turns false. A new target while it fades
-//   out fades it back in from where it is.
+//   constant gravityS / 3, so it is 95% there after gravityS. Gravity 0 jumps.
+// - Fade: linear in dB from -60 to 0 over fadeS when the drone starts, and back when it stops.
+//   Its states: off (sounding() false, nothing rendered); in or held (a target: the level rises to
+//   0 dB and stays); out (target -1: it falls, and at -60 dB it is off). A new target while it
+//   fades out turns it around where it is.
 // - Body: two band-pass SVFs on a vowel's first two formants, mixed with the dry: 0..1/3 fades
 //   in "a" (800 / 1150 Hz), 1/3..2/3 moves it to "o" (450 / 800), 2/3..1 on to "u" (350 / 600).
 //   It shapes the drone toward a choir, lifting a harmonic on a formant by 4.7 dB at most and
 //   keeping the level within 2.5 dB of the dry's; at 0 it costs nothing.
-// - Tone: a gentle low-pass SVF (Q 0.707, no peak) after the sum, in stereo.
+// - Tone: a gentle low-pass SVF (Q 0.707, no peak) after the sum, in stereo. Its coefficients are
+//   worked out once per control step: Breath moves the cutoff at most 0.023 octaves a step, and a
+//   jump of the knob steps them, which the filter takes without a click (its state carries on;
+//   2.5 kHz to 150 Hz at the drone's peak moves it less than the drone moves itself).
 // - Breath: a sine LFO at breathHz moves the level by +-3 dB and the cutoff by +-1 octave, both
 //   times breath.
 // - Width: partial i is panned to width * kPan[i], equal power (unity in the middle, as
-//   PolyForce pans).
+//   PolyForce pans): Sub in the middle, Root and Octave to the left, Fifth and Color to the right.
 // - A new table (another one chosen, or the slot's table published over the sine it played
 //   until it was built) fades in over kTableFade samples (20 ms), both tables read only for that
 //   long: a switch never steps. The old one is read after the switch: published tables stay while
@@ -47,17 +56,21 @@
 // kHeadroom (ground.cpp says how it was set). The send is taken after level, fade and breath:
 // level 0, mute or silence send nothing.
 //
-// Control rate: once per chunk of kChunk samples the glide, fade, LifeScan, breath, cutoff, body
-// and the partials' pitches take one step; the gains ramp across the chunk and the filters glide
-// (svf.h), so nothing steps. A render of any n is cut into chunks of at most kChunk, each one
-// control step of its own length.
+// Mute: while sounding(), render() must be called every block, muted or not. Muted it is cheap
+// (nothing is read: the oscillators are skipped along, and the fades, glides and scans keep
+// running), its gain ramps to 0 over a step, and unmuted it ramps back where it would have been,
+// without a click. audible() says whether anything can be heard: the engine's idle gate.
+//
+// Control rate: once per control step of kChunk samples the glide, fade, dip, LifeScan, breath,
+// Tone, Body and the partials' pitches take one step; the gains ramp across the step and Body's
+// formants glide (svf.h), so nothing steps. A render of any n is cut into steps of at most kChunk,
+// each a control step of its own length.
 //
 // Cost, as ARM instructions per 128-sample block (qemu's count, the device's flags): every
-// partial on 48.8k, the default drone (Sub, Root, Fifth, Octave) 42.8k, Root alone 21.2k; Body
-// adds 5.6k and Breath 2.8k (it keeps the Tone's cutoff gliding). Root and Fifth cost about 9.7k
-// each (Hermite over a pair of frames), Sub, Octave and Color 6.0k (linear); a table change reads
-// both tables for its 20 ms. By PolyForce's ~1 ns an instruction that is 1.7%, 1.5% and 0.7% of
-// a block, against CONCEPT.md 11's 0.8%; the device bench (Task 11) has the final word.
+// partial on 39.5k, the default drone (Sub, Root, Fifth, Octave) 33.7k, Root alone 16.4k; each
+// partial about 5.8k, Body 5.4k more, Breath 0.6k (the Tone's coefficients, once a step). A table
+// change reads both tables for its 20 ms. By PolyForce's ~1 ns an instruction that is 1.4%, 1.2%
+// and 0.6% of a block, against CONCEPT.md 11's 0.8%; the device bench (Task 11) has the final word.
 //
 // Real-time rules: everything is fixed-size. Nothing allocates, locks or throws after the
 // constructor.
@@ -100,35 +113,59 @@ public:
     static constexpr float kBeat[PT_COUNT] = {0.0f, -0.2f, 0.2f, -0.1f, 0.1f};
     static constexpr float kPan[PT_COUNT] = {0.0f, -0.3f, 0.3f, -0.6f, 0.6f};
     static constexpr int kTableFade = 882;   // 20 ms: a new table fades in over this many samples
+    static constexpr int kDip = 1764;        // 40 ms: a Register change dips out, and back, over this
 
     Ground();
     // The random numbers (the scan's sway phase and smear, the oscillators' and the breath's start
     // phases), then reset(): the same seed and the same calls play the same samples.
     void seed(uint32_t s);
+    // Cheap enough per block: what needs a libm call (the glide's rate, Equal's ratios, the pans) is
+    // worked out again only when its input changes.
     void set(const GroundPatch& p, const HarmonyPatch& h);
-    // A MIDI note: only its pitch class counts (Register places the octave). -1 (any negative):
-    // stop, fading out.
+    // A MIDI note: only its pitch class counts (the octave is chosen as above). -1 (any negative):
+    // stop, fading out. The same pitch class again changes nothing.
     void setTarget(int rootNote);
     // Silent, no target, every phase back to where the seed puts it. The patch stays.
     void reset();
     // Adds into outL/outR, and adds the send into sendL/sendR at `spaceSend` (a gain, 0..1). n <= 128
-    // (any n works; it is cut into control chunks). Silent: returns at once.
+    // (any n works; it is cut into control steps). Off: returns at once. While sounding(), call it
+    // every block, muted or not (see Mute above).
     void render(const TableSet& tables, float* outL, float* outR, float* sendL, float* sendR,
                 float spaceSend, int n);
-    // Fading in, held or fading out. It ignores mute and level: muted it is still on (it costs only
-    // its control steps, and unmuted it is there again); the engine skips a muted Ground itself.
+    // Fading in, held or fading out, muted or not: while it is, render() must be called.
     bool sounding() const { return sounding_; }
+    // Sounding, not muted and its level over 0: something can be heard.
+    bool audible() const { return sounding_ && !mute_ && level_ > 0.0f; }
 
-    // For tests and the engine's Info: the target note (-1: none), and the root's pitch now and
-    // where it is gliding to, in fractional semitones (the octave from Register, tuned).
+    // For tests and the engine's Info: the target note (-1: none); the MIDI note the root sits on
+    // (its octave chosen; -1: off); the root's pitch now and where it glides to, in fractional
+    // semitones (tuned).
     int target() const { return target_; }
+    int note() const { return note_; }
     double pitch() const { return pitch_; }
     double goal() const { return goal_; }
 
 private:
-    double rootPitch(int note) const;   // the tuned pitch Register and the tuning put `note` at
-    void stop();                        // the fade has reached -60: silent, ready to start afresh
+    // What one control step works out for its samples: the gains at its two ends, Body's share,
+    // the read position, the partials' pitches.
+    struct Step {
+        int n = 0;
+        bool ending = false;        // the fade-out reaches -60 dB in this step
+        bool fromSilence = false;   // the output's gain ended the last step at 0 (see chunk())
+        float g0 = 0.0f, g1 = 0.0f, s0 = 0.0f, s1 = 0.0f, w0 = 0.0f, w1 = 0.0f;
+        float pos = 0.0f;
+        float inc[PT_COUNT] = {};
+    };
+
+    int base() const { return 12 * (register_ + 1); }   // Register's C
+    void shiftRegister();                // at the bottom of a dip: the root moves by the octaves
+    void stop();                         // the fade has reached -60: off, ready to start afresh
     void chunk(const Wavetable& want, float* outL, float* outR, float* sendL, float* sendR, float spaceSend, int n);
+    Step control(float spaceSend, int n);
+    void partials(const Step& s, const Wavetable& want, float* accL, float* accR);
+    void filters(const Step& s, const float* accL, const float* accR, float* yL, float* yR);
+    void output(const Step& s, const float* yL, const float* yR, float* outL, float* outR, float* sendL, float* sendR);
+    void silent(const Step& s, const Wavetable& want);   // a step with nothing to hear: skip along
 
     // The patch, kept in range.
     HarmonyPatch h_;
@@ -137,34 +174,39 @@ private:
     LifePos pos_{};
     float level_ = 0.7f, cutoff_ = 2500.0f, beat_ = 0.3f, gravity_ = 6.0f, fade_ = 4.0f;
     float body_ = 0.0f, breath_ = 0.3f, breathHz_ = 0.07f;
-    int register_ = 2;
-    float ratio_[PT_COUNT] = {};        // each partial's frequency over the root's
+    int wantRegister_ = 2;               // the Register asked for; register_ follows it (a dip)
+    float ratio_[PT_COUNT] = {};         // each partial's frequency over the root's
     float gainL_[PT_COUNT] = {}, gainR_[PT_COUNT] = {};   // level times pan, where set() aims them
-    double glideKeep_ = 0.0;            // what of the distance to the goal a full chunk leaves
+    // set()'s caches: what its libm calls were last worked out for.
+    float gravityFor_ = -1.0f, widthFor_ = -1.0f;
+    int ratiosFor_ = -1;
+    double glideKeep_ = 0.0;             // what of the distance to the goal a full step leaves
+    float panL_[PT_COUNT] = {}, panR_[PT_COUNT] = {};
 
     // State.
     uint32_t seed_ = 1;
     LifeScan scan_;
-    TableOsc hermite_[2];               // Root, Fifth
-    TableOscLinear linear_[3];          // Sub, Octave, Color
+    TableOscLinear osc_[PT_COUNT];       // per partial (PT_SUB .. PT_COLOR)
     // A table change: the oscillators as they were at the switch go on reading the old table while
     // it fades out.
-    TableOsc oldHermite_[2];
-    TableOscLinear oldLinear_[3];
-    const Wavetable* table0_ = nullptr; // the table played (faded to)
-    const Wavetable* old_ = nullptr;    // the table fading out; nullptr: none
-    int tableFade_ = 0;                 // samples of the fade still to go
-    float curL_[PT_COUNT] = {}, curR_[PT_COUNT] = {};     // each partial's gains as the last chunk ended
-    int target_ = -1;
-    double pitch_ = 0.0, goal_ = 0.0;   // the root now and where it glides to (semitones)
+    TableOscLinear fadeOsc_[PT_COUNT];
+    const Wavetable* table0_ = nullptr;  // the table played (faded to)
+    const Wavetable* fadeFrom_ = nullptr;   // the table fading out; nullptr: none
+    int tableFade_ = 0;                  // samples of the fade still to go
+    float curL_[PT_COUNT] = {}, curR_[PT_COUNT] = {};     // each partial's gains as the last step ended
+    int target_ = -1, note_ = -1;
+    int register_ = 2;                   // the Register the root is placed by now
+    double pitch_ = 0.0, goal_ = 0.0;    // the root now and where it glides to (semitones)
     bool sounding_ = false;
-    bool fresh_ = true;                 // the next chunk starts from silence: glides jump, no ramps
+    bool fresh_ = true;                  // the drone starts from off: its first step puts the root on its goal
     float fadeDb_ = -60.0f;
-    double breathPhase_ = 0.0;          // cycles, 0..1
-    float gain_ = 0.0f, send_ = 0.0f;   // the output's gain and the send's, as the last chunk ended
-    float wet_ = 0.0f;                  // Body's share (0..1) as the last chunk ended
-    Glide<1, 1> tone_;                  // the Tone's g, gliding in octaves
-    Glide<2, 2> formant_;               // Body's two formants' g
+    float dip_ = 1.0f;                   // a Register change's gain: 1 none, 0 the bottom
+    double breathPhase_ = 0.0;           // cycles, 0..1
+    float gain_ = 0.0f, send_ = 0.0f;    // the output's gain and the send's, as the last step ended
+    float wet_ = 0.0f;                   // Body's share (0..1) as the last step ended
+    float toneHz_ = -1.0f;               // the cutoff toneUpdate_ was worked out for
+    SvfUpdate toneUpdate_{};
+    Glide<2, 2> formant_;                // Body's two formants' g
     SvfState toneSvf_, f1Svf_, f2Svf_;
 };
 

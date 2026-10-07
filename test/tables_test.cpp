@@ -19,41 +19,9 @@
 namespace aft {
 namespace {
 
-using cd = std::complex<double>;
 using Clock = std::chrono::steady_clock;
 
 double secondsSince(Clock::time_point t) { return std::chrono::duration<double>(Clock::now() - t).count(); }
-
-// The test's twiddles for a power-of-two n, computed once per size (main thread only).
-const std::vector<cd>& twiddles(size_t n) {
-    static std::vector<cd> w[16];
-    size_t k = 0;
-    while ((size_t{1} << k) < n) ++k;
-    if (w[k].size() != n / 2) {
-        w[k].resize(n / 2);
-        for (size_t i = 0; i < n / 2; ++i) w[k][i] = std::polar(1.0, -2.0 * M_PI * static_cast<double>(i) / static_cast<double>(n));
-    }
-    return w[k];
-}
-
-// The test's own FFT (plain radix-2, forward), so a slip in the builder's can't hide itself.
-void fft(std::vector<cd>& a) {
-    const size_t n = a.size();
-    for (size_t i = 1, j = 0; i < n; ++i) {
-        size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        if (i < j) std::swap(a[i], a[j]);
-    }
-    const std::vector<cd>& w = twiddles(n);
-    for (size_t len = 2; len <= n; len <<= 1)
-        for (size_t i = 0; i < n; i += len)
-            for (size_t k = 0; k < len / 2; ++k) {
-                const cd u = a[i + k], v = a[i + k + len / 2] * w[k * (n / len)];
-                a[i + k] = u + v;
-                a[i + k + len / 2] = u - v;
-            }
-}
 
 // |X_h|^2 for bins h = 0..n/2 of one mip level, read the way the oscillator reads it (sample * scale).
 std::vector<double> power(const af::Wavetable& t, int frame, int mip) {
@@ -115,10 +83,10 @@ void testNames() {
 }
 
 // The shape every table has: frames, layout, size (check 6), the guard samples, finite scales.
-void testShapes(const std::vector<af::Wavetable>& tables) {
+void testShapes() {
     std::printf("== tables: frames, layout, size\n");
     for (int id = 0; id < af::TB_COUNT; ++id) {
-        const af::Wavetable& t = tables[static_cast<size_t>(id)];
+        const af::Wavetable& t = testTable(id);
         const int frames = af::isLifetime(id) ? af::kLifeFrames : 1;
         CHECK(t.name == af::tableName(id));
         CHECK(t.frames == frames);
@@ -138,11 +106,11 @@ void testShapes(const std::vector<af::Wavetable>& tables) {
 
 // Check 1: every frame of every table, at every level k, carries nothing above harmonic 1024 >> k
 // (level 0: nothing on Nyquist).
-void testBandLimits(const std::vector<af::Wavetable>& tables) {
+void testBandLimits() {
     std::printf("== tables: band limits per mip level, every frame\n");
     const Clock::time_point t0 = Clock::now();
     for (int id = 0; id < af::TB_COUNT; ++id) {
-        const af::Wavetable& t = tables[static_cast<size_t>(id)];
+        const af::Wavetable& t = testTable(id);
         double worst = -400.0;
         for (int f = 0; f < t.frames; ++f) {
             for (int k = 0; k < af::kMipLevels; ++k) {
@@ -164,10 +132,10 @@ void testBandLimits(const std::vector<af::Wavetable>& tables) {
 
 // Check 2: a lifetime table carries timbre, not level: all 256 frames within 0.5 dB of each other,
 // and all at a full-scale sine's RMS.
-void testEqualRms(const std::vector<af::Wavetable>& tables) {
+void testEqualRms() {
     std::printf("== tables: equal RMS across a life, every frame\n");
     for (int id = 0; id < af::TB_SINE; ++id) {
-        const af::Wavetable& t = tables[static_cast<size_t>(id)];
+        const af::Wavetable& t = testTable(id);
         CHECK(t.frames == af::kLifeFrames);
         if (t.frames != af::kLifeFrames) continue;
         double lo = 1e9, hi = 0.0;
@@ -185,10 +153,10 @@ void testEqualRms(const std::vector<af::Wavetable>& tables) {
 // Check 3: Felt Piano darkens frame by frame (its upper harmonics die first), Sine Bloom brightens
 // from a pure sine, both by the power-weighted centroid (centroid() says why). "Monotonic" to
 // within the 16-bit rounding (1e-4 harmonics).
-void testLifeCurves(const std::vector<af::Wavetable>& tables) {
+void testLifeCurves() {
     std::printf("== tables: the life curves\n");
     for (int id : {af::TB_FELT_PIANO, af::TB_SINE_BLOOM}) {
-        const af::Wavetable& t = tables[static_cast<size_t>(id)];
+        const af::Wavetable& t = testTable(id);
         CHECK(t.frames == af::kLifeFrames);
         if (t.frames != af::kLifeFrames) return;
         const double sign = id == af::TB_FELT_PIANO ? -1.0 : 1.0;   // falls, or rises
@@ -204,7 +172,7 @@ void testLifeCurves(const std::vector<af::Wavetable>& tables) {
         CHECK(sign * (c[255] - c[0]) > 0.3);
     }
     // Sine Bloom starts as a pure sine: everything above the fundamental under -60 dB.
-    const std::vector<double> p = power(tables[af::TB_SINE_BLOOM], 0, 0);
+    const std::vector<double> p = power(testTable(af::TB_SINE_BLOOM), 0, 0);
     double rest = 0.0;
     for (size_t h = 2; h < p.size(); ++h) rest += p[h];
     CHECK(db(rest / p[1]) < -60.0);
@@ -220,15 +188,15 @@ constexpr double kBuilderLimit = 120.0;
 constexpr double kBuilderLimit = 30.0;
 #endif
 
-void testHandoff(const std::vector<af::Wavetable>& built, Clock::time_point started) {
+void testHandoff(Clock::time_point started) {
     std::printf("== tables: the builder thread and the handoff\n");
     af::TableSet s;
     bool fallback = true;
     for (int id = -1; id <= af::TB_COUNT; ++id) fallback = fallback && &s.get(id) == &af::sineTable();
     CHECK(fallback);
     CHECK(af::sineTable().frames == 1);
-    s.t[af::TB_SAW].store(&built[af::TB_SAW], std::memory_order_release);
-    CHECK(&s.get(af::TB_SAW) == &built[af::TB_SAW]);
+    s.t[af::TB_SAW].store(&testTable(af::TB_SAW), std::memory_order_release);
+    CHECK(&s.get(af::TB_SAW) == &testTable(af::TB_SAW));
     CHECK(&s.get(af::TB_SQUARE) == &af::sineTable());
 
     af::TableSet& shared = af::sharedTables();
@@ -257,7 +225,7 @@ void testHandoff(const std::vector<af::Wavetable>& built, Clock::time_point star
         const af::Wavetable* p = shared.t[id].load(std::memory_order_acquire);
         if (!p) continue;
         picked = picked && &shared.get(id) == p;
-        const af::Wavetable& b = built[static_cast<size_t>(id)];
+        const af::Wavetable& b = testTable(id);
         same = same && p->name == b.name && p->frames == b.frames && p->data == b.data && p->scale == b.scale;
     }
     CHECK(picked);
@@ -348,20 +316,20 @@ void tablesTests() {
     const Clock::time_point started = Clock::now();
     af::ensureTablesBuilding();   // builds what is missing; works alongside the builds below
 
-    std::vector<af::Wavetable> built(af::TB_COUNT);
+    // The tables, built here once for the run (signal.h's testTable): the later suites play them.
     std::printf("  built in");
     for (int id = 0; id < af::TB_COUNT; ++id) {
         const Clock::time_point t0 = Clock::now();
-        CHECK(af::buildTable(id, built[static_cast<size_t>(id)]));
+        testTable(id);
         std::printf("%s %s %.0f ms", id ? "," : "", af::tableName(id), 1e3 * secondsSince(t0));
     }
     std::printf("\n");
 
-    testShapes(built);
-    testBandLimits(built);
-    testEqualRms(built);
-    testLifeCurves(built);
-    testHandoff(built, started);
+    testShapes();
+    testBandLimits();
+    testEqualRms();
+    testLifeCurves();
+    testHandoff(started);
 
     // The tables kept by the release with an instance alive were not built again.
     bool stayed = true;

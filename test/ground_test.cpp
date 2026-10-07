@@ -1,6 +1,7 @@
-// Ground (dsp/ground.h): the just partials, the register, beating in Hz, gravity, the fade, the
-// gains, no steps when the patch or the table changes, Body and Breath under stress, the headroom,
-// determinism. Needs no plugin: make test-module M=ground runs it on its own.
+// Ground (dsp/ground.h): the just partials, the linear read's images, beating in Hz, gravity, the
+// octave a root takes and a Register change, the fade, the gains and mute, no steps when the patch
+// or the table changes, Body, Breath, Width and Tone, odd parameters and odd sequences, stability,
+// the headroom, determinism. Needs no plugin: make test-module M=ground runs it on its own.
 #include "check.h"
 #include "signal.h"
 #include "../dsp/ground.h"
@@ -12,26 +13,22 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 namespace aft {
 namespace {
 
-using cd = std::complex<double>;
 constexpr int kHostBlock = 128;   // MPC's block
 constexpr int kSec = 44100;
 
-// The tables the checks play, built once per run and published the way the plugin's builder does.
+// The library as the plugin's builder publishes it, every table built once per run (signal.h).
 const af::TableSet& tables() {
-    static af::Wavetable t[af::TB_COUNT];
     static af::TableSet set;
-    static bool built = false;
-    if (!built) {
-        for (int id = 0; id < af::TB_COUNT; ++id) {   // the headroom sweep plays every one
-            CHECK(af::buildTable(id, t[id]));
-            set.t[id].store(&t[id], std::memory_order_release);
-        }
-        built = true;
+    static bool published = false;
+    if (!published) {
+        for (int id = 0; id < af::TB_COUNT; ++id) set.t[id].store(&testTable(id), std::memory_order_release);
+        published = true;
     }
     return set;
 }
@@ -67,26 +64,6 @@ af::GroundPatch steady(int table, float root, float fifth) {
     return p;
 }
 
-// The test's own FFT (radix-2, forward).
-void fft(std::vector<cd>& a) {
-    const size_t n = a.size();
-    for (size_t i = 1, j = 0; i < n; ++i) {
-        size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        if (i < j) std::swap(a[i], a[j]);
-    }
-    std::vector<cd> w(n / 2);
-    for (size_t k = 0; k < n / 2; ++k) w[k] = std::polar(1.0, -2.0 * kPi * static_cast<double>(k) / static_cast<double>(n));
-    for (size_t len = 2; len <= n; len <<= 1)
-        for (size_t i = 0; i < n; i += len)
-            for (size_t k = 0; k < len / 2; ++k) {
-                const cd u = a[i + k], v = a[i + k + len / 2] * w[k * (n / len)];
-                a[i + k] = u + v;
-                a[i + k + len / 2] = u - v;
-            }
-}
-
 // The frequency of the strongest partial within `span` Hz of `near`, from 2^16 samples of x at
 // `from`: Blackman-Harris, zero-padded to 2^18, then a parabola through the log magnitudes of the
 // top bin and its neighbours. The log of a Gaussian is a parabola and Blackman-Harris is nearly
@@ -109,22 +86,6 @@ double peakHz(const Buf& x, size_t from, double near, double span) {
     const double m1 = std::log(std::abs(a[k - 1])), m0 = std::log(std::abs(a[k])), p1 = std::log(std::abs(a[k + 1]));
     const double d = 0.5 * (m1 - p1) / (m1 - 2.0 * m0 + p1);
     return (static_cast<double>(k) + d) * bin;
-}
-
-// Frequency by rising zero crossings (interpolated), over x[from..to): for a pure tone.
-double zeroCrossHz(const Buf& x, size_t from, size_t to) {
-    double first = -1.0, last = 0.0;
-    int n = 0;
-    for (size_t i = from + 1; i < to; ++i)
-        if (x[i - 1] < 0.0f && x[i] >= 0.0f) {
-            const double t = static_cast<double>(i - 1) + x[i - 1] / static_cast<double>(x[i - 1] - x[i]);
-            if (first < 0.0) first = t;
-            else {
-                last = t;
-                ++n;
-            }
-        }
-    return n > 0 ? static_cast<double>(af::kRate) * n / (last - first) : 0.0;
 }
 
 // How fast the amplitude of x[from..to) near `hz` beats, and how deep (the envelope's swing over
@@ -180,6 +141,14 @@ Buf sum(const Out& o) {
     return s;
 }
 
+// A partial's level in a patch, by its index.
+float& partialLevel(af::GroundPatch& p, int i) {
+    float* const level[af::Ground::PT_COUNT] = {&p.sub, &p.root, &p.fifth, &p.octave, &p.color};
+    return *level[i];
+}
+
+double toneHz(double note) { return 440.0 * std::exp2((note - 69.0) / 12.0); }
+
 // Check 1: in Just the Fifth is 3/2 of the Root, to the hundredth of a hertz, and the root is
 // the target's pitch class in Register's octave. Each tuning's Color intervals, likewise.
 void testPartials() {
@@ -199,8 +168,9 @@ void testPartials() {
         g.setTarget(note);
         CHECK(g.goal() == 36.0);
     }
-    g.setTarget(43);   // G: under Just in C, the key's own fifth
-    CHECK(std::fabs(g.goal() - af::tunedPitch(h, 43)) < 1e-9 && std::fabs(g.goal() - 43.0195500086538738) < 1e-6);
+    g.setTarget(43);   // G: under Just in C a pure fifth, taken a fourth below (the nearer place)
+    CHECK(g.note() == 31 && std::fabs(g.goal() - af::tunedPitch(h, 31)) < 1e-9);
+    CHECK(std::fabs(g.goal() - 31.0195500086538738) < 1e-6);
 
     // Equal: the Fifth is 7 semitones.
     af::HarmonyPatch eq = h;
@@ -238,6 +208,43 @@ void testPartials() {
             CHECK(err < 0.01);
         }
     std::printf("  Color, 3 tunings x 6 intervals: within %.1e Hz of ratio x root\n", worst);
+}
+
+// The linear read's images: every partial reads linearly. On Saw, the brightest table, at the
+// highest root (B3) with the Tone open, nothing below 15 kHz off a partial's own harmonics comes
+// within 60 dB of its fundamental (lifeosc.h holds the linear read to -60 dB as well).
+void testImages() {
+    std::printf("== ground: the linear read's images (Saw, B3, Tone 16 kHz)\n");
+    const af::HarmonyPatch h;
+    const double rootHz = toneHz(af::tunedPitch(h, 59));
+    const double ratio[af::Ground::PT_COUNT] = {0.5, 1.0, 1.5, 2.0, 8.0 / 3.0};   // Color: the 11th, the highest
+    const char* const name[af::Ground::PT_COUNT] = {"Sub", "Root", "Fifth", "Octave", "Color (11th)"};
+    for (int i = 0; i < af::Ground::PT_COUNT; ++i) {
+        af::GroundPatch p = steady(af::TB_SAW, 0.0f, 0.0f);
+        partialLevel(p, i) = 1.0f;
+        p.colorInterval = af::CI_ELEVENTH;
+        p.registerOct = 3;
+        p.cutoffHz = 16000.0f;
+        af::Ground g;
+        g.seed(40);
+        g.set(p, h);
+        g.setTarget(59);
+        const Out o = play(g, kSec / 2 + (1 << 16));
+        const Spectrum sp(o.L, kSec / 2, 1 << 16);
+        const double f = ratio[i] * rootHz;
+        double worst = 0.0, at = 0.0;
+        for (size_t k = 1; k < sp.amp.size() && static_cast<double>(k) * sp.binHz < 15000.0; ++k) {
+            const double hz = static_cast<double>(k) * sp.binHz;
+            if (std::fabs(hz - std::round(hz / f) * f) < 8.0 * sp.binHz) continue;   // a harmonic's main lobe
+            if (sp.amp[k] > worst) {
+                worst = sp.amp[k];
+                at = hz;
+            }
+        }
+        const double rel = db(worst / sp.at(f));
+        std::printf("  %-12s %5.1f Hz: images at most %.1f dB, at %.0f Hz\n", name[i], f, rel, at);
+        CHECK(rel < -60.0);
+    }
 }
 
 // Check 2: Beat is in Hz. With Root and Fifth on a saw, Root's 3rd harmonic and Fifth's 2nd meet,
@@ -324,6 +331,121 @@ void testGravity() {
     g.setTarget(53);
     play(g, kHostBlock);
     CHECK(g.pitch() == g.goal());
+}
+
+// The octave a new root takes: its pitch class's place nearest where the root is now (the
+// shortest glide), within base - 6 .. base + 17. Equal, so a note is its pitch.
+void testOctaves() {
+    std::printf("== ground: the octave of a new root\n");
+    af::HarmonyPatch eq;
+    eq.tuning = af::TU_EQUAL;
+    af::GroundPatch p = steady(af::TB_SINE, 1.0f, 0.0f);
+    p.gravityS = 1.0f;
+    {   // B to C rises a semitone (register 2: B2 to C3), not falls eleven.
+        af::Ground g;
+        g.seed(30);
+        g.set(p, eq);
+        g.setTarget(71);   // B, from off: in Register's octave
+        play(g, kSec / 10);
+        CHECK(g.note() == 47);
+        g.setTarget(60);
+        CHECK(g.note() == 48 && g.goal() == 48.0);
+    }
+    {   // In B (Just), I to ii: B to C#, a whole tone (9/8) up.
+        af::HarmonyPatch hb;
+        hb.key = 11;
+        af::Ground g;
+        g.seed(31);
+        g.set(p, hb);
+        g.setTarget(47);
+        play(g, kSec / 10);
+        const double from = g.pitch();
+        g.setTarget(61);
+        CHECK(g.note() == 49);
+        CHECK(std::fabs(g.goal() - from - 12.0 * std::log2(9.0 / 8.0)) < 1e-9);
+    }
+    // A random walk of targets, gliding a little between them, in every register: always within
+    // the bounds, always the nearer of the pitch class's two places there.
+    uint32_t r = 0x2468ACE1u;
+    int longest = 0;
+    bool inside = true, nearest = true;
+    for (int reg = 1; reg <= 3; ++reg) {
+        p.registerOct = reg;
+        af::Ground g;
+        g.seed(32);
+        g.set(p, eq);
+        g.setTarget(static_cast<int>(af::xorshift(r) % 128));
+        const int base = 12 * (reg + 1);
+        for (int step = 0; step < 1000; ++step) {
+            const int target = static_cast<int>(af::xorshift(r) % 128), before = g.note();
+            const double now = g.pitch();
+            g.setTarget(target);
+            int want = before;
+            if (target % 12 != before % 12) {
+                const int lo = base - 6 + ((target - (base - 6)) % 12 + 12) % 12;
+                want = std::fabs(lo + 12 - now) < std::fabs(lo - now) ? lo + 12 : lo;
+            }
+            nearest = nearest && g.note() == want;
+            inside = inside && g.note() >= base - 6 && g.note() < base + 18;
+            longest = std::max(longest, std::abs(g.note() - before));
+            play(g, kHostBlock * static_cast<int>(1 + af::xorshift(r) % 8));
+        }
+    }
+    std::printf("  3000 targets at random: within the bounds %s, the nearer place %s; the longest move %d semitones\n",
+                inside ? "always" : "NOT always", nearest ? "always" : "NOT always", longest);
+    CHECK(inside);
+    CHECK(nearest);
+}
+
+// Register changed while it sounds: no glide. It dips out over 40 ms, moves an octave at the
+// bottom, and comes back over 40 ms, never stepping further than the steady drone moves in a
+// sample. Muted, there is nothing to dip: the next step moves it.
+void testRegisterChange() {
+    std::printf("== ground: a Register change dips, it doesn't glide\n");
+    af::HarmonyPatch eq;
+    eq.tuning = af::TU_EQUAL;
+    af::GroundPatch p = steady(af::TB_SINE, 1.0f, 0.0f);
+    p.gravityS = 6.0f;   // a glide would be slow, and plain to see
+    af::Ground g;
+    g.seed(33);
+    g.set(p, eq);
+    g.setTarget(59);   // B2 (47): an 8 ms period, short against the dip
+    const Out a = play(g, kSec / 2);
+    CHECK(g.note() == 47);
+    p.registerOct = 3;
+    g.set(p, eq);
+    Buf x;
+    bool twoPitches = true;
+    int moved = -1;
+    for (int b = 0; b < kSec / 5 / kHostBlock; ++b) {
+        const Out o = play(g, kHostBlock);
+        x.insert(x.end(), o.L.begin(), o.L.end());
+        twoPitches = twoPitches && (g.pitch() == 47.0 || g.pitch() == 59.0);
+        if (moved < 0 && g.pitch() == 59.0) moved = b;
+    }
+    const double movedMs = 1000.0 * (moved + 1) * kHostBlock / kSec;
+    // The level: the drone's peak in 8 ms windows (a period of B2) against the steady drone's.
+    const float steadyPeak = peak(a.L, a.L.size() / 2);
+    float lowest = 1e9f;
+    for (size_t i = 0; i + 353 <= x.size(); i += 44) lowest = std::min(lowest, peak(x, i, i + 353));
+    const double back = db(rms(x, x.size() - kSec / 20, x.size()) / rms(a.L, a.L.size() / 2));
+    const float steadyStep = std::max(maxStep(a.L, a.L.size() / 2), maxStep(x, x.size() - kSec / 20));
+    const float jump = std::max(maxStep(x), std::fabs(x[0] - a.L.back()));
+    std::printf("  47 -> 59 at %.1f ms, no pitch between; the level down to %.3f of its peak, back at %+.2f dB; "
+                "largest step %.5f against %.5f steady\n", movedMs, lowest / steadyPeak, back, jump, steadyStep);
+    CHECK(twoPitches && moved >= 0 && g.note() == 59 && g.goal() == 59.0);
+    CHECK(movedMs > 35.0 && movedMs < 50.0);
+    CHECK(lowest < 0.15f * steadyPeak);
+    CHECK(std::fabs(back) < 0.2);
+    CHECK(jump <= 1.1f * steadyStep);
+
+    p.mute = true;
+    g.set(p, eq);
+    play(g, kHostBlock);   // the gain ramps down
+    p.registerOct = 1;
+    g.set(p, eq);
+    play(g, kHostBlock);
+    CHECK(g.note() == 35 && g.pitch() == 35.0);
 }
 
 // Check 4: nothing before a target; a 1 s fade reaches -30 dB at 0.5 s; a stop goes silent
@@ -417,13 +539,15 @@ void testGains() {
         const Out o = play(g, 2 * kSec, 1.0f);
         const bool zero = peak(o.L) == 0.0f && peak(o.R) == 0.0f && peak(o.sendL) == 0.0f && peak(o.sendR) == 0.0f;
         CHECK(zero);
-        CHECK(g.sounding());   // still on: unmuted, it is there
+        CHECK(g.sounding() && !g.audible());   // still on (unmuted, it is there), but nothing to hear
     }
     // The send is the output times spaceSend.
     af::Ground g;
     g.seed(7);
     g.set(af::GroundPatch{}, af::HarmonyPatch{});
+    CHECK(!g.audible());
     g.setTarget(50);
+    CHECK(g.audible());
     const Out o = play(g, 2 * kSec, 0.25f);
     double err = 0.0;
     for (size_t i = 0; i < o.L.size(); ++i) err = std::max(err, static_cast<double>(std::fabs(o.sendL[i] - 0.25f * o.L[i])));
@@ -460,6 +584,350 @@ void testNoSteps() {
     const float jump = std::max(maxStep(b.L), std::fabs(b.L[0] - last));
     std::printf("  largest step %.5f before, %.5f across the change (at %.2f, the peak %.2f)\n", steadyStep, jump, last, top);
     CHECK(jump <= 3.0f * steadyStep);   // ramps over a chunk; a step would be ~30x
+}
+
+// Body: a harmonic on a formant is lifted (4.7 dB at most), one far under the formants takes the
+// dry's share (0.75, -2.5 dB), and the most-lifted harmonic moves down a -> o -> u, each time within
+// a harmonic of the vowel's first formant (800, 450, 350 Hz). Gains per harmonic of a saw drone on
+// C2 against Body 0 with the same seed: the filters are linear, so the ratio is their response.
+void testBody() {
+    std::printf("== ground: Body\n");
+    af::GroundPatch p = steady(af::TB_SAW, 1.0f, 0.0f);
+    p.cutoffHz = 16000.0f;
+    p.width = 0.0f;
+    auto render = [&p](float body) {
+        p.body = body;
+        af::Ground g;
+        g.seed(34);
+        g.set(p, af::HarmonyPatch{});
+        g.setTarget(48);
+        return play(g, 3 * kSec / 2).L;
+    };
+    const Buf dry = render(0.0f);
+    const double f0 = toneHz(36.0);   // C2, the tonic: Just leaves it where Equal has it
+    const float bodies[3] = {1.0f / 3.0f, 2.0f / 3.0f, 1.0f};
+    const double first[3] = {800.0, 450.0, 350.0};
+    const char* const vowel[3] = {"a", "o", "u"};
+    const size_t from = kSec / 2;
+    double before = 1e9;
+    bool down = true;
+    for (int v = 0; v < 3; ++v) {
+        const Buf wet = render(bodies[v]);
+        auto gain = [&](double hz) { return db(magnitude(wet, hz, from) / magnitude(dry, hz, from)); };
+        double top = -100.0, topHz = 0.0;
+        for (int k = 1; k * f0 < 1500.0; ++k) {
+            const double gk = gain(k * f0);
+            if (gk > top) {
+                top = gk;
+                topHz = k * f0;
+            }
+        }
+        const double low = gain(2.0 * f0);
+        std::printf("  \"%s\" (Body %.2f): the most lifted %.0f Hz, %+.2f dB; %.0f Hz %+.2f dB\n", vowel[v], bodies[v], topHz,
+                    top, 2.0 * f0, low);
+        CHECK(top > 3.0 && top < 4.9);
+        CHECK(std::fabs(topHz - first[v]) <= f0);
+        CHECK(std::fabs(low - db(0.75)) < 0.5);
+        down = down && topHz < before;
+        before = topHz;
+    }
+    CHECK(down);
+}
+
+// Breath: a sine at breathHz moving the level by +-3 dB times breath and the cutoff by +-1 octave
+// times breath. The level: a pure drone against a twin without Breath (the same seed, the same
+// phases), its gain in 10 ms windows; the swing's top and bottom half a cycle apart. The cutoff:
+// a saw drone's 31st harmonic (2.03 kHz) against its fundamental under a Tone of 1 kHz, swung to
+// 500 Hz and 2 kHz, against the twin's; the low-pass's response says what to expect.
+double lowPass(double hz, double cutoff) {   // the Tone's response: Q 0.707, through the bilinear map
+    const double r = std::tan(kPi * hz / af::kRate) / std::tan(kPi * cutoff / af::kRate);
+    return 1.0 / std::sqrt(1.0 + r * r * r * r);
+}
+
+void testBreath() {
+    std::printf("== ground: Breath\n");
+    for (float breath : {1.0f, 0.5f}) {
+        af::GroundPatch q = steady(af::TB_SINE, 1.0f, 0.0f);
+        q.cutoffHz = 16000.0f;
+        af::GroundPatch p = q;
+        p.breath = breath;
+        p.breathHz = 1.0f;
+        af::Ground g, t;
+        g.seed(35);
+        t.seed(35);
+        g.set(p, af::HarmonyPatch{});
+        t.set(q, af::HarmonyPatch{});
+        g.setTarget(48);
+        t.setTarget(48);
+        const Buf x = play(g, 2 * kSec + kSec / 10).L, y = play(t, 2 * kSec + kSec / 10).L;
+        double hi = -100.0, lo = 100.0;
+        size_t hiAt = 0, loAt = 0;
+        for (size_t c = kSec / 10; c + 441 <= x.size(); c += 220) {
+            const double gdb = db(rms(x, c, c + 441) / rms(y, c, c + 441));
+            if (gdb > hi) {
+                hi = gdb;
+                hiAt = c;
+            }
+            if (gdb < lo) {
+                lo = gdb;
+                loAt = c;
+            }
+        }
+        const double apart = std::fmod(std::fabs(static_cast<double>(hiAt) - static_cast<double>(loAt)) / kSec, 1.0);
+        std::printf("  Breath %.1f at 1 Hz: the level %+.2f / %+.2f dB, top and bottom %.3f s apart (mod 1 s)\n", breath, hi, lo,
+                    apart);
+        CHECK(std::fabs(hi - 3.0 * breath) < 0.15 && std::fabs(lo + 3.0 * breath) < 0.15);
+        CHECK(std::fabs(apart - 0.5) < 0.03);
+    }
+    af::GroundPatch q = steady(af::TB_SAW, 1.0f, 0.0f);
+    q.cutoffHz = 1000.0f;
+    af::GroundPatch p = q;
+    p.breath = 1.0f;
+    p.breathHz = 0.25f;
+    af::Ground g, t;
+    g.seed(36);
+    t.seed(36);
+    g.set(p, af::HarmonyPatch{});
+    t.set(q, af::HarmonyPatch{});
+    g.setTarget(48);
+    t.setTarget(48);
+    const Buf x = play(g, 9 * kSec / 2).L, y = play(t, 9 * kSec / 2).L;
+    const double f0 = toneHz(36.0), fh = 31.0 * f0;
+    double hi = -100.0, lo = 100.0;
+    for (size_t c = kSec / 10; c + 2205 <= x.size(); c += 1102) {
+        const double r = db(magnitude(x, fh, c, c + 2205) / magnitude(x, f0, c, c + 2205)) -
+                         db(magnitude(y, fh, c, c + 2205) / magnitude(y, f0, c, c + 2205));
+        hi = std::max(hi, r);
+        lo = std::min(lo, r);
+    }
+    auto rel = [&](double cutoff) {
+        return db(lowPass(fh, cutoff) / lowPass(f0, cutoff)) - db(lowPass(fh, 1000.0) / lowPass(f0, 1000.0));
+    };
+    std::printf("  Breath 1 on a 1 kHz Tone: %.0f Hz against the fundamental %+.1f / %+.1f dB (2 kHz, 500 Hz: %+.1f / %+.1f)\n",
+                fh, hi, lo, rel(2000.0), rel(500.0));
+    CHECK(std::fabs(hi - rel(2000.0)) < 1.0 && std::fabs(lo - rel(500.0)) < 1.0);
+}
+
+// Width: at 0, L and R are the same, sample for sample; at 1 each partial sits where kPan puts it,
+// by the equal-power law, unity in the middle: Sub in the middle, Root and Octave left, Fifth and
+// Color right, L^2 + R^2 twice what the partial has in the middle (at Width 0, the same phases).
+void testWidth() {
+    std::printf("== ground: Width\n");
+    {
+        af::GroundPatch p;   // every moving part
+        p.color = 0.5f;
+        p.body = 0.5f;
+        p.width = 0.0f;
+        p.fadeS = 0.05f;
+        af::Ground g;
+        g.seed(37);
+        g.set(p, af::HarmonyPatch{});
+        g.setTarget(50);
+        const Out o = play(g, kSec);
+        CHECK(o.L == o.R && o.sendL == o.sendR && peak(o.L) > 0.01f);
+    }
+    const char* const name[af::Ground::PT_COUNT] = {"Sub", "Root", "Fifth", "Octave", "Color"};
+    for (int i = 0; i < af::Ground::PT_COUNT; ++i) {
+        af::GroundPatch p = steady(af::TB_SINE, 0.0f, 0.0f);
+        partialLevel(p, i) = 1.0f;
+        p.cutoffHz = 16000.0f;
+        auto render = [&p](float width) {
+            p.width = width;
+            af::Ground g;
+            g.seed(38);
+            g.set(p, af::HarmonyPatch{});
+            g.setTarget(48);
+            return play(g, kSec);
+        };
+        const Out o = render(1.0f);
+        const double l = rms(o.L, kSec / 2), r = rms(o.R, kSec / 2), middle = rms(render(0.0f).L, kSec / 2);
+        const double a = (af::Ground::kPan[i] + 1.0) * kPi / 4.0;
+        const double want = i == af::Ground::PT_SUB ? 0.0 : db(std::cos(a) / std::sin(a));
+        std::printf("  %-6s at %+.1f: L over R %+.2f dB (the law %+.2f), power %.4f of the middle's\n", name[i],
+                    af::Ground::kPan[i], db(l / r), want, (l * l + r * r) / (2.0 * middle * middle));
+        CHECK(std::fabs(db(l / r) - want) < 0.05);
+        CHECK(std::fabs((l * l + r * r) / (2.0 * middle * middle) - 1.0) < 0.01);
+    }
+}
+
+// Tone: a gentle low-pass (Q 0.707), flat under the cutoff, -3 dB at it, 12 dB an octave above it:
+// a saw drone on C2 under a Tone of 1 kHz against 16 kHz, harmonic by harmonic.
+void testTone() {
+    std::printf("== ground: Tone\n");
+    af::GroundPatch p = steady(af::TB_SAW, 1.0f, 0.0f);
+    p.width = 0.0f;
+    auto render = [&p](float cutoff) {
+        p.cutoffHz = cutoff;
+        af::Ground g;
+        g.seed(39);
+        g.set(p, af::HarmonyPatch{});
+        g.setTarget(48);
+        return play(g, 3 * kSec / 2).L;
+    };
+    const Buf a = render(1000.0f), b = render(16000.0f);
+    const double f0 = toneHz(36.0);
+    std::printf(" ");
+    for (int k : {4, 15, 31, 61}) {
+        const double f = k * f0;
+        const double got = db(magnitude(a, f, kSec / 2) / magnitude(b, f, kSec / 2));
+        const double want = db(lowPass(f, 1000.0) / lowPass(f, 16000.0));
+        std::printf(" %.0f Hz %+.2f dB (%+.2f)", f, got, want);
+        CHECK(std::fabs(got - want) < 0.2);
+    }
+    std::printf("\n");
+}
+
+// Odd numbers in every parameter: NaN and the infinities in each float of the patch, the
+// harmony's and the patch's ints out of range, a NaN send. Every sample is finite, and a sane
+// patch afterwards plays.
+void testOddParameters() {
+    std::printf("== ground: NaN and infinite parameters\n");
+    const float nan = std::nanf(""), inf = std::numeric_limits<float>::infinity();
+    bool finite = true, plays = true;
+    float top = 0.0f;
+    for (float v : {nan, inf, -inf}) {
+        af::GroundPatch p;
+        p.level = p.cutoffHz = p.beatHz = p.gravityS = p.fadeS = v;
+        p.sub = p.root = p.fifth = p.octave = p.color = v;
+        p.body = p.breath = p.breathHz = p.width = v;
+        p.pos = af::LifePos{v, v, v, v};
+        p.table = 999;
+        p.colorInterval = -3;
+        p.registerOct = 77;
+        af::HarmonyPatch h;
+        h.key = -5;
+        h.tuning = 99;
+        af::Ground g;
+        g.seed(41);
+        g.set(p, h);
+        g.setTarget(50);
+        const Out o = play(g, kSec, nan);
+        finite = finite && allFinite(o.L) && allFinite(o.R) && allFinite(o.sendL) && allFinite(o.sendR);
+        top = std::max({top, peak(o.L), peak(o.R)});
+        g.set(af::GroundPatch{}, af::HarmonyPatch{});
+        const Out s = play(g, 5 * kSec);   // the default fade is 4 s
+        finite = finite && allFinite(s.L) && allFinite(s.R) && allFinite(s.sendL) && allFinite(s.sendR);
+        plays = plays && peak(s.L, 4 * kSec) > 0.01f;
+    }
+    std::printf("  peak %.3f\n", top);
+    CHECK(finite);
+    CHECK(top <= 4.0f);
+    CHECK(plays);
+}
+
+// The odd sequences. A new root while it glides goes on from where the root is now, the octave
+// chosen from there (from the goal it would be another); Gravity 0 mid-glide lands at once. Two
+// table changes within 20 ms fade one after the other, never stepping, and end on the second. A
+// fade-out that ends while muted ends it: unmuted, silence until a new target, which starts afresh.
+// A mute and an unmute ramp, and unmuted the drone is where it would have been.
+void testOddSequences() {
+    std::printf("== ground: odd sequences\n");
+    af::HarmonyPatch eq;
+    eq.tuning = af::TU_EQUAL;
+    {
+        af::GroundPatch p = steady(af::TB_SINE, 1.0f, 0.0f);
+        p.gravityS = 2.0f;
+        af::Ground g;
+        g.seed(42);
+        g.set(p, eq);
+        g.setTarget(48);   // C2, 36
+        const Out a = play(g, kSec / 5);
+        g.setTarget(52);   // E: 40
+        play(g, kSec / 2);
+        const double now = g.pitch();
+        g.setTarget(57);   // A: 33 from where the root is (38.1), 45 from the goal (40)
+        const Out b = play(g, kHostBlock);
+        std::printf("  re-target mid-glide at %.2f: to %d, %.3f one block on\n", now, g.note(), g.pitch());
+        CHECK(g.note() == 33);
+        CHECK(std::fabs(g.pitch() - now) < 0.05);
+        CHECK(maxStep(b.L) <= 1.3f * maxStep(a.L, a.L.size() / 2));
+        p.gravityS = 0.0f;
+        g.set(p, eq);
+        play(g, kHostBlock);
+        CHECK(g.pitch() == 33.0);
+    }
+    {
+        af::GroundPatch a = steady(af::TB_CELLO_TASTO, 1.0f, 0.7f);
+        a.sub = a.octave = a.color = 0.5f;
+        a.cutoffHz = 16000.0f;
+        af::GroundPatch b = a, c = a;
+        b.table = af::TB_CHOIR_AH_OO;
+        c.table = af::TB_TAPE_STRINGS;
+        af::Ground g, tc;
+        g.seed(43);
+        tc.seed(43);
+        g.set(a, af::HarmonyPatch{});
+        tc.set(c, af::HarmonyPatch{});
+        g.setTarget(45);
+        tc.setTarget(45);
+        const Buf g0 = play(g, kSec).L, c0 = play(tc, kSec).L;
+        const float steadyStep = std::max(maxStep(g0, g0.size() / 2), maxStep(c0, c0.size() / 2));
+        g.set(b, af::HarmonyPatch{});
+        const Buf g1 = play(g, kSec / 100).L;   // 10 ms into the first fade
+        play(tc, kSec / 100);
+        g.set(c, af::HarmonyPatch{});
+        const Buf g2 = play(g, kSec / 10).L, c2 = play(tc, kSec / 10).L;
+        const float jump = std::max({maxStep(g1), maxStep(g2), std::fabs(g1[0] - g0.back()), std::fabs(g2[0] - g1.back())});
+        float end = 0.0f;
+        for (size_t i = kSec / 20; i < g2.size(); ++i) end = std::max(end, std::fabs(g2[i] - c2[i]));
+        std::printf("  two table changes 10 ms apart: largest step %.5f against %.5f steady; %.1e off the second "
+                    "table 50 ms on\n", jump, steadyStep, end);
+        CHECK(jump <= 3.0f * steadyStep);
+        CHECK(end < 1e-5f);
+    }
+    {
+        af::GroundPatch p = steady(af::TB_SINE, 1.0f, 0.0f);
+        p.fadeS = 0.5f;
+        af::Ground g;
+        g.seed(44);
+        g.set(p, af::HarmonyPatch{});
+        g.setTarget(48);
+        const float full = peak(play(g, kSec).L, kSec / 2);
+        p.mute = true;
+        g.set(p, af::HarmonyPatch{});
+        g.setTarget(-1);
+        play(g, 3 * kSec / 5);
+        CHECK(!g.sounding() && !g.audible());
+        p.mute = false;
+        g.set(p, af::HarmonyPatch{});
+        const Out o = play(g, kSec / 5);
+        CHECK(peak(o.L) == 0.0f && !g.sounding());
+        g.setTarget(48);
+        CHECK(g.sounding() && g.audible());
+        const Out s = play(g, kSec / 10);
+        std::printf("  a fade-out ended while muted; the next target starts at %.1f dB\n", db(peak(s.L, 0, 441) / full));
+        CHECK(peak(s.L, 0, 441) < 0.01f * full);   // from the bottom of the fade, not where it was
+    }
+    {
+        af::GroundPatch p;   // the default drone: Breath and Sway moving
+        p.fadeS = 0.05f;
+        af::Ground g, t;
+        g.seed(45);
+        t.seed(45);
+        g.set(p, af::HarmonyPatch{});
+        t.set(p, af::HarmonyPatch{});
+        g.setTarget(50);
+        t.setTarget(50);
+        const Out a = play(g, kSec);
+        play(t, kSec);
+        const float steadyStep = maxStep(a.L, a.L.size() / 2);
+        p.mute = true;
+        g.set(p, af::HarmonyPatch{});
+        const Out m = play(g, kSec / 2);
+        play(t, kSec / 2);
+        const float out = std::max(maxStep(m.L, 0, kHostBlock + 1), std::fabs(m.L[0] - a.L.back()));
+        CHECK(peak(m.L, af::kChunk) == 0.0f);   // after the step's ramp: nothing
+        p.mute = false;
+        g.set(p, af::HarmonyPatch{});
+        const Out u = play(g, kSec / 10), ut = play(t, kSec / 10);
+        const float in = std::max(maxStep(u.L), std::fabs(u.L[0]));
+        float back = 0.0f;
+        for (size_t i = kSec / 20; i < u.L.size(); ++i) back = std::max(back, std::fabs(u.L[i] - ut.L[i]));
+        std::printf("  mute and unmute: steps %.5f / %.5f against %.5f steady; %.1e off the unmuted twin 50 ms on\n", out,
+                    in, steadyStep, back);
+        CHECK(out <= 3.0f * steadyStep && in <= 3.0f * steadyStep);
+        CHECK(back < 1e-6f);
+    }
 }
 
 // Check 6: Tone at both ends, Body 1 and Breath 1 for a minute: finite and at most 4.
@@ -555,7 +1023,8 @@ void testHeadroom() {
     std::printf("  %d renders: the loudest %.3f (%s, register %d, pitch class %d, Body %.2f) (%.1f s)\n", renders, worst,
                 af::tableName(worstTable), worstReg, worstPc, worstBody, secs);
     CHECK(finite);
-    CHECK(worst <= 1.5f && worst > 1.0f);   // and loud enough that the sweep found the loud cases
+    CHECK(worst <= 1.5f);
+    CHECK(worst > 0.5f);   // only that the sweep reaches the loud cases at all (it finds about 1.2)
 
     // The default drone, for the engine's gain staging.
     af::GroundPatch d;
@@ -685,12 +1154,21 @@ void testDeterminism() {
 
 void groundTests() {
     testPartials();
+    testImages();
     testBeat();
     testGravity();
+    testOctaves();
+    testRegisterChange();
     testFade();
     testGains();
     testNoSteps();
     testTableSwitch();
+    testBody();
+    testBreath();
+    testWidth();
+    testTone();
+    testOddParameters();
+    testOddSequences();
     testStability();
     testHeadroom();
     testDeterminism();
