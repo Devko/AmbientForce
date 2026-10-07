@@ -50,7 +50,7 @@ ARM_SO   := $(BUILD)/arm/ambientforce.so
 ARM_SO_STAGES := $(BUILD)/arm/ambientforce_stages.so
 ARM_BENCH := $(BUILD)/arm/afbench
 
-.PHONY: all surface skin test test-arm test-arm-pgo test-module test-module-arm bench arm-plugin arm-bench arm-bench-stages bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
+.PHONY: all surface skin test test-arm test-arm-pgo test-module test-module-arm bench soak arm-plugin arm-bench arm-bench-stages bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
 # A recipe that fails leaves no half-written target behind for the next make to trust.
 .DELETE_ON_ERROR:
 # The stage-timing build too: a -DAF_STAGE_TIMING break shows here, not at bench time.
@@ -132,8 +132,9 @@ $(BUILD)/ambientforce.so: $(SRC) $(HDR) $(GEN) plugin/exports.map | $(BUILD)
 $(BUILD)/ambientforce_stages.so: $(SRC) $(HDR) $(GEN) plugin/exports_stages.map | $(BUILD)
 	$(X86_SO_CMD) -Wl,--version-script=plugin/exports_stages.map -DAF_STAGE_TIMING $(SRC) -o $@
 
-$(BUILD)/afbench: tools/bench.cpp $(HDR) $(GEN) | $(BUILD)
-	$(CXX) -std=c++17 -O2 -Wall -Wextra $(INC) $< -ldl -o $@
+# The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1.
+$(BUILD)/afbench: tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN) | $(BUILD)
+	$(CXX) -std=c++17 -O2 -Wall -Wextra $(INC) $< plugin/patch_map.cpp -ldl -o $@
 
 # Demo clips for listening without a device: the factory presets playing a phrase, rendered
 # through the plugin's own entry points into build/demos-out/*.wav (tools/demos.cpp).
@@ -146,6 +147,17 @@ preset-levels: $(BUILD)/demos
 	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos --match presets/Factory $(PRESET_LUFS)
 	python3 $(SURF)/surface.py
 $(BUILD)/demos: tools/demos.cpp $(SRC) $(HDR) $(GEN) | $(BUILD)
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(SRC) $< -o $@
+
+# The soak test: HOURS of audio (default 1) rendered offline through the plugin's entry points, a
+# long ambient set (chords every 20-90 s, Freeze, Shimmer, presets, Space modes, Stops, suspends;
+# seeded: SEED), failing on a non-finite sample, a peak over -1 dBFS, DC or loudness drift
+# (tools/soak.cpp). M1 runs 1 h; the 24 h soak is M2's gate.
+HOURS ?= 1
+SEED  ?= 1
+soak: $(BUILD)/soak
+	$(BUILD)/soak $(HOURS) $(SEED)
+$(BUILD)/soak: tools/soak.cpp $(SRC) $(HDR) $(GEN) | $(BUILD)
 	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(SRC) $< -o $@
 
 # --- device -----------------------------------------------------------------------------------
@@ -225,9 +237,9 @@ $(ARM_SO_STAGES): $(SRC) $(HDR) $(GEN) plugin/exports_stages.map $(ARM_SO_STAMP)
 	$(ARM_PREFIX)strip --strip-unneeded $@
 
 arm-bench: $(ARM_BENCH)
-$(ARM_BENCH): tools/bench.cpp $(HDR) $(GEN)
+$(ARM_BENCH): tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN)
 	mkdir -p $(BUILD)/arm
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi $(INC) $< -ldl -o $@
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi $(INC) $< plugin/patch_map.cpp -ldl -o $@
 
 # Bench on the Force: copies the .so, its stage-timing build and the bench to /tmp, runs pinned
 # to core 1 (MPC's audio workers own cores 2-3) while MPC keeps running, then deletes them.
