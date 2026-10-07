@@ -3,9 +3,11 @@
 // its VST2 entry points the way MPC drives it (128-frame blocks, events with deltaFrames, 0..1
 // params). Built with ASan/UBSan by `make test`, for the Force's CPU under qemu by `make test-arm`.
 #include "host.h"
+#include "../plugin/presets.h"
 #include "../plugin/surface.h"
 #include "../plugin/trace.h"
 
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -326,6 +328,127 @@ void testTrace() {
     wait();   // off again for whatever comes next
 }
 
+// The status line (plugin/surface.h): for 4 s after a move the control's help line, for 6 s after a preset loads
+// its name and description, else the voices and the CPU; MPC told to read it again within 4 blocks of a change.
+// Timed in audio blocks: the tests' clock only moves with host events.
+std::string upperOf(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
+
+void testStatusLine() {
+    std::printf("== the status line: help lines and preset descriptions\n");
+    const auto meter = [](Host& h) { return h.display(af::P_STATUS).compare(0, 7, "VOICES ") == 0; };
+    // `blocks` blocks: was MPC told to read the texts again?
+    const auto told = [](Host& h, int blocks) {
+        h.log.updates = 0;
+        h.run(blocks);
+        return h.log.updates > 0;
+    };
+    // Block by block until the status line reads otherwise (at most `max`): was MPC told then, or in the 4 blocks
+    // after? (While a help line shows, its text is the only thing on the line that changes.)
+    const auto toldWhenItChanges = [](Host& h, int max) {
+        const std::string was = h.display(af::P_STATUS);
+        for (int b = 0; b < max; ++b) {
+            h.log.updates = 0;
+            h.run(1);
+            if (h.display(af::P_STATUS) == was) continue;
+            for (int k = 0; k < 4 && !h.log.updates; ++k) h.run(1);
+            return h.log.updates > 0;
+        }
+        return false;
+    };
+    const std::string bloomAge = af::PARAM_INFO[af::P_B_AGE].help, groundAge = af::PARAM_INFO[af::P_G_AGE].help;
+    CHECK(bloomAge.compare(0, 11, "BLOOM AGE: ") == 0);
+    Host h;
+    h.run(8);
+    CHECK(meter(h));
+    // A move: its help line at once, and MPC told within 4 blocks.
+    h.set(af::P_B_AGE, 0.3f);
+    CHECK(told(h, 4) && h.display(af::P_STATUS) == bloomAge);
+    // 4 s from the move, then the meter again, MPC told again.
+    h.run(static_cast<int>(3.9 * kBlocksPerSec));
+    CHECK(h.display(af::P_STATUS) == bloomAge);
+    CHECK(toldWhenItChanges(h, kBlocksPerSec / 5) && meter(h));
+    // MPC sending a value back moves nothing: no help. A stepped list likewise, until a step steps.
+    h.setN(af::P_B_AGE, h.get(af::P_B_AGE));
+    h.setN(af::P_H_SCALE, h.get(af::P_H_SCALE));
+    h.run(8);
+    CHECK(meter(h));
+    h.detent(af::P_H_SCALE, +1);
+    h.run(4);
+    CHECK(h.display(af::P_STATUS) == af::PARAM_INFO[af::P_H_SCALE].help && h.value(af::P_H_SCALE) == 1.0f);
+    // The same control moved again and again (a slow turn, automation) keeps its line, 4 s from its last move.
+    bool kept = true;
+    for (int k = 0; k < 6; ++k) {
+        h.set(af::P_B_AGE, 0.1f + 0.1f * static_cast<float>(k));
+        h.run(kBlocksPerSec);
+        kept = kept && h.display(af::P_STATUS) == bloomAge;
+    }
+    h.run(5 * kBlocksPerSec / 2);   // 3.5 s from the last move
+    CHECK(kept && h.display(af::P_STATUS) == bloomAge);
+    h.run(kBlocksPerSec / 2 + 8);
+    CHECK(meter(h));
+    // A second control moved just after the first: shown once the first has had half a second.
+    h.set(af::P_B_AGE, 0.5f);
+    h.run(2);
+    h.set(af::P_G_AGE, 0.6f);
+    h.run(2);
+    CHECK(h.display(af::P_STATUS) == bloomAge);
+    h.run(kBlocksPerSec / 2);
+    CHECK(h.display(af::P_STATUS) == groundAge);
+    h.run(5 * kBlocksPerSec);
+    CHECK(meter(h));
+    // Two controls moving every block, in turns (automation): the line changes no more often than every half
+    // second. (Moved in the same order every block, the second one's line simply stays.)
+    int changes = 0;
+    std::string was = h.display(af::P_STATUS);
+    for (int b = 0; b < 3 * kBlocksPerSec; ++b) {
+        const float v = b % 2 ? 0.3f : 0.4f;
+        h.setN(b % 2 ? af::P_B_AGE : af::P_G_AGE, v);
+        h.setN(b % 2 ? af::P_G_AGE : af::P_B_AGE, v);
+        h.run(1);
+        const std::string now = h.display(af::P_STATUS);
+        changes += now != was;
+        was = now;
+    }
+    std::printf("  two controls automated for 3 s: the line changed %d times\n", changes);
+    CHECK(changes >= 4 && changes <= 7);   // the first move at once, then every 0.5 s at most
+    h.run(5 * kBlocksPerSec);
+    CHECK(meter(h));
+
+    // A preset loaded: "NAME: its description" for 6 s, over any help, never the help of the values it set.
+    std::string init;
+    CHECK(af::presetText("builtin:Init", init) && !af::presetAbout(init).empty());
+    h.set(af::P_G_AGE, 0.2f);
+    h.run(2);
+    h.press(af::P_PRE_INIT);
+    CHECK(told(h, 4) && h.display(af::P_STATUS) == "INIT: " + af::presetAbout(init));
+    h.run(static_cast<int>(5.9 * kBlocksPerSec));
+    CHECK(h.display(af::P_STATUS) == "INIT: " + af::presetAbout(init));
+    CHECK(toldWhenItChanges(h, kBlocksPerSec / 5) && meter(h));
+    // NEXT loads the next preset and says which; PREV at the first preset loads nothing and shows its help.
+    const auto L = af::presetLibrary().listing();
+    CHECK(L->find("builtin:Init") == 0 && L->items.size() > 1);
+    std::string next;
+    CHECK(af::presetText(L->items[1].key, next));
+    h.press(af::P_PRESET_NEXT);
+    h.run(4);
+    CHECK(h.display(af::P_STATUS) == upperOf(L->items[1].name) + ": " + af::presetAbout(next));
+    h.press(af::P_PRESET_PREV);
+    h.run(4);
+    CHECK(h.display(af::P_STATUS) == "INIT: " + af::presetAbout(init));
+    h.run(kBlocksPerSec);
+    h.press(af::P_PRESET_PREV);   // at the first preset: nothing to load
+    h.run(kBlocksPerSec / 2 + 4);
+    CHECK(h.display(af::P_STATUS) == af::PARAM_INFO[af::P_PRESET_PREV].help);
+    // A project's state isn't a preset load: no description, no help.
+    h.run(5 * kBlocksPerSec);
+    CHECK(h.load(h.chunk()) == 1);
+    h.run(8);
+    CHECK(meter(h) && h.finite);
+}
+
 void testProcessLegacy() {
     std::printf("== process() (accumulating)\n");
     Host a, b;
@@ -486,6 +609,7 @@ int main() {
     testPlay();
     testStop();
     testTrace();
+    testStatusLine();
     testProcessLegacy();
     testMidiMapping();
     paramsTests();

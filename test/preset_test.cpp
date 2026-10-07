@@ -1,7 +1,8 @@
 // From SubForce test/preset_test.cpp (8846421), sft -> aft; AmbientForce's parameters, RANDOMIZE left out.
 // Saved state, presets and the surface: chunk round trips, the preset stepper and buttons, user
-// presets, the browser, favorites, stepping (options and popups too), pushing values back to MPC,
-// and every factory preset playing the demo phrase at its level.
+// presets and their descriptions, the browser, favorites, stepping (options and popups too), pushing
+// values back to MPC, every factory preset playing the demo phrase at its level, and the macros at
+// both ends of their range keeping the hottest presets off the limiter.
 #include "host.h"
 #include "../plugin/presets.h"
 #include "../tools/phrase.h"
@@ -74,6 +75,11 @@ void testState() {
     CHECK(std::fabs(c.value(af::P_VOLUME) + 20.0f) < 1e-3f);
     CHECK(c.load("ambientforce 1\nvolume=1,5\n") == 1 && std::fabs(c.value(af::P_VOLUME) + 20.0f) < 1e-3f);
     CHECK(c.load("ambientforce 1\nvolume=-3\n") == 1 && std::fabs(c.value(af::P_VOLUME) + 3.0f) < 1e-3f);
+    // A preset's description (about=) is not a sound value: loading skips it, saving never writes one.
+    CHECK(c.load("ambientforce 1\nabout=a test = with an equals sign\nvolume=-4\n") == 1 &&
+          std::fabs(c.value(af::P_VOLUME) + 4.0f) < 1e-3f && c.chunk().find("about") == std::string::npos);
+    CHECK(af::presetAbout("ambientforce 1\nvolume=1\nabout=low and slow \r\nabout=again\n") == "low and slow" &&
+          af::presetAbout("ambientforce 1\nvolume=1\n").empty() && af::presetAbout("ambientforce 1\nnot_about=x\n").empty());
     // Out of range values clamp; BOM and CRLF are fine; other text is refused.
     CHECK(c.load("\xEF\xBB\xBF" "ambientforce 1\r\nvolume=99\r\n") == 1 && std::fabs(c.value(af::P_VOLUME) - 6.0f) < 1e-3f);
     CHECK(c.load("subforce 1\nvolume=0\n") == 0 && c.load("") == 0 && c.load("ambientforce x\n") == 0);
@@ -107,7 +113,7 @@ void testPresets() {
     CHECK(h.display(af::P_PRESET) == "PRESET  User / User 001");
     std::string text;
     CHECK(af::presetText("plugin:User/User 001.afp", text) && text.find("volume=-11\n") != std::string::npos &&
-          text.find("preset=") == std::string::npos);
+          text.find("preset=") == std::string::npos && text.find("about=") == std::string::npos);
     h.press(af::P_PRE_SAVE);
     h.press(af::P_PRE_SAVE);
     CHECK(std::filesystem::exists(root + "/User/User 003.afp"));
@@ -199,6 +205,8 @@ void testBrowser() {
     h.setN(af::P_ITEM_2, 1.0f);
     CHECK(h.display(af::P_BR_NOW) == "PRESET  Drift / Birch" && h.get(af::P_ITEM_2) > 0.5f);
     CHECK(std::fabs(h.value(af::P_VOLUME) + 18.0f) < 0.01f);   // Birch's volume
+    h.run(4);
+    CHECK(h.display(af::P_STATUS) == "BIRCH");   // a preset without a description: its name on the status line
     // Favorite: toggled, kept in the data folder, listed under FAVORITES.
     h.setN(af::P_FAV, 1.0f);
     CHECK(h.get(af::P_FAV) > 0.5f);
@@ -330,6 +338,12 @@ void testStepping() {
 // 40 s, as the level match measures it. Under qemu (the ARM build) a preset takes 7.6 s, so five play
 // there: the template, Ground on Free into Haze (Harbour at 4am), Abyss with Shimmer (Fifth Light),
 // FM (Sine Garden) and unison 2 in Haze (Choir in Haze); x86 plays all of them.
+struct Played {
+    int index;    // in kFactoryPresets
+    float peak;   // on its phrase, as saved
+};
+std::vector<Played> g_played;   // testFactory's, for testMacroLevels
+
 void testFactory() {
     std::printf("== factory presets: the demo phrase at -16 LUFS\n");
     CHECK(af::kNumFactoryPresets >= 1);
@@ -375,8 +389,71 @@ void testFactory() {
         CHECK(level);
         CHECK(peak <= afl::kPeakCap);
         CHECK(limited <= afl::kMaxLimitedShare);
+        g_played.push_back({i, peak});
     }
     CHECK(played == (only.empty() ? static_cast<size_t>(af::kNumFactoryPresets) : only.size()));   // none renamed away
+}
+
+// Every macro at both ends, the demo phrase each time: none makes a preset lean on the limiter (it may work on at
+// most 1% of the phrase, as at 0) or drops it by more than 10 LU (Horizon's far end is the quietest, a few LU
+// down: the dry steps back). On Init, and on the hottest preset (the highest peak on its phrase, testFactory) of
+// each Space type: the ones nearest the limiter, in every reverb, whichever presets there are. x86 only: under
+// qemu a phrase takes 7.6 s; and every factory preset (all 16 at both ends of the four took 0 limiting and at most
+// 4.2 LU off when the macros were tuned) would add a minute and a half to make test.
+void testMacroLevels() {
+#if defined(__arm__)
+    std::printf("== the macros at both ends: on x86 only\n");
+#else
+    std::printf("== the macros at both ends: the demo phrase, the limiter and the loudness\n");
+    constexpr double kMaxDropLu = 10.0;
+    CHECK(afl::waitForTables());
+    const int macros[] = {af::P_M_HORIZON, af::P_M_MOTION, af::P_M_GLOW, af::P_M_DENSITY};
+    // The phrase with macro `id` at x (none: id < 0): its loudness and the share of it the limiter worked on.
+    const auto play = [](const std::string& text, int id, float x, double& limited) {
+        Host h;
+        h.load(text);
+        if (id >= 0) h.set(id, x);
+        std::vector<float> L, R;
+        const uint32_t was = af::limitedSamples();
+        afl::render(h.e, h.log.time, afl::phrase(text), L, R);
+        limited = static_cast<double>(af::limitedSamples() - was) / static_cast<double>(L.size());
+        return afl::lufs(L, R);
+    };
+    std::vector<int> pick;   // Init, then the hottest of each Space type
+    for (const Played& p : g_played)
+        if (std::string(af::kFactoryPresets[p.index].name) == "Init") pick.push_back(p.index);
+    for (int mode = 0; mode < af::PARAM_INFO[af::P_S_MODE].nopts; ++mode) {
+        const Played* hottest = nullptr;
+        for (const Played& p : g_played)
+            if (static_cast<int>(afl::presetValue(af::kFactoryPresets[p.index].text, af::P_S_MODE)) == mode &&
+                (!hottest || p.peak > hottest->peak))
+                hottest = &p;
+        if (hottest && std::find(pick.begin(), pick.end(), hottest->index) == pick.end()) pick.push_back(hottest->index);
+    }
+    CHECK(pick.size() >= 2);
+    double worstDrop = 0.0, worstLimited = 0.0;
+    for (int i : pick) {
+        const std::string text = af::kFactoryPresets[i].text;
+        double limited = 0.0;
+        const double base = play(text, -1, 0.0f, limited);
+        char line[160];
+        int at = std::snprintf(line, sizeof line, "  %-18s", af::kFactoryPresets[i].name);
+        bool ok = true;
+        for (int id : macros)
+            for (float x : {-1.0f, 1.0f}) {
+                const double lufs = play(text, id, x, limited);
+                worstDrop = std::max(worstDrop, base - lufs);
+                worstLimited = std::max(worstLimited, limited);
+                const bool good = limited <= afl::kMaxLimitedShare && lufs >= base - kMaxDropLu;
+                ok = ok && good;
+                at += std::snprintf(line + at, sizeof line - static_cast<size_t>(at), " %c%c%+5.1f%s", af::PARAM_INFO[id].name[0],
+                                    x < 0.0f ? '-' : '+', lufs - base, good ? "" : "!");
+            }
+        std::printf("%s\n", line);
+        CHECK(ok);
+    }
+    std::printf("  (LU from the preset as saved)  worst drop %.1f LU, the limiter on at most %.1f%%\n", worstDrop, 100.0 * worstLimited);
+#endif
 }
 
 } // namespace
@@ -387,6 +464,7 @@ void presetTests() {
     testBrowser();
     testStepping();
     testFactory();
+    testMacroLevels();
 }
 
 } // namespace aft

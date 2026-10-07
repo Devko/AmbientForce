@@ -3,7 +3,8 @@
 //
 // The engine (dsp/engine.h) behind the touchscreen pages generated from surface/surface.py;
 // plugin/surface.* decides what every parameter does, and the status line carries a CPU meter
-// so the cost can be read on the device.
+// so the cost can be read on the device (and, for a few seconds, the help line of a control just
+// moved or the description of a preset just loaded).
 //
 // Threads: processReplacing runs on one of MPC's audio workers (which one changes between
 // calls, instances run concurrently); parameters, display text and chunks come from MPC's UI
@@ -282,7 +283,12 @@ void copyStr(void* dst, const std::string& s, size_t cap) {
     static_cast<char*>(dst)[n] = 0;
 }
 
+// The status line: for a few seconds after a move or a preset load, what the surface says (the control's help
+// line, the preset's description: plugin/surface.h); else the voices and the CPU meter.
 std::string statusText(const Plugin* p) {
+    const int line = p->surface.statusLine();
+    if (line >= 0 && line < P_COUNT && PARAM_INFO[line].help) return PARAM_INFO[line].help;
+    if (line == Surface::kStatusAbout) return p->surface.aboutText();
     char b[80];
     std::snprintf(b, sizeof b, "VOICES %d   CPU %d%%   PEAK %d%%", p->shownVoices.load(), p->shownAvg.load(),
                   p->shownPeak.load());
@@ -451,7 +457,7 @@ void processReplacing(AEffect* e, float** /*in*/, float** out, int32_t n) {
         std::memset(out[0], 0, sizeof(float) * static_cast<size_t>(n));
         std::memset(out[1], 0, sizeof(float) * static_cast<size_t>(n));
     }
-    p->surface.notify(hostAutomate, hostUpdate, p);
+    p->surface.notify(hostAutomate, hostUpdate, p, n);
     meter(p, threadCpuUs() - t0, n);
 }
 

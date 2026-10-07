@@ -50,6 +50,20 @@ bool presetText(const std::string& key, std::string& out) {
     return !path.empty() && readFile(path, out);
 }
 
+std::string presetAbout(const std::string& text) {
+    for (size_t at = 0; at < text.size();) {
+        size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        if (text.compare(at, 6, "about=") == 0) {
+            std::string s = text.substr(at + 6, end - at - 6);
+            while (!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '\t')) s.pop_back();
+            return s;
+        }
+        at = end + 1;
+    }
+    return {};
+}
+
 std::string nextUserPreset(std::string* key) {
     const auto roots = presetRoots();
     if (roots.empty()) return {};

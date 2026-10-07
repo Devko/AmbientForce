@@ -20,6 +20,15 @@
 // read-back is the base of every value, within a turn too: a stepper measures each detent from
 // its own value, never from MPC's previous one. A button tap toggles its read-back, and a button
 // always reads back 0 (it springs back): every 1 is a press, and no release ever follows.
+//
+// The status line (parameter 0) says what was just done: for kHelpS after a control is moved, its
+// help line (surface.py "help"); for kAboutS after a preset loads, its name and description. A
+// move is a set from MPC that changes the control's value (MPC echoing a value back changes
+// nothing; preset loads and project states write through setValue, not set). The UI thread only
+// notes the last move and counts the loads (atomics); notify() times them on the audio thread's
+// sample count, decides which line shows (another control takes the line only once the one shown
+// has had kHoldS, so automation moving several at once doesn't flicker) and pushes
+// audioMasterUpdateDisplay when it changes. statusLine() reads what it decided.
 #include "library.h"
 #include "param_ids.h"
 
@@ -61,8 +70,19 @@ public:
         Surface& s_;
     };
 
+    // What the status line shows (UI thread, a cache): a parameter's index (its help line,
+    // PARAM_INFO[i].help), kStatusAbout (aboutText()) or kStatusPlugin (the plugin's own line).
+    static constexpr int kStatusPlugin = -1;
+    static constexpr int kStatusAbout = -2;
+    static constexpr double kHelpS = 4.0;    // a help line shows this long after the control's last move
+    static constexpr double kAboutS = 6.0;   // a preset's description this long after it loads
+    static constexpr double kHoldS = 0.5;    // the least a line shows before another control's takes over
+    int         statusLine() const { return status_.load(std::memory_order_acquire); }
+    std::string aboutText() const;           // "NAME: its description" (or "NAME") of the last preset loaded
+
     // --- audio thread ------------------------------------------------------------
-    void        notify(AutomateFn automate, UpdateFn update, void* ctx);
+    // Once per block of `frames` samples (the status line's clock).
+    void        notify(AutomateFn automate, UpdateFn update, void* ctx, int frames);
     // Every parameter's current 0..1 value. False (and `out` untouched) while a batch is
     // being written: keep using the previous snapshot.
     bool        snapshot(float* out) const;
@@ -91,6 +111,8 @@ private:
     std::vector<Category> categories(const Listing& L) const;
     void loadPreset(const std::string& key);
     void savePreset();
+    void touch(int i);   // the player moved control i: its help line, if it has one
+    void tickStatus(int frames);   // audio thread: which line the status shows (above)
     int  stepperCur(int i, const Listing& L, const std::string& key) const;   // where a stepper stands
 
     // UI-thread-only stepping state (RackForce's).
@@ -119,6 +141,15 @@ private:
     std::vector<std::string> tileKeys_;        // what each preset tile holds now
     std::vector<int>         catTiles_;        // which category each category tile holds
     uint32_t                 rng_ = 0x2545F491u;
+    std::string              about_;           // aboutText()
+
+    // The status line: what the UI thread notes, and what the audio thread made of it.
+    static constexpr int     kTouchBits = 10;  // touched_: (moves << kTouchBits) | the control's index
+    static_assert(P_COUNT < (1 << kTouchBits), "a control's index must fit touched_'s low bits");
+    std::atomic<uint32_t>    moves_{0};        // moves so far
+    std::atomic<uint32_t>    touched_{0};      // the last one (0: none yet)
+    std::atomic<uint32_t>    loads_{0};        // preset loads so far (about_ is the last one's)
+    std::atomic<int>         status_{kStatusPlugin};
 
     // Every write of a value MPC should see goes through here.
     void put(int i, float v) {
@@ -132,6 +163,13 @@ private:
     uint32_t textSeen_ = 0;
     int      cursor_ = 0;
     int      sinceText_ = 0;
+    // The status line's (tickStatus): samples so far, what was last seen of the UI's notes, the line
+    // shown (status_), since when and until when, and a move waiting for kHoldS to pass.
+    uint64_t now_ = 0;
+    uint32_t touchedSeen_ = 0, loadsSeen_ = 0;
+    int      line_ = kStatusPlugin, pending_ = -1;
+    uint64_t lineSince_ = 0, lineUntil_ = 0, pendingAt_ = 0;
+    bool     statusChanged_ = false;   // MPC must read the status text again
 };
 
 } // namespace af

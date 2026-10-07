@@ -10,8 +10,8 @@ Writes, next to this file:
                      Force-Shadow pixels, the plugin area is y = 86..714
   vst.json           plugin identity for the vendored gen_vst.py
   build/param_ids.h  everything the C++ is compiled against: parameter ids, kinds, value
-                     curves, names, options and defaults (the C++ never reads gen_vst's params.h,
-                     so `make test` and the .so build need only Python, not the skin toolchain)
+                     curves, names, options, defaults and help lines (the C++ never reads gen_vst's
+                     params.h, so `make test` and the .so build need only Python, not the skin toolchain)
   build/factory_presets.h  the factory presets (presets/Factory/*/*.afp), checked and embedded
   build/skin_style.json  the palette, knob looks, primary buttons and page groups for
                      skin_polish.py, which `make skin` runs after the generator
@@ -23,8 +23,10 @@ knob, its label and the DSP can never disagree.
 Before writing anything the layout is checked the way shadow_skin.py would (unknown keys,
 option counts, when=, Q-Link sets) plus geometry with shadow_skin's own sizes (inside the plugin
 area, no overlaps within a page, nothing in a card's title band, open popup lists inside the
-plugin area, options that fit their popup field or segment, bitmap-font glyphs) and the
-parameter names MPC shows (short, unique), so a broken page fails here instead of on the device.
+plugin area, options that fit their popup field or segment, bitmap-font glyphs), the
+parameter names MPC shows (short, unique) and the help lines and preset descriptions the status
+line shows (every control a hand moves has one; each fits), so a broken page fails here instead
+of on the device.
 The layout machinery and its checks are PolyForce's; the page groups (several pages under one
 tab) are EffectForce's.
 
@@ -60,7 +62,12 @@ VST = {"name": "AmbientForce", "vendor": "Devko", "uid": "AmFc", "version": 1000
 #   popup    the hidden "<key>__open" flag of a popup list (shadow_skin's popup_params)
 #   meter    a value the plugin sets for a display-only filmstrip: not saved, not automatable
 # fmt: how the plugin prints the value (see plugin/patch_map.cpp paramDisplay)
+# help: what the status line says for a few seconds after the control is moved, as "NAME: help" (the name in
+#   capitals): what it does and what its range means, plain and concrete. Every control a hand moves has one
+#   (HELP_KINDS: the sound values, the steppers, buttons and toggles); tiles, readouts and popup flags have
+#   none. check_layout() holds each line to the narrowest status readout's width.
 P = []
+HELP_KINDS = ("synth", "ui", "stepper", "button", "toggle")
 
 
 def _add(key, name, kind, curve, lo, hi, default, fmt, **extra):
@@ -77,32 +84,37 @@ def meter_param(key, name):
     _add(key, name, "meter", "lin", 0, 1, 0.5, "none")
 
 
-def enum(key, name, options, default, ui=False):
+def enum(key, name, options, default, help, ui=False):
     _add(key, name, "ui" if ui else "synth", "enum", 0, len(options) - 1, options.index(default), "enum",
-         options=options)
+         options=options, help=help)
 
 
-def num(key, name, curve, lo, hi, default, fmt, ui=False):
+def num(key, name, curve, lo, hi, default, fmt, help, ui=False):
     assert curve != "pow" or lo == 0, "%s: a pow curve runs from 0 (patch_map.cpp: hi x n^3)" % key
-    _add(key, name, "ui" if ui else "synth", curve, lo, hi, default, fmt)
+    _add(key, name, "ui" if ui else "synth", curve, lo, hi, default, fmt, help=help)
 
 
-def stepper(key, name):
-    _add(key, name, "stepper", "int", 0, STEPPER_RANGE, 0, "text")
-    button(key + "_prev", name + " Prev")
-    button(key + "_next", name + " Next")
+def stepper(key, name, help, prev, next):
+    _add(key, name, "stepper", "int", 0, STEPPER_RANGE, 0, "text", help=help)
+    button(key + "_prev", name + " Prev", prev)
+    button(key + "_next", name + " Next", next)
 
 
-def button(key, name):
-    _add(key, name, "button", "int", 0, 1, 0, "none")
+def button(key, name, help):
+    _add(key, name, "button", "int", 0, 1, 0, "none", help=help)
 
 
 def tile(key, name):
     _add(key, name, "tile", "enum", 0, 1, 0, "text", options=["-", "On"])
 
 
-def toggle(key, name):
-    _add(key, name, "toggle", "enum", 0, 1, 0, "enum", options=["Off", "On"])
+def toggle(key, name, help):
+    _add(key, name, "toggle", "enum", 0, 1, 0, "enum", options=["Off", "On"], help=help)
+
+
+def help_line(p):
+    """What the status line shows after p is moved: "NAME: help"."""
+    return "%s: %s" % (p["name"].upper(), p["help"])
 
 
 def popup_flag(of):
@@ -112,7 +124,7 @@ def popup_flag(of):
 
 
 readout("status", "Status")            # index 0 must stay a read-only readout: MPC sets it at load
-num("volume", "Volume", "lin", -60, 6, -6, "db")
+num("volume", "Volume", "lin", -60, 6, -6, "db", help="the output level; the limiter after it holds -1 dBFS")
 
 # Every default and range below is the engine's own (dsp/engine.h Patch and the headers it holds), so Init
 # plays what a Patch{} plays: test/params_test.cpp holds the two together. The levels and sends have the
@@ -127,121 +139,146 @@ TABLES = ["Felt Piano", "Celesta", "Glass Harmonica", "Cello Tasto", "Choir Ah-O
           "Tape Strings", "Sine", "Triangle", "Saw", "Square"]
 
 # --- the harmony brain (dsp/harmony.h HarmonyPatch; Hold and On Stop are the engine's) ---
-enum("h_key", "Key", ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"], "C")
+enum("h_key", "Key", ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"], "C",
+     help="the tonic every chord and the drone are built on")
 popup_flag("h_key")
 enum("h_scale", "Scale", ["Major", "Minor", "Dorian", "Lydian", "Mixolydian", "Phrygian", "Maj Pent", "Min Pent",
-                          "Hirajoshi", "In-Sen", "Whole Tone", "Chromatic"], "Major")          # Scale
+                          "Hirajoshi", "In-Sen", "Whole Tone", "Chromatic"], "Major",          # Scale
+     help="the notes the keys snap to and chords are built from")
 popup_flag("h_scale")
-enum("h_tuning", "Tuning", ["Equal", "Just", "Pythagorean"], "Just")                           # Tuning
-enum("h_input", "Input", ["As Played", "Snap", "Degrees"], "Snap")                             # Input
+enum("h_tuning", "Tuning", ["Equal", "Just", "Pythagorean"], "Just",                           # Tuning
+     help="Equal, Just (pure, still intervals) or Pythagorean")
+enum("h_input", "Input", ["As Played", "Snap", "Degrees"], "Snap",                             # Input
+     help="a key as played, snapped into the scale, or a degree")
 enum("h_chord", "Chord", ["Off", "Triad", "Seventh", "Sus2", "Sus4", "Add9", "Quartal", "Fifths", "Cluster",
-                          "Spread"], "Triad")                                                  # ChordType
+                          "Spread"], "Triad",                                                  # ChordType
+     help="what each key plays, from the scale's own notes")
 popup_flag("h_chord")
-enum("h_voicing", "Voicing", ["Close", "Open", "Drop 2", "Spread"], "Open")                    # Voicing
-enum("h_leading", "Leading", ON_OFF, "On")
-num("h_strum", "Strum", "pow", 0, 2, 0, "time")
+enum("h_voicing", "Voicing", ["Close", "Open", "Drop 2", "Spread"], "Open",                    # Voicing
+     help="how a chord's notes spread, Close to wide Spread")
+enum("h_leading", "Leading", ON_OFF, "On", help="On moves each new chord as little as it can")
+num("h_strum", "Strum", "pow", 0, 2, 0, "time", help="a chord's notes come in one by one, over 0 to 2 s")
 # memoryBars: Off 0, the bars, Forever -1 (patch_map.cpp kMemoryBars).
 enum("h_memory", "Memory", ["Off", "1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars", "32 Bars", "64 Bars", "Forever"],
-     "Forever")
+     "Forever", help="how long a chord is kept once the keys are up")
 popup_flag("h_memory")
-enum("h_hold", "Hold", ON_OFF, "Off")
-enum("h_onstop", "On Stop", ["Keep", "Fade", "Cut"], "Fade")                                   # dsp/engine.h OnStop
+enum("h_hold", "Hold", ON_OFF, "Off", help="On latches the keys until the next chord takes over")
+enum("h_onstop", "On Stop", ["Keep", "Fade", "Cut"], "Fade",                                   # dsp/engine.h OnStop
+     help="what Stop does: Keep playing, Fade over 8 s, or Cut")
 
 # --- Ground, the drone (dsp/ground.h GroundPatch) ---
-enum("g_listen", "Ground Listen", LISTEN, "Harmony")
-enum("g_mute", "Ground Mute", ON_OFF, "Off")
-num("g_level", "Ground Level", "lin", 0, 1, 0.7, "pct")
-num("g_cutoff", "Ground Tone", "log", 40, 16000, 2500, "hz")
-enum("g_table", "Ground Table", TABLES, "Cello Tasto")
+enum("g_listen", "Ground Listen", LISTEN, "Harmony", help="lowest key, the harmony's root, or the tonic")
+enum("g_mute", "Ground Mute", ON_OFF, "Off", help="silences the drone, gliding, at next to no CPU")
+num("g_level", "Ground Level", "lin", 0, 1, 0.7, "pct", help="the drone's level; 70% is -6 dB")
+num("g_cutoff", "Ground Tone", "log", 40, 16000, 2500, "hz", help="the drone's brightness, a gentle low-pass")
+enum("g_table", "Ground Table", TABLES, "Cello Tasto", help="the instrument all the drone's partials play")
 popup_flag("g_table")
-num("g_age", "Ground Age", "lin", 0, 1, 0.5, "pct")
-num("g_sway", "Ground Sway", "lin", 0, 1, 0.3, "pct")
-num("g_swayrate", "Ground Rate", "log", 0.002, 2, 0.05, "period")
-num("g_beat", "Ground Beat", "lin", 0, 3, 0.3, "hz2")
-num("g_gravity", "Gravity", "pow", 0, 30, 6, "time")
-num("g_fade", "Ground Fade", "log", 0.05, 30, 4, "time")
-num("g_sub", "Ground Sub", "lin", 0, 1, 0.3, "pct")
-num("g_root", "Ground Root", "lin", 0, 1, 1, "pct")
-num("g_fifth", "Ground Fifth", "lin", 0, 1, 0.5, "pct")
-num("g_oct", "Gnd Octave", "lin", 0, 1, 0.25, "pct")
-num("g_color", "Ground Color", "lin", 0, 1, 0, "pct")
-enum("g_colint", "Color Int", ["min3", "maj3", "4th", "min7", "9th", "11th"], "9th")           # ColorInterval
-enum("g_reg", "Ground Reg", ["Low", "Mid", "High"], "Mid")                                     # registerOct 1..3
-num("g_body", "Ground Body", "lin", 0, 1, 0, "pct")
-num("g_breath", "Gnd Breath", "lin", 0, 1, 0.3, "pct")
-num("g_space", "Ground Space", "lin", 0, 1, 0.4, "pct")
-num("g_width", "Ground Width", "lin", 0, 1, 0.5, "pct")
-num("g_pan", "Ground Pan", "lin", -1, 1, 0, "pan")
+num("g_age", "Ground Age", "lin", 0, 1, 0.5, "pct", help="the moment of its note, from struck to fading")
+num("g_sway", "Ground Sway", "lin", 0, 1, 0.3, "pct", help="how far it drifts around its Age; 0 holds still")
+num("g_swayrate", "Ground Rate", "log", 0.002, 2, 0.05, "period", help="how fast the drone sways: one cycle's time")
+num("g_beat", "Ground Beat", "lin", 0, 3, 0.3, "hz2", help="how fast the partials beat together; 0 is still")
+num("g_gravity", "Gravity", "pow", 0, 30, 6, "time", help="how long the drone glides to a new root; 0 jumps")
+num("g_fade", "Ground Fade", "log", 0.05, 30, 4, "time", help="how slowly the drone fades in, and out")
+num("g_sub", "Ground Sub", "lin", 0, 1, 0.3, "pct", help="the partial an octave under the root")
+num("g_root", "Ground Root", "lin", 0, 1, 1, "pct", help="the drone's root")
+num("g_fifth", "Ground Fifth", "lin", 0, 1, 0.5, "pct", help="the fifth over the root, pure under Just")
+num("g_oct", "Gnd Octave", "lin", 0, 1, 0.25, "pct", help="the partial an octave over the root")
+num("g_color", "Ground Color", "lin", 0, 1, 0, "pct", help="a fifth partial, at the Color Int interval")
+enum("g_colint", "Color Int", ["min3", "maj3", "4th", "min7", "9th", "11th"], "9th",           # ColorInterval
+     help="the Color partial's interval over the root")
+enum("g_reg", "Ground Reg", ["Low", "Mid", "High"], "Mid",                                     # registerOct 1..3
+     help="the octave the drone starts in: C1, C2 or C3")
+num("g_body", "Ground Body", "lin", 0, 1, 0, "pct", help="a vowel on the drone: off, then a, o and u")
+num("g_breath", "Gnd Breath", "lin", 0, 1, 0.3, "pct", help="a slow swell of level and tone, 14 s a cycle")
+num("g_space", "Ground Space", "lin", 0, 1, 0.4, "pct", help="how much of the drone goes into the reverb")
+num("g_width", "Ground Width", "lin", 0, 1, 0.5, "pct", help="spreads the partials across the stereo field")
+num("g_pan", "Ground Pan", "lin", -1, 1, 0, "pan", help="where the drone sits, left to right")
 
 # --- Bloom, the chords (dsp/bloom.h BloomPatch) ---
-enum("b_listen", "Bloom Listen", LISTEN, "Notes")
-enum("b_mute", "Bloom Mute", ON_OFF, "Off")
-num("b_level", "Bloom Level", "lin", 0, 1, 0.7, "pct")
-num("b_cutoff", "Bloom Tone", "log", 20, 20000, 5000, "hz")
-num("b_reso", "Bloom Reso", "lin", 0, 1, 0.1, "pct")
-enum("b_fmode", "Bloom Filter", ["LP", "BP", "HP"], "LP")                                      # FilterMode
-enum("b_table", "Bloom Table", TABLES, "Felt Piano")
+enum("b_listen", "Bloom Listen", LISTEN, "Notes", help="a chord per key, the harmony's, or the tonic's")
+enum("b_mute", "Bloom Mute", ON_OFF, "Off", help="silences the chords, gliding, at next to no CPU")
+num("b_level", "Bloom Level", "lin", 0, 1, 0.7, "pct", help="the chords' level; 70% is -6 dB")
+num("b_cutoff", "Bloom Tone", "log", 20, 20000, 5000, "hz", help="the filter frequency: darker down, brighter up")
+num("b_reso", "Bloom Reso", "lin", 0, 1, 0.1, "pct", help="the filter's resonance, from gentle to singing")
+enum("b_fmode", "Bloom Filter", ["LP", "BP", "HP"], "LP",                                      # FilterMode
+     help="low-, band- or high-pass at Bloom Tone")
+enum("b_table", "Bloom Table", TABLES, "Felt Piano", help="the instrument whose note the chords play")
 popup_flag("b_table")
-num("b_age", "Bloom Age", "lin", 0, 1, 0.6, "pct")
-num("b_sway", "Bloom Sway", "lin", 0, 1, 0.25, "pct")
-num("b_swayrate", "Bloom Rate", "log", 0.002, 2, 0.07, "period")
-num("b_smear", "Bloom Smear", "lin", 0, 1, 0.1, "pct")
-enum("b_tableb", "Bloom Table B", TABLES, "Sine")
+num("b_age", "Bloom Age", "lin", 0, 1, 0.6, "pct", help="where in a note's life you listen, struck to fading")
+num("b_sway", "Bloom Sway", "lin", 0, 1, 0.25, "pct", help="how far the voices drift around Age; 0 is still")
+num("b_swayrate", "Bloom Rate", "log", 0.002, 2, 0.07, "period", help="how fast the voices sway: one cycle's time")
+num("b_smear", "Bloom Smear", "lin", 0, 1, 0.1, "pct", help="a fast flicker of the tone; 0 is steady")
+enum("b_tableb", "Bloom Table B", TABLES, "Sine", help="a second table at the same Age, for Blend")
 popup_flag("b_tableb")
-num("b_boct", "Bloom B Oct", "int", -2, 2, 0, "oct")
-num("b_blend", "Bloom Blend", "lin", 0, 1, 0, "pct")
-enum("b_couple", "Bloom Couple", ["Mix", "FM", "AM", "Ring"], "Mix")                           # dsp/lifeosc.h Couple
-num("b_camt", "Couple Amt", "lin", 0, 1, 0, "pct")
-enum("b_unison", "Bloom Unison", ["1", "2"], "1")
-num("b_detune", "Bloom Detune", "lin", 0, 50, 8, "cents")
-num("b_swell", "Bloom Swell", "log", 0.005, 30, 2.5, "time")
-num("b_release", "Blm Release", "log", 0.01, 30, 6, "time")
-num("b_vel", "Bloom Vel", "lin", 0, 1, 0.4, "pct")
-num("b_breath", "Bloom Breath", "lin", 0, 1, 0.05, "pct")
-enum("b_tail", "Bloom Tail", ["Voice", "Space"], "Space")                                      # Tail
-num("b_space", "Bloom Space", "lin", 0, 1, 0.5, "pct")
-num("b_width", "Bloom Width", "lin", 0, 1, 0.6, "pct")
-num("b_pan", "Bloom Pan", "lin", -1, 1, 0, "pan")
+num("b_boct", "Bloom B Oct", "int", -2, 2, 0, "oct", help="Table B's octave, from two down to two up")
+num("b_blend", "Bloom Blend", "lin", 0, 1, 0, "pct", help="Table A alone (0) to Table B alone (100%)")
+enum("b_couple", "Bloom Couple", ["Mix", "FM", "AM", "Ring"], "Mix",                           # dsp/lifeosc.h Couple
+     help="how B meets A: mixed, FM, AM or Ring")
+num("b_camt", "Couple Amt", "lin", 0, 1, 0, "pct", help="how deeply B works on A in FM, AM or Ring")
+enum("b_unison", "Bloom Unison", ["1", "2"], "1", help="2 doubles each voice, detuned; costs CPU")
+num("b_detune", "Bloom Detune", "lin", 0, 50, 8, "cents", help="how far apart the unison pair is, in cents")
+num("b_swell", "Bloom Swell", "log", 0.005, 30, 2.5, "time", help="how slowly a chord fades in, 5 ms to 30 s")
+num("b_release", "Blm Release", "log", 0.01, 30, 6, "time", help="how slowly a chord dies away once let go")
+num("b_vel", "Bloom Vel", "lin", 0, 1, 0.4, "pct", help="how much velocity sets the level; 0: all alike")
+num("b_breath", "Bloom Breath", "lin", 0, 1, 0.05, "pct", help="noise at each note's pitch, a breath or bow")
+enum("b_tail", "Bloom Tail", ["Voice", "Space"], "Space",                                      # Tail
+     help="Space hands long releases to the reverb")
+num("b_space", "Bloom Space", "lin", 0, 1, 0.5, "pct", help="how much of the chords goes into the reverb")
+num("b_width", "Bloom Width", "lin", 0, 1, 0.6, "pct", help="spreads the chord's notes from left to right")
+num("b_pan", "Bloom Pan", "lin", -1, 1, 0, "pan", help="where the chords sit, left to right")
 
 # --- Space, the reverb (dsp/space.h Params, dsp/reverb.h Reverb::Params), and the output ---
-enum("s_mode", "Space Type", ["Room", "Hall", "Plate", "Space", "Haze", "Abyss"], "Hall")       # Reverb::Mode
+enum("s_mode", "Space Type", ["Room", "Hall", "Plate", "Space", "Haze", "Abyss"], "Hall",       # Reverb::Mode
+     help="the reverb, from Room to the endless Abyss")
 popup_flag("s_mode")
-num("s_size", "Space Size", "lin", 0, 1, 0.6, "pct")
-num("s_decay", "Space Decay", "log", 0.1, 30, 8, "time")
-num("s_predelay", "Pre-Delay", "pow", 0, 250, 30, "ms")
-num("s_damp", "Space Damp", "log", 1000, 20000, 6000, "hz")
-num("s_lowcut", "Low Cut", "log", 20, 1000, 120, "hz")
-num("s_mod", "Space Mod", "lin", 0, 1, 0.4, "pct")
-num("s_width", "Space Width", "lin", 0, 1, 1, "pct")
-enum("s_freeze", "Freeze", ON_OFF, "Off")
-num("s_shimmer", "Shimmer", "lin", 0, 1, 0, "pct")
-enum("s_shint", "Shimmer Int", ["+12", "+7", "+19", "-12"], "+12")                             # Reverb::Interval
-num("s_rise", "Space Rise", "lin", 0, 1, 0.2, "pct")
-num("s_return", "Space Level", "lin", 0, 1, 0.8, "pct")
-num("o_tilt", "Tilt", "lin", -1, 1, 0, "bipct")
+num("s_size", "Space Size", "lin", 0, 1, 0.6, "pct", help="how big the space is; moving it bends the tail")
+num("s_decay", "Space Decay", "log", 0.1, 30, 8, "time", help="how long the reverb rings, 0.1 to 30 s")
+num("s_predelay", "Pre-Delay", "pow", 0, 250, 30, "ms", help="the gap before the reverb comes in, 0 to 250 ms")
+num("s_damp", "Space Damp", "log", 1000, 20000, 6000, "hz", help="above it the tail dies faster; lower is darker")
+num("s_lowcut", "Low Cut", "log", 20, 1000, 120, "hz", help="keeps the lows out of the reverb; 20 Hz is off")
+num("s_mod", "Space Mod", "lin", 0, 1, 0.4, "pct", help="gentle movement in the tail, lush, never metallic")
+num("s_width", "Space Width", "lin", 0, 1, 1, "pct", help="the reverb's stereo width; 0 is mono")
+enum("s_freeze", "Freeze", ON_OFF, "Off", help="holds the reverb's tail forever, lets nothing new in")
+num("s_shimmer", "Shimmer", "lin", 0, 1, 0, "pct", help="the tail climbs by Shimmer Int with every pass")
+enum("s_shint", "Shimmer Int", ["+12", "+7", "+19", "-12"], "+12",                             # Reverb::Interval
+     help="the climb: up an octave, fifth, twelfth or down")
+num("s_rise", "Space Rise", "lin", 0, 1, 0.2, "pct", help="the reverb ducks while you play, blooms after")
+num("s_return", "Space Level", "lin", 0, 1, 0.8, "pct", help="how loud the reverb comes back; 0 turns it off")
+num("o_tilt", "Tilt", "lin", -1, 1, 0, "bipct", help="tips the whole sound darker (-) or brighter (+)")
+
+# --- the macros (plugin/patch_map.cpp applyMacros) ---
+# Four knobs that bend the sound the other knobs make, without moving them: at 0 the preset plays exactly as
+# saved, and each one moves its fields (in the engine's Patch, never the parameters) monotonically, every
+# result clamped to its parameter's range. Fixed and relative to the preset, brought forward from M3's
+# per-preset macro mappings (docs/CONCEPT.md 7.1). Saved like every sound value; the factory presets keep them at 0.
+num("m_horizon", "Horizon", "lin", -1, 1, 0, "bipct", help="near and dry (-) to far and vast (+); 0 is the preset")
+num("m_motion", "Motion", "lin", -1, 1, 0, "bipct", help="still (-) to drifting and alive (+); 0 is the preset")
+num("m_glow", "Glow", "lin", -1, 1, 0, "bipct", help="dark, warm (-) to bright, airy (+); 0 is the preset")
+num("m_density", "Density", "lin", -1, 1, 0, "bipct", help="sparse, clear (-) to thick, full (+); 0 is the preset")
 
 # No RANDOMIZE: an instant jump of every sound value under a drone that holds for minutes is not music. The
 # instrument's answer is Evolve (docs/CONCEPT.md 7.3): mutation ranges declared here, taken from the preset's
 # own state and glided to through a scene, never jumped.
 
 # --- presets ---
-stepper("preset", "Preset")
-button("pre_save", "Save Preset")
-button("pre_init", "Init Patch")
+stepper("preset", "Preset", help="turn to walk through every preset, one per step",
+        prev="loads the preset before this one", next="loads the preset after this one")
+button("pre_save", "Save Preset", help="saves the sound as User NNN, in Presets/User")
+button("pre_init", "Init Patch", help="loads Init, the template")
 
 # --- the preset browser ---
 for i in range(1, BROWSER_CATS + 1):
     tile("cat_%d" % i, "Category %d" % i)
-button("cat_prev", "Categories Prev")
-button("cat_next", "Categories Next")
+button("cat_prev", "Categories Prev", help="the page of categories before this one")
+button("cat_next", "Categories Next", help="the page of categories after this one")
 for i in range(1, BROWSER_ITEMS + 1):
     tile("item_%d" % i, "Item %d" % i)
-button("item_prev", "Items Prev")
-button("item_next", "Items Next")
+button("item_prev", "Items Prev", help="the page of presets before this one")
+button("item_next", "Items Next", help="the page of presets after this one")
 readout("item_page", "Items Page")
 readout("br_now", "Loaded")
-toggle("fav", "Favorite")
-button("rnd", "Random Pick")
+toggle("fav", "Favorite", help="marks or unmarks the loaded preset as a favorite")
+button("rnd", "Random Pick", help="loads a random preset of the category shown")
 
 
 def norm(p):
@@ -511,16 +548,17 @@ def build_layout():
     its bottom card, both in Q-Link order: the knob under your hand is the control in the same place on the screen."""
     L = Layout()
 
-    # PLAY: the page you live on (docs/CONCEPT.md 9): the levels, Freeze and Hold, how Bloom sounds and swells and
-    # the volume; then the harmony, and the tone of the landscape. The preset in the header.
+    # PLAY: the page you live on (docs/CONCEPT.md 9): the four macros first, under the first four Q-Links, then
+    # Freeze and Hold, Bloom's Age and the volume; below, the levels and Bloom's swell, and the harmony. The
+    # preset in the header. The tones, Decay and Shimmer the page had before are what Glow and Horizon bend.
     L.group("PLAY")
-    play = ["g_level", "b_level", "s_return", "s_freeze", "h_hold", "b_age", "b_swell", "volume"]
-    harmony, tone = ["h_key", "h_scale", "h_chord", "g_gravity"], ["b_cutoff", "g_cutoff", "s_decay", "s_shimmer"]
-    L.page("PLAY", play + harmony + tone)
+    macros, perform = ["m_horizon", "m_motion", "m_glow", "m_density"], ["s_freeze", "h_hold", "b_age", "volume"]
+    levels, harmony = ["g_level", "b_level", "s_return", "b_swell"], ["h_key", "h_scale", "h_chord", "g_gravity"]
+    L.page("PLAY", macros + perform + levels + harmony)
     L.header(status_w=700)
     L.stepper(998, 121, 516, "preset")
-    bank_card(L, R1, "PLAY", play)
-    bank_halves(L, R2, ("HARMONY", harmony), ("TONE AND SPACE", tone))
+    bank_halves(L, R1, ("MACROS", macros), ("PERFORM", perform))
+    bank_halves(L, R2, ("LEVELS AND SWELL", levels), ("HARMONY", harmony))
 
     # HARMONY: the harmony brain (CONCEPT 6); then how long it remembers, what Stop does, and who listens.
     harmony = ["h_key", "h_scale", "h_tuning", "h_input", "h_chord", "h_voicing", "h_leading", "h_strum"]
@@ -581,10 +619,11 @@ def build_layout():
     bank_halves(L, R2, ("RETURN AND OUTPUT", out), ("WIDTH AND SHIMMER", width))
 
     # BROWSE: categories left, presets right, the loaded preset and actions below. The browser has no knobs of
-    # its own: the Q-Links keep the preset stepper, the volume and the sound's main controls between them.
+    # its own: the Q-Links keep the preset stepper, the macros (to bend a preset while auditioning it), the
+    # volume and PLAY's other main controls between them.
     L.group("BROWSE")
-    L.page("PRESETS", ["preset", "g_level", "b_level", "s_return", "b_age", "b_swell", "b_cutoff", "volume",
-                       "h_key", "h_scale", "h_chord", "g_gravity", "g_cutoff", "s_decay", "s_shimmer", "s_freeze"])
+    L.page("PRESETS", ["preset", "m_horizon", "m_motion", "m_glow", "m_density", "b_age", "s_freeze", "volume",
+                       "h_key", "h_scale", "h_chord", "g_gravity", "g_level", "b_level", "s_return", "b_swell"])
     L.header()
     L.card(24, R1, 360, 552, "CATEGORIES")
     L.tiles(44, 206, 320, 2, 8, 48, 8, "cat")
@@ -873,12 +912,54 @@ def check_names(layout_tabs, geo, errors):
                     tab["name"], w["kind"], w["key"], name, box, text_w(LIVE_FONT, px, name), TEXT_MARGIN))
 
 
+READOUT_INSET = 8                         # shadow_skin's readout: its live text 8 px in from each side, at VALUE_PX
+STATUS_TEXT = re.compile(r"^[ -~]+$")     # printable ASCII: what MPC's font and text_w()'s advance table both have
+
+
+def status_box(tabs):
+    """The width the status line's text has on its narrowest page: what a help line or a preset's description
+    must fit, wherever it shows."""
+    return min(w["w"] for t in tabs for w in t["widgets"] if w["kind"] == "readout" and w.get("key") == "status") \
+        - 2 * READOUT_INSET
+
+
+def status_misfit(line, box):
+    """Why `line` can't be the status line's text (None: it can): plain ASCII, no spaces at the ends, and room to
+    spare in its box."""
+    if not STATUS_TEXT.match(line) or line != line.strip():
+        return "is not one line of plain ASCII without spaces at the ends"
+    w = text_w(LIVE_FONT, VALUE_PX, line)
+    if w + TEXT_MARGIN > box:
+        return "is %.1f px; the status line has %d px, %d to spare" % (w, box, TEXT_MARGIN)
+    return None
+
+
+def check_help(tabs, errors):
+    """The help lines (surface.py "help"): every control a hand moves has one and nothing else does, and each fits
+    the status line on every page, which every page has."""
+    bare = ["%s: no status line (the help lines and preset descriptions show there)" % t["name"] for t in tabs
+            if not any(w["kind"] == "readout" and w.get("key") == "status" for w in t["widgets"])]
+    errors += bare
+    if bare:
+        return
+    box = status_box(tabs)
+    for p in P:
+        if p["kind"] in HELP_KINDS and not p.get("help"):
+            errors.append("parameter %s: a %s needs a help line (help=...)" % (p["key"], p["kind"]))
+        elif p["kind"] not in HELP_KINDS and p.get("help"):
+            errors.append("parameter %s: a %s shows no help line" % (p["key"], p["kind"]))
+        elif p.get("help"):
+            why = status_misfit(help_line(p), box)
+            if why:
+                errors.append("parameter %s: help %r %s" % (p["key"], help_line(p), why))
+
+
 def check_layout(text, groups):
     """Raise SystemExit on anything shadow_skin.py would refuse, plus geometry mistakes: outside the plugin
     area, overlaps on one screen (a page mode with everything shown in every mode), controls or text in a
     card's title band, open popup lists that leave the plugin area, options too long for their popup field or
-    segment, unknown bitmap glyphs; and the page groups (Layout): every page in one group, in layout order, with
-    exactly one Q-Link set titled like the page."""
+    segment, unknown bitmap glyphs; the page groups (Layout): every page in one group, in layout order, with
+    exactly one Q-Link set titled like the page; and the help lines (check_help)."""
     params = PARAMS
     geo = Geometry(_top_level(text))
     errors = []
@@ -909,6 +990,7 @@ def check_layout(text, groups):
         if [title for title, _ in t["qlinks"]] != [t["name"]]:
             errors.append("%s: a page has exactly one Q-Link set, titled like the page" % t["name"])
     check_names(tabs, geo, errors)
+    check_help(tabs, errors)
     errors += ["PRIMARY_BUTTONS: %r is not a button parameter" % k for k in PRIMARY_BUTTONS
                if PARAMS.get(k, {}).get("kind") != "button"]
     errors += ["BIPOLAR_EXTRA: %r is not a parameter" % k for k in BIPOLAR_EXTRA if k not in PARAMS]
@@ -1054,10 +1136,11 @@ def header():
     for i, p in enumerate(P):
         if "options" in p:
             opts.append("static constexpr const char* OPTS_%d[] = {%s};" % (i, ", ".join(c_str(o) for o in p["options"])))
-    info = ",\n".join("    {%s, %s, Kind::%s, %rf, %d, %s, %d}" % (
+    info = ",\n".join("    {%s, %s, Kind::%s, %rf, %d, %s, %d,\n     %s}" % (
         c_str(p["key"]), c_str(p["name"]), KIND[p["kind"]], float(round(norm(p), 6)),
         len(p.get("options", [])), "OPTS_%d" % i if "options" in p else "nullptr",
-        index[p["popup_of"]] if p["kind"] == "popup" else -1) for i, p in enumerate(P))
+        index[p["popup_of"]] if p["kind"] == "popup" else -1,
+        c_str(help_line(p)) if p.get("help") else "nullptr") for i, p in enumerate(P))
     uid = int.from_bytes(VST["uid"].encode(), "big")
     return """// generated by surface/surface.py: do not edit
 #pragma once
@@ -1084,6 +1167,7 @@ struct ParamInfo {
     int nopts;
     const char* const* opts;
     int popupOf;                // Kind::Popup: the parameter whose list it opens, else -1
+    const char* help;           // the status line after a move: "NAME: what it does" (nullptr: none)
 };
 
 static constexpr ParamSpec PARAM_SPECS[P_COUNT] = {
@@ -1116,6 +1200,8 @@ PRESET_MAGIC = "ambientforce "
 NUMBER = re.compile(r"^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$")
 PRESET_NAME_MAX = 18      # an item tile on the browser page (816 px / 3 columns)
 CATEGORY_NAME_MAX = 12    # a category tile (320 px / 2 columns), shown in capitals
+PRESET_ABOUT = "about"    # a preset's one-line description, shown on the status line when it loads
+MACROS = ("m_horizon", "m_motion", "m_glow", "m_density")
 
 
 def _shown(entry):
@@ -1123,10 +1209,17 @@ def _shown(entry):
     return re.sub(r"^\d+\s+", "", re.sub(r"\.afp$", "", entry).replace("_", " "))
 
 
-def factory_presets():
+def about_line(name, about):
+    """What the status line shows when a preset loads: "NAME: its description" (plugin/surface.cpp loadPreset)."""
+    return "%s: %s" % (name.upper(), about)
+
+
+def factory_presets(status_w):
     """[(category, name, text)]: one folder per category, both in file order ("NN_" orders them, "_" shows as a
-    space). Every line must be a sound parameter with a value in range, every name unique (keys are
-    "builtin:<name>") and short enough for its tile: a typo fails the build, not the device."""
+    space). Every line must be a sound parameter with a value in range (the macros at 0: they bend a preset as
+    saved), every name unique (keys are "builtin:<name>") and short enough for its tile, and the description
+    (an optional about= line) short enough for the status line (status_w px, status_box()): a typo fails the
+    build, not the device."""
     params = {p["key"]: p for p in P}
     out, errors, seen = [], [], {}
     for d in sorted(os.listdir(PRESET_DIR)):
@@ -1148,10 +1241,19 @@ def factory_presets():
             if lines[0] != PRESET_MAGIC + "1":
                 errors.append("%s: the first line must be '%s1'" % (where, PRESET_MAGIC))
             keys = set()
+            name = _shown(f)
             for n, line in enumerate(lines[1:], 2):
                 if not line.strip():
                     continue
                 key, _, val = line.partition("=")
+                if key == PRESET_ABOUT:   # the description: not a parameter (plugin/presets.cpp presetAbout)
+                    why = status_misfit(about_line(name, val), status_w) if val else "is empty"
+                    if key in keys:
+                        errors.append("%s:%d: about given twice" % (where, n))
+                    elif why:
+                        errors.append("%s:%d: the status line %r %s" % (where, n, about_line(name, val), why))
+                    keys.add(key)
+                    continue
                 p = params.get(key)
                 if not p or p["kind"] != "synth":
                     errors.append("%s:%d: %r is not a sound parameter" % (where, n, key))
@@ -1168,7 +1270,8 @@ def factory_presets():
                     errors.append("%s:%d: %s=%s outside %s..%s" % (where, n, key, val, lo, hi))
                 if p["curve"] in ("int", "enum") and v != round(v):
                     errors.append("%s:%d: %s=%s is not a whole number" % (where, n, key, val))
-            name = _shown(f)
+                if key in MACROS and v != 0:
+                    errors.append("%s:%d: %s=%s: a factory preset keeps the macros at 0" % (where, n, key, val))
             if name in seen:
                 errors.append("%s: the name %r is taken by %s" % (where, name, seen[name]))
             seen[name] = where
@@ -1204,8 +1307,8 @@ def main():
     assert len(set(keys)) == len(keys), "duplicate parameter key"
     assert P[0]["kind"] == "readout", "parameter 0 must stay a read-only readout"
     layout = pages()
-    check_layout(layout, build_layout().groups)
-    presets = factory_presets()   # everything checked before anything is written
+    tabs = check_layout(layout, build_layout().groups)
+    presets = factory_presets(status_box(tabs))   # everything checked before anything is written
     outputs = [
         ("params.json", json.dumps(params_json(), indent=1)),
         ("layout.conf", layout),

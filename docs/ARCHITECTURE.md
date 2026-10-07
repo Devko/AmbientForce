@@ -57,10 +57,10 @@ flowchart LR
 | `dsp/stages.h` | Stage timers for the profiling build (`-DAF_STAGE_TIMING`): ground, bloom, space, out |
 | `plugin/plugin.cpp` | VST2 glue for an instrument: MIDI with sample offsets, transport, suspend and resume, chunk state, the denormal flush, the CPU meter |
 | `plugin/surface.*` | The touchscreen side: parameter values, stepping, popups, the preset browser, pushes to MPC |
-| `plugin/patch_map.*` | 0..1 ↔ real values, display text, parameters → `Patch` (the levels' audio taper); every option list checked against the engine's names as it compiles |
+| `plugin/patch_map.*` | 0..1 ↔ real values, display text, parameters → `Patch` (the levels' audio taper), then the four macros bending that `Patch` (`applyMacros`); every option list checked against the engine's names as it compiles |
 | `plugin/tables.*` | The process-wide `TableSet` and its builder thread: started by the first instance, joined at unload, the tables freed only with no instance alive |
 | `plugin/library.*` | The preset library: scan, categories, favorites, recent |
-| `plugin/presets.*` | Factory and user presets |
+| `plugin/presets.*` | Factory and user presets, and a preset's description (`about=`) |
 | `plugin/state.*` | The state text shared by projects and preset files |
 | `plugin/paths.*` | Plugin folder, preset roots, data folder, atomic file writes |
 | `plugin/trace.*` | Device diagnostics while `/tmp/ambientforce.trace` exists: parameter sets, suspends and resumes, MIDI, table build times ([Building](BUILDING.md#diagnostics-on-the-device)) |
@@ -70,9 +70,9 @@ flowchart LR
 | `surface/skin_polish.py` | Redraws the knob strips, trigger buttons and stepper arrows after the skin generator; makes each group's pages sub-pages of one tab |
 | `surface/fonts/` | Titillium Web (SIL OFL), the skin's font; the layout check measures text with its advance table |
 | `presets/Factory/` | Factory presets: `NN_Category/NN_Name.afp`, a folder per browser category |
-| `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, MIDI mapping, stress |
+| `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
 | `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine; saved state, presets, the browser, stepping |
+| `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
 | `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
 | `tools/pgo_train.cpp` | The trainer for the profile-guided build (runs under `qemu-arm`): every mode, then every factory preset |
@@ -254,8 +254,14 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 - MPC only notices value changes the plugin makes (lit browser tiles, the stepper, snapped steps)
   when they are pushed with `audioMasterAutomate`, and only re-reads texts after
   `audioMasterUpdateDisplay`. The plugin pushes from `processReplacing` only: at most 48 values per
-  block (round-robin), a display update for changed texts at most every 4 blocks, plus the CPU
-  meter's at most twice a second.
+  block (round-robin), a display update for changed texts (the status line's among them) at most
+  every 4 blocks, plus the CPU meter's at most twice a second.
+- The status line (parameter 0) is the plugin's own text: the CPU meter, or for 4 s after a move the
+  control's help line, for 6 s after a preset load its description. The UI thread only notes the
+  last move (which control, with a count, in one atomic; a set that changes nothing is no move) and
+  counts preset loads; `processReplacing` times both on its sample count, decides which line shows
+  (another control's only once the one shown has had 0.5 s) and asks MPC to read it again;
+  `effGetParamDisplay` reads that decision and a cached string.
 - A value MPC sends is recorded as what MPC shows only after the plugin has acted on it, so a
   preset load in between never has the old value pushed back.
 - A Force sends every Q-Link detent, data-wheel click or drag event as the value it last read back
@@ -282,15 +288,16 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 ## Parameters and saved state
 
 - **Parameters** may still change during 0.x (the previews); from v0.1 they are **append-only**:
-  MPC projects store values by index. Sound parameters (kind `synth`, 75 of them with the volume) are
-  saved and automatable; the surface's own values (the preset stepper, tiles, popup flags) are not.
-  137 parameters in all.
+  MPC projects store values by index. Sound parameters (kind `synth`, 79 of them with the volume and
+  the four macros, which come after Tilt) are saved and automatable; the surface's own values (the
+  preset stepper, tiles, popup flags) are not. 141 parameters in all.
 - **Saved state** (projects and `.afp` preset files) is the text format `ambientforce 1`:
   `key=value` lines of *real* values (Hz, seconds, dB, an option's index), plus, in a project, the
   preset it came from. Ranges can change without remapping saved projects or presets. Options are
   saved by their index, so from v0.1 an option list may only grow at its end, as the parameter list
   does. A preset starts from the defaults (what it doesn't name is the default); a project changes
-  only what it lists.
+  only what it lists. A preset file may also carry `about=`, its description for the status line:
+  not state, skipped when loading, never saved.
 - **Defaults**: every default and range in `surface.py` is the engine's own (`dsp/engine.h`'s
   `Patch` and the headers it holds), so Init plays what a `Patch{}` plays; `test/params_test.cpp`
   holds the two together field by field, levels too (a `Patch` holds the levels' default knobs
@@ -300,4 +307,5 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
   each entry as it compiles, and a list that differs fails the build with its parameter's index.
 - **Names** fit MPC's name box (126 px of a knob's 130) by the font's own advance table, with 3 px
   to spare, measured the same way on every machine (no Pillow needed). Preset names have at most 18
-  characters, category names 12.
+  characters, category names 12. Help lines and preset descriptions fit the narrowest status line
+  (PLAY's) the same way.

@@ -810,6 +810,38 @@
    "display": "string"
   },
   {
+   "key": "m_horizon",
+   "name": "Horizon",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "m_motion",
+   "name": "Motion",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "m_glow",
+   "name": "Glow",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "m_density",
+   "name": "Density",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
    "key": "preset",
    "name": "Preset",
    "min": 0,

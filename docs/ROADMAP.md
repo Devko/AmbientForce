@@ -82,7 +82,7 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 | Milestone | Contents | Gate | |
 |---|---|---|---|
 | **M2: Weather** | Air (modal resonators, pluck, patterns, Loop); Weather (procedural fields, your WAVs, Memory, Keep); Echo; 32 presets | Worst case ≤ 15% p99; the 24-hour `soak` passes | ⬜ |
-| **M3: Long time** | Drift, Swell, Gust, LFOs, the matrix, macros, HORIZON; Phase; scenes with Evolve and Autopilot; Patina; the Sky view; lifetime import from your WAVs | Hands off for an hour without a dull minute (a listening session) | ⬜ |
+| **M3: Long time** | Drift, Swell, Gust, LFOs, the matrix, macro mappings per preset (the four fixed macros came in 0.0.2: [below](#playability)); Phase; scenes with Evolve and Autopilot; Patina; the Sky view; lifetime import from your WAVs | Hands off for an hour without a dull minute (a listening session) | ⬜ |
 | **M4: v0.1** | 64 presets, 24 tables, 12 fields; the parameter list frozen, append-only from here; a CI release | A `tested.json` entry | ⬜ |
 
 ## Planned, not yet placed
@@ -250,6 +250,38 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 - 2026-10-07 — **Option lists are the engine's names**, checked entry by entry as
   `plugin/patch_map.cpp` compiles; Color Int's options read min3, maj3 (segments show capitals, so
   m3 and M3 would look alike).
+
+### Playability
+
+After the first listen on the device: "we have a ton of features, but nobody knows what all these
+knobs are doing".
+
+- 2026-10-07 — **Four macros brought forward from M3, as fixed relative macros.** The concept plans
+  HORIZON with a mapping per preset, with the matrix in M3 (CONCEPT §7.1). Horizon, Motion, Glow and
+  Density come now, with one mapping for every preset, relative to what the preset has: 0 is the
+  preset bit for bit, ±1 moves each field it owns one way, clamped to its range. They bend the
+  `Patch` the knobs make (`plugin/patch_map.cpp` `applyMacros`), never the knobs, so the engine is
+  unchanged and a knob's value and text stay what the preset says. Mappings per preset stay M3's.
+- 2026-10-07 — **Help on the status line**, not a page of its own: every control a hand moves has a
+  one-line help text beside it in `surface.py`, shown on the status readout (on every page) for 4 s
+  after a move, a preset's `about=` description for 6 s after it loads. Each line is measured to fit
+  the narrowest status readout (PLAY's, 684 px of text at MPC's 26 px): about 60 characters.
+- 2026-10-07 — **The status line is timed on the audio thread's samples**: the UI side only notes the
+  last move and counts preset loads (atomics); `processReplacing` decides which line shows (another
+  control takes over only after half a second, so automation doesn't flicker) and pushes
+  `audioMasterUpdateDisplay`; `statusText()` reads what it decided. A move is a set that changes the
+  value: MPC's echoes, preset and project loads show nothing.
+- 2026-10-07 — **The macros keep the level.** Horizon's far half steps the dry back 3 dB and raises
+  the sends only 3 dB (+6 dB put Cathedral Breath, Abyss with shimmer, on the limiter for 14% of its
+  phrase); Glow's tilt is ±0.3 (±0.6 made the dark half up to 3 LU louder); dark and thick trim the
+  volume by 1.5 and 1 dB. Over the 16 presets at both ends: no limiting, at most 4.2 LU down (far).
+- 2026-10-07 — **Density leaves Blend alone**: crossfading toward Table B dipped the level 2–5 LU, and
+  with B a sine (the default) it thinned the sound rather than thickening it. Unison and the chord
+  aren't macro targets either: switching them would jump.
+- 2026-10-07 — **The PLAY page gave the two Tones, Space Decay and Shimmer to the macros**: its first
+  bank is the macros, Freeze, Hold, Bloom Age and the volume; the second the levels, Bloom Swell, key,
+  scale, chord and Gravity. The macros' parameters come after Tilt, so every earlier sound
+  parameter keeps its index.
 
 ### Presets, bench, soak, the device
 

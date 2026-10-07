@@ -4,6 +4,32 @@ Releases are built by CI from a `vX.Y.Z` tag (see [Building](docs/BUILDING.md#re
 section for the tag's version becomes the release's notes. While the version is 0.x the parameter list
 may still change between releases.
 
+## 0.0.2 (unreleased)
+
+Playability: after hearing M1 on the device, "a ton of features, but nobody knows what all these
+knobs are doing". So the screen now explains itself, and four knobs play the whole instrument.
+
+- **Four macros on PLAY** (and on PRESETS' Q-Links): **Horizon** (near and dry to far, wet and
+  long), **Motion** (still to drifting), **Glow** (dark to bright) and **Density** (sparse to thick),
+  −100% to +100%. Each bends several controls of the loaded preset at once without moving their
+  knobs, every result inside its control's range; at 0 the preset plays bit for bit as saved. They
+  keep the level near the preset's: no macro at either end drives a factory preset into the limiter,
+  and none takes more than 4.2 LU off one. Saved with the sound; the factory presets keep them at 0.
+  What each one moves: [User guide](docs/USER_GUIDE.md#the-macros).
+- **The help line:** move any control and for 4 s the status line at the top of every page says
+  what it does and what its range means (`BLOOM AGE: where in a note's life you listen, struck to
+  fading`), then shows the meter again. A control kept moving keeps its line; another takes over no
+  sooner than half a second after, so automation doesn't make it flicker. MPC echoing a value back,
+  preset and project loads show nothing.
+- **Preset descriptions:** a preset file may carry an `about=` line; when a preset loads (a tile,
+  the stepper, NEXT, RND, INIT) the status line shows `NAME: description` for 6 s. All 16 factory
+  presets have one. SAVE writes none.
+- **The PLAY page** has the macros, Freeze, Hold, Bloom Age and the volume on its first Q-Link bank;
+  the levels, Bloom Swell, key, scale, chord and Gravity on the second. The two Tones, Space Decay
+  and Shimmer, which Glow and Horizon now bend, left it (they are on their strata's pages).
+- **Parameters:** four new sound parameters after Tilt (`m_horizon`, `m_motion`, `m_glow`,
+  `m_density`), so every earlier sound parameter keeps its index; 141 in all.
+
 ## 0.0.1 (unreleased)
 
 The first preview, milestone M1 "First light": one pad plays a chord over a drone that follows the

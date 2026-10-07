@@ -14,8 +14,23 @@ float paramNorm(int id, float value);          // inverse, for state text, tests
 // What the knob's value label shows, in the parameter's format (surface.py fmt): "2.50 kHz", "20 s" (a slow
 // rate as its period), "0.30 Hz", "8.0 ct", "+1 Oct", "L40", an option's name...
 std::string paramDisplay(int id, float norm);
-// The engine's Patch from every parameter's 0..1 (norm[P_COUNT]). Levels and sends get the audio taper (gain =
-// knob^2); options become the engine's enums; Memory becomes bars (0 off, -1 forever). Audio thread: no allocation.
+// The engine's Patch from every parameter's 0..1 (norm[P_COUNT]): the knobs' patch (patchFromKnobs), bent by the
+// macros (applyMacros). Audio thread: no allocation.
 Patch patchFromParams(const float* norm);
+// The knobs alone, the macros left out. Levels and sends get the audio taper (gain = knob^2); options become the
+// engine's enums; Memory becomes bars (0 off, -1 forever).
+Patch patchFromKnobs(const float* norm);
+
+// The four macros (surface.py m_*), each -1..+1. They bend the Patch the knobs make, not the knobs: each one
+// moves its fields monotonically with its value, every result clamped to its parameter's range, and a macro at
+// exactly 0 touches nothing, so a preset with its macros at 0 plays bit for bit as saved.
+struct Macros {
+    float horizon = 0.0f;   // near and dry (-1) .. far and vast (+1)
+    float motion = 0.0f;    // still .. drifting
+    float glow = 0.0f;      // dark .. bright
+    float density = 0.0f;   // sparse .. thick
+};
+Macros macrosFromParams(const float* norm);
+void applyMacros(Patch& p, const Macros& m);
 
 } // namespace af
