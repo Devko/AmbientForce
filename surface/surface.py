@@ -83,6 +83,7 @@ def enum(key, name, options, default, ui=False):
 
 
 def num(key, name, curve, lo, hi, default, fmt, ui=False):
+    assert curve != "pow" or lo == 0, "%s: a pow curve runs from 0 (patch_map.cpp: hi x n^3)" % key
     _add(key, name, "ui" if ui else "synth", curve, lo, hi, default, fmt)
 
 
@@ -114,12 +115,14 @@ readout("status", "Status")            # index 0 must stay a read-only readout: 
 num("volume", "Volume", "lin", -60, 6, -6, "db")
 
 # Every default and range below is the engine's own (dsp/engine.h Patch and the headers it holds), so Init
-# plays what a Patch{} plays: test/params_test.cpp holds the two together. Levels and sends are the exception,
-# by unit: their knobs have the family's audio taper (gain = knob^2, plugin/patch_map.cpp), so Level 70% is a
-# gain of 0.49. Hold, Freeze and the mutes are segments, not toggle tiles: a tile's release echo is a second tap.
+# plays what a Patch{} plays: test/params_test.cpp holds the two together. The levels and sends have the
+# family's audio taper (gain = knob^2, plugin/patch_map.cpp): Patch{} holds their default knobs squared (Level
+# 70% is a gain of 0.49). Every option list is the engine's names for its values, in their order
+# (plugin/patch_map.cpp checks each entry as it compiles). Hold, Freeze and the mutes are segments, not toggle
+# tiles: a tile's release echo is a second tap.
 ON_OFF = ["Off", "On"]
 LISTEN = ["Notes", "Harmony", "Free"]                                                 # dsp/harmony.h Listen
-# The table library in tableName() order (dsp/lifetime.h TableId): lifetime tables, then the digital waves.
+# The table library (dsp/lifetime.h kTableNames): lifetime tables, then the digital waves.
 TABLES = ["Felt Piano", "Celesta", "Glass Harmonica", "Cello Tasto", "Choir Ah-Oo", "Reed Organ", "Sine Bloom",
           "Tape Strings", "Sine", "Triangle", "Saw", "Square"]
 
@@ -153,7 +156,7 @@ enum("g_table", "Ground Table", TABLES, "Cello Tasto")
 popup_flag("g_table")
 num("g_age", "Ground Age", "lin", 0, 1, 0.5, "pct")
 num("g_sway", "Ground Sway", "lin", 0, 1, 0.3, "pct")
-num("g_swayrate", "Gnd SwayRate", "log", 0.002, 2, 0.05, "period")
+num("g_swayrate", "Ground Rate", "log", 0.002, 2, 0.05, "period")
 num("g_beat", "Ground Beat", "lin", 0, 3, 0.3, "hz2")
 num("g_gravity", "Gravity", "pow", 0, 30, 6, "time")
 num("g_fade", "Ground Fade", "log", 0.05, 30, 4, "time")
@@ -165,7 +168,7 @@ num("g_color", "Ground Color", "lin", 0, 1, 0, "pct")
 enum("g_colint", "Color Int", ["min3", "maj3", "4th", "min7", "9th", "11th"], "9th")           # ColorInterval
 enum("g_reg", "Ground Reg", ["Low", "Mid", "High"], "Mid")                                     # registerOct 1..3
 num("g_body", "Ground Body", "lin", 0, 1, 0, "pct")
-num("g_breath", "Ground Breath", "lin", 0, 1, 0.3, "pct")
+num("g_breath", "Gnd Breath", "lin", 0, 1, 0.3, "pct")
 num("g_space", "Ground Space", "lin", 0, 1, 0.4, "pct")
 num("g_width", "Ground Width", "lin", 0, 1, 0.5, "pct")
 num("g_pan", "Ground Pan", "lin", -1, 1, 0, "pan")
@@ -181,7 +184,7 @@ enum("b_table", "Bloom Table", TABLES, "Felt Piano")
 popup_flag("b_table")
 num("b_age", "Bloom Age", "lin", 0, 1, 0.6, "pct")
 num("b_sway", "Bloom Sway", "lin", 0, 1, 0.25, "pct")
-num("b_swayrate", "Blm SwayRate", "log", 0.002, 2, 0.07, "period")
+num("b_swayrate", "Bloom Rate", "log", 0.002, 2, 0.07, "period")
 num("b_smear", "Bloom Smear", "lin", 0, 1, 0.1, "pct")
 enum("b_tableb", "Bloom Table B", TABLES, "Sine")
 popup_flag("b_tableb")
@@ -203,12 +206,12 @@ num("b_pan", "Bloom Pan", "lin", -1, 1, 0, "pan")
 # --- Space, the reverb (dsp/space.h Params, dsp/reverb.h Reverb::Params), and the output ---
 enum("s_mode", "Space Type", ["Room", "Hall", "Plate", "Space", "Haze", "Abyss"], "Hall")       # Reverb::Mode
 popup_flag("s_mode")
-num("s_size", "Space Size", "lin", 0, 1, 0.5, "pct")
-num("s_decay", "Space Decay", "log", 0.1, 30, 2.5, "time")
-num("s_predelay", "Pre-Delay", "pow", 0, 250, 20, "ms")
+num("s_size", "Space Size", "lin", 0, 1, 0.6, "pct")
+num("s_decay", "Space Decay", "log", 0.1, 30, 8, "time")
+num("s_predelay", "Pre-Delay", "pow", 0, 250, 30, "ms")
 num("s_damp", "Space Damp", "log", 1000, 20000, 6000, "hz")
-num("s_lowcut", "Space Low Cut", "log", 20, 1000, 150, "hz")
-num("s_mod", "Space Mod", "lin", 0, 1, 0.3, "pct")
+num("s_lowcut", "Low Cut", "log", 20, 1000, 120, "hz")
+num("s_mod", "Space Mod", "lin", 0, 1, 0.4, "pct")
 num("s_width", "Space Width", "lin", 0, 1, 1, "pct")
 enum("s_freeze", "Freeze", ON_OFF, "Off")
 num("s_shimmer", "Shimmer", "lin", 0, 1, 0, "pct")
@@ -298,9 +301,18 @@ THEME = ("style=td3\nfont_label=%s\ntitle_size=%d\n" % (FONT_LABEL, TITLE_SIZE)
          + "".join("theme_%s=%s\n" % kv for kv in PALETTE.items()))
 TEXT_INK = PALETTE["ink_dim"]   # free bitmap text (column headers, hints)
 
-S8 = [100, 252, 404, 556, 708, 860, 1012, 1164]   # 8 knob slots across a card = one Q-Link bank
-L4, R4 = S8[:4], [724, 876, 1028, 1180]           # 4 slots in the left / right half card
 R1, R2 = 158, 440                                 # card rows (h=270), or R1 with h=552
+
+# shadow_skin's geometry of the widgets this layout places (seg_rects, popup fields, the live labels): the page
+# code and check_layout() both build on these.
+SEG_V_H, SEG_V_STEP = 30, 32                      # enum_v: a segment's height, and the step to the next
+SEG_H_H, SEG_H_STEP, SEG_GAP = 33, 35, 2          # enum_h: a segment's height, the step a row down, the gap across
+SEG_V_LABEL, SEG_H_LABEL = 24, 22                 # a segment group's label: its centre this far over the first row
+SEG_TEXT, SEG_PAD = 0.42, 6                       # segment text: the title font at 0.42 of the height; its padding
+VALUE_PX = 26                                     # MPC's live value text (a knob's value, a popup's field)
+POPUP_H, POPUP_CHEVRON = 40, 44                   # a popup's field: its height, and the chevron's share of its width
+TEXT_SIZE = 1.5                                   # free bitmap text (text=): its scale, 9 px glyphs at 1
+TEXT_H = int(9 * TEXT_SIZE + 0.5)
 
 # Knobs: shadow_skin bakes ONE filmstrip per radius, so the radius picks the look. A bipolar knob (its arc
 # grows from 12 o'clock) is one pixel smaller than a unipolar knob of the same size. This table is the only
@@ -373,7 +385,7 @@ class Layout:
         self.add('enum_v cx=%d cy=%d sw=%d key=%s%s' % (cx, cy, sw, key, ' label="%s"' % label if label else ""))
 
     def popup(self, cx, cy, w, key):
-        self.add('popup cx=%d cy=%d w=%d h=40 key=%s' % (cx, cy, w, key))
+        self.add('popup cx=%d cy=%d w=%d h=%d key=%s' % (cx, cy, w, POPUP_H, key))
 
     def stepper(self, cx, cy, w, key):
         self.add('stepper cx=%d cy=%d w=%d h=40 key=%s' % (cx, cy, w, key))
@@ -400,30 +412,47 @@ class Layout:
         self.add('list x=%d y=%d w=%d cols=%d rows=%d th=%d gap=%d key=%s' % (x, y, w, cols, rows, th, gap, key))
 
 
-# A card's row of controls: one Q-Link bank, left to right in Q-Link order. Each control has its own width (a knob's
-# box with its labels, a popup's field, a list's segments); row() spaces them evenly, so a row of 8 knobs lands on
-# S8 and one of 4 in a half card on L4 / R4. Popups and segments sit at the height that lines them up with the
-# knobs, and are labelled with the parameter's name without its stratum (the card says which), unless a page
-# says otherwise.
-KNOB_W = 130
+# A card's row of controls: one Q-Link bank, left to right in Q-Link order. Each control is as wide as it needs (a
+# knob's box with its labels; a popup's field or a list's segments, sized to the longest option); row() spaces
+# them evenly, so 8 knobs stand 152 px apart from x=100 as on the siblings' pages, 4 in a half card likewise. The
+# knobs' centres share a line, and so do the lists' labels, the segments and popup fields starting under them.
+# A list is labelled with its parameter's name without the stratum (the card says which), unless a page says
+# otherwise.
+KNOB_W = 130                                      # a knob's box with its labels (shadow_skin: max(130, 2r + 10))
+KNOB_Y = 126                                      # a knob's centre, below its card's top
+LABEL_Y = 89                                      # the centre of a list's label, below its card's top
+LIST_Y = LABEL_Y + SEG_V_LABEL                    # where its segments or field start
+SEG_MIN, CELL_MIN = 80, 44                        # a segment's width at least: a finger's; a cell in a row of them
 SPANS = {"full": (35, 1229), "left": (35, 621), "right": (659, 1245)}   # x0..x1 of the controls in a card
-# A long list's field: wide enough for its longest option in MPC's 26 px value text plus the chevron (44 px);
-# check_layout() measures it.
-POPUP_W = {"h_key": 80, "h_scale": 180, "h_chord": 140, "h_memory": 136, "g_table": 236, "b_table": 236,
-           "b_tableb": 236, "s_mode": 120}
-SEG_W = {"h_tuning": 110, "h_input": 100, "s_freeze": 80, "h_hold": 80, "h_leading": 80, "g_mute": 72, "b_mute": 72,
-         "b_fmode": 72, "b_unison": 64, "b_couple": 76, "s_shint": 76, "g_colint": 46}   # else 88
-SEG_ROWS = {"g_colint": 2}            # six short options: two rows of three
+STRATA = ("Ground", "Bloom", "Space")             # the strata whose cards name them
+SEG_ROWS = {"g_colint": 2}                        # six short options: two rows of three
 LIST_LABELS = {"g_reg": "REGISTER", "g_colint": "COLOR", "s_shint": "INTERVAL", "s_mode": "TYPE",
                "b_tableb": "TABLE B", "b_fmode": "FILTER"}
 
 
 def list_label(key):
     name = PARAMS[key]["name"]
-    for stratum in ("Ground ", "Bloom ", "Space "):
-        if name.startswith(stratum):
-            name = name[len(stratum):]
+    for stratum in STRATA:
+        if name.startswith(stratum + " "):
+            name = name[len(stratum) + 1:]
     return LIST_LABELS.get(key, name.upper())
+
+
+def popup_w(key):
+    """A long list's field: its longest option in MPC's value text, TEXT_MARGIN to spare, and the chevron."""
+    longest = max(text_w(LIVE_FONT, VALUE_PX, o) for o in PARAMS[key]["options"])
+    return 4 * int(math.ceil((longest + TEXT_MARGIN + POPUP_CHEVRON) / 4.0))
+
+
+def seg_px(kind):
+    """The size of a segment's text (shadow_skin's label overlays)."""
+    return max(10, int((SEG_V_H if kind == "enum_v" else SEG_H_H) * SEG_TEXT))
+
+
+def seg_w(key, kind):
+    """A short list's segment: its longest option, in capitals as shadow_skin draws it, TEXT_MARGIN to spare."""
+    longest = max(text_w(TITLE_FONT, seg_px(kind), o.upper()) for o in PARAMS[key]["options"])
+    return max(SEG_MIN if kind == "enum_v" else CELL_MIN, 2 * int(math.ceil((longest + TEXT_MARGIN + SEG_PAD) / 2.0)))
 
 
 def control_w(key):
@@ -431,27 +460,26 @@ def control_w(key):
     if "options" not in p:
         return KNOB_W
     if key + "__open" in PARAMS:
-        return POPUP_W[key]
-    rows, sw = SEG_ROWS.get(key, 0), SEG_W.get(key, 88)
-    if rows:
-        per = -(-len(p["options"]) // rows)
-        return per * sw + (per - 1) * 2
-    return sw
+        return popup_w(key)
+    if key in SEG_ROWS:
+        per = -(-len(p["options"]) // SEG_ROWS[key])
+        return per * seg_w(key, "enum_h") + (per - 1) * SEG_GAP
+    return seg_w(key, "enum_v")
 
 
 def control(L, cx, top, key, label=None):
-    """A knob, a long list's popup (its label above) or a short list's segments (vertical, under their label)."""
+    """A knob, a long list's popup (its label above) or a short list's segments (under their label)."""
     p = PARAMS[key]
     label = label or list_label(key)
     if "options" not in p:
-        L.knob(cx, top + 126, key)
+        L.knob(cx, top + KNOB_Y, key)
     elif key + "__open" in PARAMS:
-        L.text(cx, top + 82, label)
-        L.popup(cx, top + 126, POPUP_W[key], key)
+        L.text(cx, top + LABEL_Y - TEXT_H // 2, label)
+        L.popup(cx, top + LIST_Y + POPUP_H // 2, popup_w(key), key)
     elif key in SEG_ROWS:
-        L.hseg(cx, top + 142, key, SEG_W[key], label, rows=SEG_ROWS[key])
+        L.hseg(cx, top + LABEL_Y + SEG_H_LABEL + SEG_H_H // 2, key, seg_w(key, "enum_h"), label, rows=SEG_ROWS[key])
     else:
-        L.vseg(cx, top + (170 if len(p["options"]) >= 4 else 160), key, SEG_W.get(key, 88), label)
+        L.vseg(cx, top + LIST_Y + len(p["options"]) * SEG_V_STEP // 2, key, seg_w(key, "enum_v"), label)
 
 
 def row(L, top, keys, span="full", labels=None):
@@ -656,9 +684,11 @@ def _ttf_advances(path):
 
 
 def ttf_width(font, px, s):
-    """Advance width of s in a bundled font at px pixels, measured with Pillow as shadow_skin does. Without
-    Pillow (surface.py needs only python3): from the font's own advance table, +1 px (that is within 0.75 px
-    of Pillow for Titillium Web, and errs wide)."""
+    """Advance width of s in a bundled font at px pixels, measured with Pillow as shadow_skin does when it sizes
+    a button or places a group label (Geometry mirrors it). Without Pillow (surface.py needs only python3): the
+    font's own advance table, +1 px. Neither is an upper bound: Pillow's layouts differ by a few pixels among
+    themselves (its hinted BASIC layout is the widest), and the table sits between them. Whether a text fits its
+    box is text_w()'s to say, the same everywhere."""
     key = (font, px)
     if key not in _FONTS:
         path = os.path.join(HERE, font)
@@ -669,6 +699,21 @@ def ttf_width(font, px, s):
             upem, adv = _ttf_advances(path)
             _FONTS[key] = lambda t: sum(adv.get(c, upem) for c in t) * px / upem + 1.0
     return _FONTS[key](s)
+
+
+TEXT_MARGIN = 3   # px a text keeps to spare in its box, by text_w()
+_ADVANCES = {}
+
+
+def text_w(font, px, s):
+    """The width of s at px pixels by the font's own advance table, unhinted: the same with or without Pillow, on
+    any machine, so a text fits or doesn't everywhere alike. What draws it lands near: over this layout's names,
+    Pillow's hinted BASIC layout came out up to 2.8 px wider, raqm a little narrower, and MPC draws its own. So a
+    text fits when it has TEXT_MARGIN to spare."""
+    if font not in _ADVANCES:
+        _ADVANCES[font] = _ttf_advances(os.path.join(HERE, font))
+    upem, adv = _ADVANCES[font]
+    return sum(adv.get(c, upem) for c in s) * px / upem
 
 
 def _top_level(text):
@@ -721,26 +766,28 @@ class Geometry:
     def segs(w, n):   # shadow_skin seg_rects()
         if w["kind"] == "enum_v":
             sw = w.get("sw") or 135
-            y0 = w["cy"] - (n * 32) // 2
-            return [(w["cx"] - sw // 2, y0 + i * 32, sw, 30) for i in range(n)]
+            y0 = w["cy"] - (n * SEG_V_STEP) // 2
+            return [(w["cx"] - sw // 2, y0 + i * SEG_V_STEP, sw, SEG_V_H) for i in range(n)]
         sw, rows = w.get("sw") or 117, w.get("rows", 1)
         per = -(-n // rows)
         out = []
         for i in range(n):
             r, c = divmod(i, per)
             cnt = min(per, n - r * per)
-            out.append((w["cx"] - (cnt * sw + (cnt - 1) * 2) // 2 + c * (sw + 2), w["cy"] - 16 + r * 35, sw, 33))
+            out.append((w["cx"] - (cnt * sw + (cnt - 1) * SEG_GAP) // 2 + c * (sw + SEG_GAP),
+                        w["cy"] - SEG_H_H // 2 + r * SEG_H_STEP, sw, SEG_H_H))
         return out
 
     @staticmethod
     def enum_label(w, n):   # the TrueType group label shadow_skin draws centred at (gx, gy), 18 px
-        gy = w["cy"] - 33 // 2 - 22 if w["kind"] == "enum_h" else w["cy"] - (n * 32) // 2 - 24
+        gy = (w["cy"] - SEG_H_H // 2 - SEG_H_LABEL if w["kind"] == "enum_h"
+              else w["cy"] - (n * SEG_V_STEP) // 2 - SEG_V_LABEL)
         tw = int(ttf_width(TITLE_FONT, 18, w["label"])) + 2
         return (w["cx"] - tw // 2, gy - 10, tw, 20)
 
     @staticmethod
     def text(w):   # render_conf_preview.c draw_text_c(): cx centres, cy is the TOP of the glyphs
-        size = float(w.get("size", 1.5))
+        size = float(w.get("size", TEXT_SIZE))
         tw = bitmap_width(w["label"], size)
         return (w["cx"] - tw // 2, w["cy"], tw + 1, int(9 * size + 0.5))
 
@@ -821,8 +868,9 @@ def check_names(layout_tabs, geo, errors):
             # the live Name label: knob 17 x label_scale px in max(130, 2r+10); slider 17 px in cw; toggle 15 px in 120
             px, box = ((math.ceil(17 * geo.ls), max(130, 2 * w["r"] + 10)) if w["kind"] == "knob" else
                        (15, 120) if w["kind"] == "toggle" else (17, w.get("cw") or max(130, w["w"], w["h"])))
-            if ttf_width(LIVE_FONT, px, name) > box - 4:
-                errors.append("%s: %s %s: name %r does not fit its %d px label" % (tab["name"], w["kind"], w["key"], name, box))
+            if text_w(LIVE_FONT, px, name) + TEXT_MARGIN > box - 4:
+                errors.append("%s: %s %s: name %r does not fit its %d px label (%.1f px and %d to spare)" % (
+                    tab["name"], w["kind"], w["key"], name, box, text_w(LIVE_FONT, px, name), TEXT_MARGIN))
 
 
 def check_layout(text, groups):
@@ -942,17 +990,17 @@ def check_layout(text, groups):
                 panel = Geometry.popup_panel(w, len(p["options"]))
                 if not _inside(panel):
                     errors.append("%s: popup %s: its open list %s leaves the plugin area" % (T, key, panel))
-                # The field shows the option in MPC's 26 px value text, beside the chevron (shadow_skin: rw - 44).
+                # The field shows the option in MPC's value text, beside the chevron.
                 for o in p["options"]:
-                    if ttf_width(LIVE_FONT, 26, o) > w["w"] - 44:
+                    if text_w(LIVE_FONT, VALUE_PX, o) + TEXT_MARGIN > w["w"] - POPUP_CHEVRON:
                         errors.append("%s: popup %s: %r does not fit its %d px field" % (T, key, o, w["w"]))
             if kind in ("enum_h", "enum_v"):
-                # Segment text: the option in capitals, in the title font at 0.42 of the segment's height (shadow_skin's
-                # label overlays). Capitals: "m3" and "M3" would both read "M3".
+                # Segment text: the option in capitals (shadow_skin's label overlays). Capitals: "m3" and "M3"
+                # would both read "M3".
                 sw = w.get("sw") or (135 if kind == "enum_v" else 117)
                 shown = [o.upper() for o in p["options"]]
                 for o in shown:
-                    if ttf_width(TITLE_FONT, max(10, int((30 if kind == "enum_v" else 33) * 0.42)), o) > sw - 6:
+                    if text_w(TITLE_FONT, seg_px(kind), o) + TEXT_MARGIN > sw - SEG_PAD:
                         errors.append("%s: %s %s: %r does not fit its %d px segment" % (T, kind, key, o, sw))
                 if len(set(shown)) < len(shown):
                     errors.append("%s: %s %s: options that differ only in case read the same in capitals" % (T, kind, key))

@@ -588,12 +588,15 @@ def selftest(samples=None):
         some_btn = sorted(sk.buttons)[0] + "_on.png"
         some_arrow = sorted(sk.arrows)[0]   # PLAY's preset stepper
         refused("missing button", lambda f: os.remove(os.path.join(f, some_btn)), some_btn + ": missing")
-        refused("wrong knob size", lambda f: Image.new("RGB", (70, 70 * 127), dummy).save(os.path.join(f, "sh_knob_r30.png")),
-                "sh_knob_r30.png: is 70x8890")
+        big = surface.KNOB_SIZES["big"]   # a radius the layout has (its unipolar knobs), drawn a frame short
+        knob_side = 2 * big + 10
+        refused("wrong knob size", lambda f: Image.new("RGB", (knob_side, knob_side * 127), dummy).save(
+            os.path.join(f, "sh_knob_r%d.png" % big)), "sh_knob_r%d.png: is %dx%d" % (big, knob_side, knob_side * 127))
         refused("wrong arrow size", lambda f: Image.new("RGB", (40, 41), dummy).save(os.path.join(f, some_arrow)),
                 some_arrow + ": is 40x41")
-        refused("unknown knob", lambda f: Image.new("RGB", (60, 60 * 128), dummy).save(os.path.join(f, "sh_knob_r25.png")),
-                "sh_knob_r25.png: not in the layout")
+        stray = max(surface.KNOB_SIZES.values()) + 5   # a radius no knob has
+        refused("unknown knob", lambda f: Image.new("RGB", (2 * stray + 10, (2 * stray + 10) * 128), dummy).save(
+            os.path.join(f, "sh_knob_r%d.png" % stray)), "sh_knob_r%d.png: not in the layout" % stray)
         refused("unknown button", lambda f: Image.new("RGB", (60, 52), dummy).save(os.path.join(f, "sh_btn_zz_ZZ_on.png")),
                 "sh_btn_zz_ZZ_on.png: not in the layout")
         refused("not in TUI", lambda f: json.dump({"images": []}, open(os.path.join(f, "TUI.json"), "w")),

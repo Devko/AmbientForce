@@ -9,39 +9,67 @@ namespace af {
 
 namespace {
 
-// Memory's options (surface.py h_memory) as HarmonyPatch::memoryBars: Off, the bars, Forever.
-constexpr int kMemoryBars[] = {0, 1, 2, 4, 8, 16, 32, 64, -1};
+// The options whose values are the patch map's, not an engine enum's: their names and what they become.
+constexpr const char* kMemoryNames[] = {"Off", "1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars", "32 Bars", "64 Bars",
+                                        "Forever"};
+constexpr int kMemoryBars[] = {0, 1, 2, 4, 8, 16, 32, 64, -1};   // HarmonyPatch::memoryBars: off, bars, forever
+static_assert(sizeof kMemoryNames / sizeof *kMemoryNames == sizeof kMemoryBars / sizeof *kMemoryBars, "Memory");
+constexpr const char* kRegisterNames[] = {"Low", "Mid", "High"};   // GroundPatch::registerOct 1, 2, 3
+constexpr const char* kUnisonNames[] = {"1", "2"};                 // BloomPatch::unison
+constexpr const char* kOnOff[] = {"Off", "On"};                    // a switch: 0 off, 1 on
 
 // The family's audio taper: a level knob's 0..1 to a gain, so the knob's middle is about -12 dB.
 float taper(float knob) { return knob * knob; }
 
-constexpr int opts(int id) { return PARAM_INFO[id].nopts; }
+// Every option list of surface.py against the names of the values it stands for, entry by entry, as this
+// compiles: a list in another order, with an option too many or too few, or a new one nobody checks, fails
+// the build. (The names live beside the engine's enums: dsp/harmony.h and the others.)
+struct OptionList {
+    int id;
+    const char* const* names;
+    int count;
+};
+template <int N>
+constexpr OptionList list(int id, const char* const (&names)[N]) { return {id, names, N}; }
+
+constexpr OptionList kOptionLists[] = {
+    list(P_H_KEY, kKeyNames), list(P_H_SCALE, kScaleNames), list(P_H_TUNING, kTuningNames),
+    list(P_H_INPUT, kInputNames), list(P_H_CHORD, kChordNames), list(P_H_VOICING, kVoicingNames),
+    list(P_H_LEADING, kOnOff), list(P_H_MEMORY, kMemoryNames), list(P_H_HOLD, kOnOff),
+    list(P_H_ONSTOP, kOnStopNames),
+    list(P_G_LISTEN, kListenNames), list(P_G_MUTE, kOnOff), list(P_G_TABLE, kTableNames),
+    list(P_G_COLINT, kColorIntervalNames), list(P_G_REG, kRegisterNames),
+    list(P_B_LISTEN, kListenNames), list(P_B_MUTE, kOnOff), list(P_B_FMODE, kFilterModeNames),
+    list(P_B_TABLE, kTableNames), list(P_B_TABLEB, kTableNames), list(P_B_COUPLE, kCoupleNames),
+    list(P_B_UNISON, kUnisonNames), list(P_B_TAIL, kTailNames),
+    list(P_S_MODE, Reverb::kModeNames), list(P_S_FREEZE, kOnOff), list(P_S_SHINT, Reverb::kIntervalNames),
+};
+
+constexpr bool sameText(const char* a, const char* b) {
+    while (*a && *a == *b) ++a, ++b;
+    return *a == *b;
+}
+
+// The first sound parameter whose options aren't its list's names (or that has no list here), -1 when
+// every one is: the compiler's note on the failed assertion below shows the index (param_ids.h's order).
+constexpr int firstUnlike() {
+    for (int i = 0; i < P_COUNT; ++i) {
+        if (PARAM_INFO[i].kind != Kind::Synth || PARAM_INFO[i].nopts == 0) continue;
+        bool same = false;
+        for (const OptionList& l : kOptionLists) {
+            if (l.id != i) continue;
+            same = l.count == PARAM_INFO[i].nopts;
+            for (int k = 0; same && k < l.count; ++k) same = sameText(PARAM_INFO[i].opts[k], l.names[k]);
+        }
+        if (!same) return i;
+    }
+    return -1;
+}
 
 } // namespace
 
-// Option lists in surface.py against the engine's enums: a list with an option too many or too few doesn't
-// compile. The order test/params_test.cpp checks: the tables' names against tableName(), the others by name.
-static_assert(opts(P_H_KEY) == 12, "surface.py h_key: the 12 pitch classes, C first");
-static_assert(opts(P_H_SCALE) == SC_COUNT && opts(P_H_TUNING) == TU_COUNT && opts(P_H_INPUT) == IN_COUNT &&
-                  opts(P_H_CHORD) == CH_COUNT && opts(P_H_VOICING) == VO_COUNT,
-              "surface.py harmony lists must match dsp/harmony.h");
-static_assert(opts(P_H_MEMORY) == sizeof kMemoryBars / sizeof kMemoryBars[0], "surface.py h_memory vs kMemoryBars");
-static_assert(opts(P_H_ONSTOP) == OS_COUNT, "surface.py h_onstop must match dsp/engine.h OnStop");
-static_assert(opts(P_G_LISTEN) == LI_COUNT && opts(P_B_LISTEN) == LI_COUNT, "surface.py Listen must match dsp/harmony.h");
-static_assert(opts(P_G_TABLE) == TB_COUNT && opts(P_B_TABLE) == TB_COUNT && opts(P_B_TABLEB) == TB_COUNT,
-              "surface.py TABLES must match dsp/lifetime.h TableId");
-static_assert(opts(P_G_COLINT) == CI_COUNT, "surface.py g_colint must match dsp/ground.h ColorInterval");
-static_assert(opts(P_G_REG) == 3, "surface.py g_reg: GroundPatch::registerOct 1..3");
-static_assert(opts(P_B_FMODE) == FM_COUNT && opts(P_B_TAIL) == TL_COUNT, "surface.py b_fmode / b_tail vs dsp/bloom.h");
-static_assert(opts(P_B_COUPLE) == CP_COUNT, "surface.py b_couple must match dsp/lifeosc.h Couple");
-static_assert(opts(P_B_UNISON) == 2, "surface.py b_unison: BloomPatch::unison 1..2");
+static_assert(firstUnlike() == -1, "surface.py's option list for this parameter is not the engine's names (kOptionLists)");
 static_assert(PARAM_SPECS[P_B_BOCT].lo == -2.0f && PARAM_SPECS[P_B_BOCT].hi == 2.0f, "BloomPatch::bOctave -2..+2");
-static_assert(opts(P_S_MODE) == Reverb::kModes && opts(P_S_SHINT) == Reverb::kIntervals,
-              "surface.py s_mode / s_shint must match dsp/reverb.h");
-// Off / On lists: index 0 is Off.
-static_assert(opts(P_H_LEADING) == 2 && opts(P_H_HOLD) == 2 && opts(P_G_MUTE) == 2 && opts(P_B_MUTE) == 2 &&
-                  opts(P_S_FREEZE) == 2,
-              "on / off lists");
 
 float paramValue(int id, float n) {
     if (id < 0 || id >= P_COUNT) return 0.0f;

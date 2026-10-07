@@ -798,13 +798,8 @@ void testRise() {
     std::printf("== engine: Rise against the Init pad's send\n");
     double wet[2] = {};
     for (int k = 0; k < 2; ++k) {
-        Patch p;
+        Patch p;   // Init: Patch{}'s levels and sends are the default knobs squared, its Space an 8 s hall
         p.volumeDb = 0.0f;
-        p.ground.level = p.bloom.level = 0.49f;
-        p.groundSpace = 0.16f;
-        p.bloomSpace = 0.25f;
-        p.spaceReturn = 0.64f;
-        p.space.reverb.decayS = 8.0f;
         p.space.rise = k ? 1.0f : 0.0f;
         Patch off = p;
         off.spaceReturn = 0.0f;

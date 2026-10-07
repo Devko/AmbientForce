@@ -88,11 +88,14 @@
 namespace af {
 
 enum ColorInterval : int { CI_MIN3, CI_MAJ3, CI_FOURTH, CI_MIN7, CI_NINTH, CI_ELEVENTH, CI_COUNT };
+// The surface's names for them (harmony.h says why; "min3", not "m3": segments show capitals).
+inline constexpr const char* kColorIntervalNames[] = {"min3", "maj3", "4th", "min7", "9th", "11th"};
+static_assert(sizeof kColorIntervalNames / sizeof *kColorIntervalNames == CI_COUNT, "a name per interval");
 
 struct GroundPatch {
     int listen = LI_HARMONY;        // the engine's: Ground itself only follows setTarget()
     bool mute = false;
-    float level = 0.7f;             // a gain, 0..1 (the patch map applies the audio taper)
+    float level = 0.7f * 0.7f;      // a gain, 0..1 (the patch map applies the audio taper): the knob at 70%
     float cutoffHz = 2500.0f;       // Tone: low-pass, 40..16000
     int table = TB_CELLO_TASTO;
     LifePos pos{0.5f, 0.3f, 0.05f, 0.0f};
@@ -179,7 +182,7 @@ private:
     bool mute_ = false;
     int table_ = TB_CELLO_TASTO;
     LifePos pos_{};
-    float level_ = 0.7f, cutoff_ = 2500.0f, beat_ = 0.3f, gravity_ = 6.0f, fade_ = 4.0f;
+    float level_ = 0.7f * 0.7f, cutoff_ = 2500.0f, beat_ = 0.3f, gravity_ = 6.0f, fade_ = 4.0f;
     float body_ = 0.0f, breath_ = 0.3f, breathHz_ = 0.07f;
     int wantRegister_ = 2;               // the Register asked for; register_ follows it (a dip)
     float ratio_[PT_COUNT] = {};         // each partial's frequency over the root's

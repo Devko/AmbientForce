@@ -24,6 +24,26 @@ enum Voicing : int { VO_CLOSE, VO_OPEN, VO_DROP2, VO_SPREAD, VO_COUNT };
 // or nothing but the key (Free: it runs on its own from the first note until Stop).
 enum Listen : int { LI_NOTES, LI_HARMONY, LI_FREE, LI_COUNT };
 
+// What the player reads for each value, in the enums' order: the surface's option lists
+// (surface/surface.py) must be these, entry by entry (plugin/patch_map.cpp checks it as it compiles).
+inline constexpr const char* kKeyNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+inline constexpr const char* kScaleNames[] = {"Major", "Minor", "Dorian", "Lydian", "Mixolydian", "Phrygian",
+                                              "Maj Pent", "Min Pent", "Hirajoshi", "In-Sen", "Whole Tone",
+                                              "Chromatic"};
+inline constexpr const char* kTuningNames[] = {"Equal", "Just", "Pythagorean"};
+inline constexpr const char* kInputNames[] = {"As Played", "Snap", "Degrees"};
+inline constexpr const char* kChordNames[] = {"Off", "Triad", "Seventh", "Sus2", "Sus4", "Add9", "Quartal",
+                                              "Fifths", "Cluster", "Spread"};
+inline constexpr const char* kVoicingNames[] = {"Close", "Open", "Drop 2", "Spread"};
+inline constexpr const char* kListenNames[] = {"Notes", "Harmony", "Free"};
+static_assert(sizeof kKeyNames / sizeof *kKeyNames == 12 && sizeof kScaleNames / sizeof *kScaleNames == SC_COUNT &&
+                  sizeof kTuningNames / sizeof *kTuningNames == TU_COUNT &&
+                  sizeof kInputNames / sizeof *kInputNames == IN_COUNT &&
+                  sizeof kChordNames / sizeof *kChordNames == CH_COUNT &&
+                  sizeof kVoicingNames / sizeof *kVoicingNames == VO_COUNT &&
+                  sizeof kListenNames / sizeof *kListenNames == LI_COUNT,
+              "a name per value");
+
 struct HarmonyPatch {
     int key = 0;              // 0 = C .. 11 = B: the tonic's pitch class
     int scale = SC_MAJOR;

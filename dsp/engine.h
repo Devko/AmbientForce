@@ -96,19 +96,42 @@ constexpr float kVolumeOffDb = -59.5f;
 
 // What Stop does to a sounding landscape (docs/CONCEPT.md 7.4).
 enum OnStop : int { OS_KEEP, OS_FADE, OS_CUT, OS_COUNT };
+inline constexpr const char* kOnStopNames[] = {"Keep", "Fade", "Cut"};   // the surface's (harmony.h says why)
+static_assert(sizeof kOnStopNames / sizeof *kOnStopNames == OS_COUNT, "a name per On Stop");
+
+// Init's Space: a slow hall for pads, not the Reverb's own defaults (EffectForce's, for any input).
+constexpr Space::Params initSpace() {
+    Space::Params s;
+    s.reverb.mode = Reverb::HALL;
+    s.reverb.size = 0.6f;
+    s.reverb.decayS = 8.0f;
+    s.reverb.predelayMs = 30.0f;
+    s.reverb.dampHz = 6000.0f;
+    s.reverb.lowCutHz = 120.0f;
+    s.reverb.mod = 0.4f;
+    s.reverb.width = 1.0f;
+    s.rise = 0.2f;
+    return s;
+}
 
 // Everything the engine plays, in real values (seconds, Hz, gains): plugin/patch_map.cpp builds it
-// from the parameters. Levels arrive as gains (the knobs' audio taper is the patch map's).
+// from the parameters. Levels and sends arrive as gains, the knobs' audio taper (gain = knob^2) being
+// the patch map's. The defaults are Init's (the surface's defaults through the patch map, which
+// test/params_test.cpp holds them to): the levels and sends are the default knobs squared.
 struct Patch {
     float volumeDb = -6.0f;
     float tilt = 0.0f;            // -1..1: ±6 dB at the extremes, pivot 800 Hz
     HarmonyPatch harmony;
     bool hold = false;            // latch: chords stay until the next one
     int onStop = OS_FADE;
-    GroundPatch ground; float groundSpace = 0.4f, groundPan = 0.0f;
-    BloomPatch bloom;   float bloomSpace = 0.5f, bloomPan = 0.0f;
-    Space::Params space;
-    float spaceReturn = 0.8f;     // the return's level as a gain
+    GroundPatch ground;
+    float groundSpace = 0.4f * 0.4f;   // Ground's send: the knob at 40%
+    float groundPan = 0.0f;
+    BloomPatch bloom;
+    float bloomSpace = 0.5f * 0.5f;    // Bloom's send: the knob at 50%
+    float bloomPan = 0.0f;
+    Space::Params space = initSpace();
+    float spaceReturn = 0.8f * 0.8f;   // the return's level: the knob at 80%
 };
 
 class Engine {

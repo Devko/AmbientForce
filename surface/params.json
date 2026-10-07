@@ -282,7 +282,7 @@
   },
   {
    "key": "g_swayrate",
-   "name": "Gnd SwayRate",
+   "name": "Ground Rate",
    "min": 0,
    "max": 1,
    "default": 0.46598,
@@ -385,7 +385,7 @@
   },
   {
    "key": "g_breath",
-   "name": "Ground Breath",
+   "name": "Gnd Breath",
    "min": 0,
    "max": 1,
    "default": 0.3,
@@ -516,7 +516,7 @@
   },
   {
    "key": "b_swayrate",
-   "name": "Blm SwayRate",
+   "name": "Bloom Rate",
    "min": 0,
    "max": 1,
    "default": 0.514689,
@@ -706,7 +706,7 @@
    "name": "Space Size",
    "min": 0,
    "max": 1,
-   "default": 0.5,
+   "default": 0.6,
    "display": "string"
   },
   {
@@ -714,7 +714,7 @@
    "name": "Space Decay",
    "min": 0,
    "max": 1,
-   "default": 0.564341,
+   "default": 0.768267,
    "display": "string"
   },
   {
@@ -722,7 +722,7 @@
    "name": "Pre-Delay",
    "min": 0,
    "max": 1,
-   "default": 0.430887,
+   "default": 0.493242,
    "display": "string"
   },
   {
@@ -735,10 +735,10 @@
   },
   {
    "key": "s_lowcut",
-   "name": "Space Low Cut",
+   "name": "Low Cut",
    "min": 0,
    "max": 1,
-   "default": 0.515054,
+   "default": 0.458014,
    "display": "string"
   },
   {
@@ -746,7 +746,7 @@
    "name": "Space Mod",
    "min": 0,
    "max": 1,
-   "default": 0.3,
+   "default": 0.4,
    "display": "string"
   },
   {

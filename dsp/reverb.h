@@ -84,6 +84,10 @@ public:
         int shimmerInterval = 0;    // 0: +12, 1: +7, 2: +19, 3: -12 semitones
     };
     enum Interval : int { UP_OCTAVE, UP_FIFTH, UP_TWELFTH, DOWN_OCTAVE, kIntervals };
+    // AmbientForce's surface names them so (its option lists must be these, entry by entry:
+    // plugin/patch_map.cpp checks it as it compiles).
+    static constexpr const char* kModeNames[] = {"Room", "Hall", "Plate", "Space", "Haze", "Abyss"};
+    static constexpr const char* kIntervalNames[] = {"+12", "+7", "+19", "-12"};
 
     Reverb();
     void reset();
@@ -194,5 +198,8 @@ private:
     Params p_;
     bool fresh_ = true, jumpCoefs_ = true, glide_ = false;
 };
+static_assert(sizeof Reverb::kModeNames / sizeof *Reverb::kModeNames == Reverb::kModes &&
+                  sizeof Reverb::kIntervalNames / sizeof *Reverb::kIntervalNames == Reverb::kIntervals,
+              "a name per mode and interval");
 
 } // namespace af

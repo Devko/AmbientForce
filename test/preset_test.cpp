@@ -41,8 +41,8 @@ void testState() {
             std::printf("  %s differs after a round trip\n", af::PARAM_INFO[i].key);
             CHECK(false);
         }
-    // Every sound value, each somewhere of its own, comes back from a saved project where it was (options and
-    // whole numbers exactly, the rest within the 6 digits a value is saved with).
+    // Every sound value, each somewhere of its own, comes back from a saved project where it was: options and
+    // whole numbers exactly, the rest within 1e-5 of their 0..1 (a value is saved to 6 digits).
     {
         Host r;
         uint32_t seed = 777;
@@ -60,7 +60,8 @@ void testState() {
         int same = 0;
         for (int i = 0; i < af::P_COUNT; ++i) {
             if (af::PARAM_INFO[i].kind != af::Kind::Synth) continue;
-            if (std::fabs(r.get(i) - r2.get(i)) <= 1e-5f) ++same;
+            const bool stepped = af::PARAM_SPECS[i].curve == af::Curve::Enum || af::PARAM_SPECS[i].curve == af::Curve::Int;
+            if (stepped ? r.get(i) == r2.get(i) : std::fabs(r.get(i) - r2.get(i)) <= 1e-5f) ++same;
             else std::printf("  %s: %g saved, %g loaded\n", af::PARAM_INFO[i].key, r.value(i), r2.value(i));
         }
         CHECK(same == synth);
