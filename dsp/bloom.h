@@ -109,11 +109,17 @@ namespace af {
 
 enum FilterMode : int { FM_LP, FM_BP, FM_HP, FM_COUNT };
 enum Tail : int { TL_VOICE, TL_SPACE, TL_COUNT };
+// The surface's names for them (harmony.h says why).
+inline constexpr const char* kFilterModeNames[] = {"LP", "BP", "HP"};
+inline constexpr const char* kTailNames[] = {"Voice", "Space"};
+static_assert(sizeof kFilterModeNames / sizeof *kFilterModeNames == FM_COUNT &&
+                  sizeof kTailNames / sizeof *kTailNames == TL_COUNT,
+              "a name per value");
 
 struct BloomPatch {
     int listen = LI_NOTES;     // the engine's: how Bloom hears the player (Bloom itself ignores it)
     bool mute = false;
-    float level = 0.7f;        // a gain 0..1 (the knob's audio taper is the patch map's)
+    float level = 0.7f * 0.7f; // a gain 0..1 (the knob's audio taper is the patch map's): the knob at 70%
     float cutoffHz = 5000.0f;  // Tone: 20..20000
     float reso = 0.1f;         // 0..1: Q 0.5 x 32^reso
     int filterMode = FM_LP;

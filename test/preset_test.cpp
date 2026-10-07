@@ -1,7 +1,7 @@
-// From SubForce test/preset_test.cpp (8846421), sft -> aft; the synth's parameters and RANDOMIZE left out.
+// From SubForce test/preset_test.cpp (8846421), sft -> aft; AmbientForce's parameters, RANDOMIZE left out.
 // Saved state, presets and the surface: chunk round trips, the preset stepper and buttons, user
-// presets, the browser, favorites, stepping, pushing values back to MPC, and every factory preset
-// playing.
+// presets, the browser, favorites, stepping (options and popups too), pushing values back to MPC,
+// and every factory preset playing.
 #include "host.h"
 #include "../plugin/presets.h"
 #include "factory_presets.h"
@@ -41,6 +41,31 @@ void testState() {
             std::printf("  %s differs after a round trip\n", af::PARAM_INFO[i].key);
             CHECK(false);
         }
+    // Every sound value, each somewhere of its own, comes back from a saved project where it was: options and
+    // whole numbers exactly, the rest within 1e-5 of their 0..1 (a value is saved to 6 digits).
+    {
+        Host r;
+        uint32_t seed = 777;
+        int moved = 0, synth = 0;
+        for (int i = 0; i < af::P_COUNT; ++i) {
+            if (af::PARAM_INFO[i].kind != af::Kind::Synth) continue;
+            ++synth;
+            seed = seed * 1664525u + 1013904223u;
+            r.setN(i, static_cast<float>(seed >> 8) / 16777216.0f);
+            moved += r.get(i) != af::PARAM_INFO[i].def;
+        }
+        CHECK(moved > synth * 4 / 5);   // a random value now and then lands on the default option
+        Host r2;
+        CHECK(r2.load(r.chunk()) == 1);
+        int same = 0;
+        for (int i = 0; i < af::P_COUNT; ++i) {
+            if (af::PARAM_INFO[i].kind != af::Kind::Synth) continue;
+            const bool stepped = af::PARAM_SPECS[i].curve == af::Curve::Enum || af::PARAM_SPECS[i].curve == af::Curve::Int;
+            if (stepped ? r.get(i) == r2.get(i) : std::fabs(r.get(i) - r2.get(i)) <= 1e-5f) ++same;
+            else std::printf("  %s: %g saved, %g loaded\n", af::PARAM_INFO[i].key, r.value(i), r2.value(i));
+        }
+        CHECK(same == synth);
+    }
     // A project's state changes only what it lists; unknown keys and bad numbers are skipped.
     Host c;
     c.set(af::P_VOLUME, -20.0f);
@@ -201,8 +226,42 @@ void testBrowser() {
 void testStepping() {
     std::printf("== stepping (Q-Link, data wheel, taps)\n");
     presetFiles("Steps", {"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"});
-    // Continuous knobs follow MPC as they are.
     Host h;
+    // An enum moves one option per Q-Link detent, whatever the size of the detent.
+    h.set(af::P_H_VOICING, af::VO_SPREAD);
+    h.setN(af::P_H_VOICING, h.get(af::P_H_VOICING) - 1.0f / 128.0f);
+    CHECK(h.value(af::P_H_VOICING) == af::VO_DROP2);
+    // A long list too: a Q-Link turn on Key, as the Force sends it, moves one key per detent (C to D#).
+    {
+        Turn turn;
+        for (int k = 0; k < 3; ++k) h.detent(af::P_H_KEY, +1);
+    }
+    CHECK(h.value(af::P_H_KEY) == 3.0f && h.display(af::P_H_KEY) == "D#");
+    // A tap on an option (its exact value) lands on it.
+    h.setN(af::P_H_VOICING, 0.0f);
+    CHECK(h.value(af::P_H_VOICING) == af::VO_CLOSE);
+    h.setN(af::P_S_MODE, 1.0f);
+    CHECK(h.value(af::P_S_MODE) == af::Reverb::ABYSS);
+    // The snapped value goes back to MPC.
+    h.setN(af::P_G_REG, 0.5f + 0.01f);   // a wheel click off Mid: one step up, to High
+    h.log.automated.clear();
+    h.run(4);
+    CHECK(h.log.automated.count(af::P_G_REG) == 1 && h.log.automated[af::P_G_REG] == 1.0f && h.display(af::P_G_REG) == "High");
+    // A popup's list closes when an option is picked ...
+    h.setN(af::P_H_SCALE__OPEN, 1.0f);
+    CHECK(h.get(af::P_H_SCALE__OPEN) > 0.5f);
+    h.setN(af::P_H_SCALE, 3.0f / 11.0f);
+    CHECK(h.get(af::P_H_SCALE__OPEN) == 0.0f && h.value(af::P_H_SCALE) == af::SC_LYDIAN);
+    // ... and stays open while a Q-Link turns it (as on the device: a turn steps the value, the list stays).
+    h.setN(af::P_H_SCALE__OPEN, 1.0f);
+    h.detent(af::P_H_SCALE, +1);
+    CHECK(h.get(af::P_H_SCALE__OPEN) > 0.5f && h.value(af::P_H_SCALE) == af::SC_MIXOLYDIAN);
+    h.setN(af::P_G_TABLE__OPEN, 1.0f);
+    h.setN(af::P_G_TABLE, static_cast<float>(af::TB_CHOIR_AH_OO) / (af::TB_COUNT - 1));
+    CHECK(h.get(af::P_G_TABLE__OPEN) == 0.0f && h.display(af::P_G_TABLE) == "Choir Ah-Oo");
+    // Popup flags are the surface's: never saved.
+    CHECK(h.chunk().find("__open") == std::string::npos);
+    // Continuous knobs follow MPC as they are.
     h.setN(af::P_VOLUME, 0.37f);
     CHECK(h.get(af::P_VOLUME) == 0.37f);
     // A button reads back 0 (it springs back): every tap arrives as a 1, and each one acts.

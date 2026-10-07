@@ -44,6 +44,9 @@
 namespace af {
 
 enum Couple : int { CP_MIX, CP_FM, CP_AM, CP_RING, CP_COUNT };
+// The surface's names for them (harmony.h says why).
+inline constexpr const char* kCoupleNames[] = {"Mix", "FM", "AM", "Ring"};
+static_assert(sizeof kCoupleNames / sizeof *kCoupleNames == CP_COUNT, "a name per mode");
 
 // Where in the table's life to read, and how that point moves.
 struct LifePos {

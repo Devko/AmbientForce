@@ -427,6 +427,7 @@ int main() {
     testStop();
     testProcessLegacy();
     testMidiMapping();
+    paramsTests();
     presetTests();
     testStress();
 

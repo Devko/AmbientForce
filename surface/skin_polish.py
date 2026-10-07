@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# From EffectForce surface/skin_polish.py (4160e87); the self-test takes a layout without meters or sub-pages.
+# From EffectForce surface/skin_polish.py (4160e87); the self-test takes a layout without meters.
 """AmbientForce skin polish (EffectForce's, itself PolyForce's; the meters part is unused here): redraws, after sd88me's generator (gen_vst.py) has written the skin, the images its C
 renderer can't draw the way the design wants. `make skin` runs it right after gen_vst.py:
 
@@ -489,9 +489,8 @@ def selftest(samples=None):
         print(polish(skin, lay, sty))
         grouped = [(gi, si) for gi, g in enumerate(style["tab_groups"]) for si in range(len(g["pages"]))]
         check(numbering(skin) == (grouped, [grouped, grouped]), "tabs and Q-Link sets are not numbered by page group")
-        check(0 < len(style["tab_groups"]) <= 7, "no page groups, or too many")
-        if any(si for _, si in grouped):   # a group with sub-pages: they are no longer tabs of their own
-            check(numbering(skin)[0] != [(i, 0) for i in range(len(grouped))], "the sub-pages were left as tabs")
+        check(any(si for _, si in grouped) and len(style["tab_groups"]) <= 7, "the groups have no sub-pages, or too many")
+        check(numbering(skin)[0] != [(i, 0) for i in range(len(grouped))], "the sub-pages were left as tabs")
         polish(skin, lay, sty)   # a skin grouped already stays as it is
         check(numbering(skin) == (grouped, [grouped, grouped]), "polishing twice changed the grouping")
         for n, size in sizes.items():
@@ -587,17 +586,17 @@ def selftest(samples=None):
                     with Image.open(os.path.join(folder, f)) as im:
                         check(im.getpixel((0, 0)) == dummy, "%s: %s was written although refused" % (desc, f))
         some_btn = sorted(sk.buttons)[0] + "_on.png"
+        some_arrow = sorted(sk.arrows)[0]   # PLAY's preset stepper
         refused("missing button", lambda f: os.remove(os.path.join(f, some_btn)), some_btn + ": missing")
-        # A layout without big knobs or steppers (the browser page alone) has no strip or arrow to resize: a
-        # stray one is refused instead.
-        bad_knob = Image.new("RGB", (70, 70 * 127), dummy)
-        refused("wrong knob size" if 30 in sk.knobs else "unknown knob",
-                lambda f: bad_knob.save(os.path.join(f, "sh_knob_r30.png")),
-                "sh_knob_r30.png: is 70x8890" if 30 in sk.knobs else "sh_knob_r30.png: not in the layout")
-        if sk.arrows:
-            some_arrow = sorted(sk.arrows)[0]
-            refused("wrong arrow size", lambda f: Image.new("RGB", (40, 41), dummy).save(os.path.join(f, some_arrow)),
-                    some_arrow + ": is 40x41")
+        big = surface.KNOB_SIZES["big"]   # a radius the layout has (its unipolar knobs), drawn a frame short
+        knob_side = 2 * big + 10
+        refused("wrong knob size", lambda f: Image.new("RGB", (knob_side, knob_side * 127), dummy).save(
+            os.path.join(f, "sh_knob_r%d.png" % big)), "sh_knob_r%d.png: is %dx%d" % (big, knob_side, knob_side * 127))
+        refused("wrong arrow size", lambda f: Image.new("RGB", (40, 41), dummy).save(os.path.join(f, some_arrow)),
+                some_arrow + ": is 40x41")
+        stray = max(surface.KNOB_SIZES.values()) + 5   # a radius no knob has
+        refused("unknown knob", lambda f: Image.new("RGB", (2 * stray + 10, (2 * stray + 10) * 128), dummy).save(
+            os.path.join(f, "sh_knob_r%d.png" % stray)), "sh_knob_r%d.png: not in the layout" % stray)
         refused("unknown button", lambda f: Image.new("RGB", (60, 52), dummy).save(os.path.join(f, "sh_btn_zz_ZZ_on.png")),
                 "sh_btn_zz_ZZ_on.png: not in the layout")
         refused("not in TUI", lambda f: json.dump({"images": []}, open(os.path.join(f, "TUI.json"), "w")),
@@ -612,9 +611,8 @@ def selftest(samples=None):
             change(t["pageData"]["tabs"])
             json.dump(t, open(path, "w"))
         refused("unknown page", lambda f: edit_tabs(f, lambda ts: ts[-1].update(tabName="NOT A PAGE")), "the page groups list")
-        if len(sk.tabs) > 1:   # the BROWSE page alone has no order to get wrong
-            refused("pages out of order", lambda f: edit_tabs(f, lambda ts: ts.insert(0, ts.pop(1))), "the page groups list")
-        refused("odd numbering", lambda f: edit_tabs(f, lambda ts: ts[-1].update(fnKeySubIndex=3)),
+        refused("pages out of order", lambda f: edit_tabs(f, lambda ts: ts.insert(0, ts.pop(1))), "the page groups list")
+        refused("odd numbering", lambda f: edit_tabs(f, lambda ts: ts[1].update(fnKeySubIndex=3)),
                 "neither the generator's numbering nor the groups'")
         try:
             polish(os.path.join(tmp, "nowhere"), lay, sty)

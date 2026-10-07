@@ -360,20 +360,16 @@ void buildDigital(int id, Wavetable& t) {
     fb.add(t, s);
 }
 
-const char* const kNames[TB_COUNT] = {"Felt Piano", "Celesta", "Glass Harmonica", "Cello Tasto",
-                                      "Choir Ah-Oo", "Reed Organ", "Sine Bloom", "Tape Strings",
-                                      "Sine", "Triangle", "Saw", "Square"};
-
 } // namespace
 
-const char* tableName(int id) { return id >= 0 && id < TB_COUNT ? kNames[id] : ""; }
+const char* tableName(int id) { return id >= 0 && id < TB_COUNT ? kTableNames[id] : ""; }
 
 bool isLifetime(int id) { return id >= 0 && id < TB_SINE; }
 
 bool buildTable(int id, Wavetable& out, const std::atomic<bool>* cancel) {
     if (id < 0 || id >= TB_COUNT || cancelled(cancel)) return false;
     Wavetable t;
-    t.name = kNames[id];
+    t.name = kTableNames[id];
     if (isLifetime(id)) {
         if (!buildLife(id, t, cancel)) return false;
     } else {

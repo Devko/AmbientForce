@@ -22,8 +22,13 @@ constexpr int kLifeFrames = 256;
 enum TableId : int { TB_FELT_PIANO, TB_CELESTA, TB_GLASS_HARMONICA, TB_CELLO_TASTO, TB_CHOIR_AH_OO,
                      TB_REED_ORGAN, TB_SINE_BLOOM, TB_TAPE_STRINGS,
                      TB_SINE, TB_TRIANGLE, TB_SAW, TB_SQUARE, TB_COUNT };
+// Their names, which the surface lists too (plugin/patch_map.cpp holds its lists to these as it compiles).
+inline constexpr const char* kTableNames[] = {"Felt Piano", "Celesta", "Glass Harmonica", "Cello Tasto",
+                                              "Choir Ah-Oo", "Reed Organ", "Sine Bloom", "Tape Strings",
+                                              "Sine", "Triangle", "Saw", "Square"};
+static_assert(sizeof kTableNames / sizeof *kTableNames == TB_COUNT, "a name per table");
 
-const char* tableName(int id);             // "Felt Piano", ..., "Square"; "" out of range
+const char* tableName(int id);             // kTableNames[id]; "" out of range
 bool isLifetime(int id);                   // the first 8
 // Load time, not real time: allocates, ~1e8 flops. `cancel`, if given, is looked at between pairs
 // of frames: once it is set the build gives up and returns false, `out` untouched.

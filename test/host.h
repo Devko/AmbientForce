@@ -147,6 +147,7 @@ void lifeoscTests();     // lifeosc_test.cpp: the lifetime oscillator on its own
 void groundTests();      // ground_test.cpp: Ground on its own (partials, beat, gravity, fade, gains, stability)
 void bloomTests();       // bloom_test.cpp: Bloom on its own (chords, strum, steal, moves, the tail handoff)
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
+void paramsTests();      // params_test.cpp: defaults and their text, formats, option lists, the patch map, extremes
 
 // Signal helpers (plugin_test.cpp; rms() and the module tests' own are in signal.h).
 double pitchHz(const std::vector<float>& x, size_t from = 0, size_t to = 0);   // rising zero crossings

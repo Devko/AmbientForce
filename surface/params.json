@@ -18,6 +18,798 @@
    "display": "string"
   },
   {
+   "key": "h_key",
+   "name": "Key",
+   "options": [
+    "C",
+    "C#",
+    "D",
+    "D#",
+    "E",
+    "F",
+    "F#",
+    "G",
+    "G#",
+    "A",
+    "A#",
+    "B"
+   ],
+   "default": "C"
+  },
+  {
+   "key": "h_key__open",
+   "name": "Key List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "h_key",
+   "type": "enum"
+  },
+  {
+   "key": "h_scale",
+   "name": "Scale",
+   "options": [
+    "Major",
+    "Minor",
+    "Dorian",
+    "Lydian",
+    "Mixolydian",
+    "Phrygian",
+    "Maj Pent",
+    "Min Pent",
+    "Hirajoshi",
+    "In-Sen",
+    "Whole Tone",
+    "Chromatic"
+   ],
+   "default": "Major"
+  },
+  {
+   "key": "h_scale__open",
+   "name": "Scale List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "h_scale",
+   "type": "enum"
+  },
+  {
+   "key": "h_tuning",
+   "name": "Tuning",
+   "options": [
+    "Equal",
+    "Just",
+    "Pythagorean"
+   ],
+   "default": "Just"
+  },
+  {
+   "key": "h_input",
+   "name": "Input",
+   "options": [
+    "As Played",
+    "Snap",
+    "Degrees"
+   ],
+   "default": "Snap"
+  },
+  {
+   "key": "h_chord",
+   "name": "Chord",
+   "options": [
+    "Off",
+    "Triad",
+    "Seventh",
+    "Sus2",
+    "Sus4",
+    "Add9",
+    "Quartal",
+    "Fifths",
+    "Cluster",
+    "Spread"
+   ],
+   "default": "Triad"
+  },
+  {
+   "key": "h_chord__open",
+   "name": "Chord List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "h_chord",
+   "type": "enum"
+  },
+  {
+   "key": "h_voicing",
+   "name": "Voicing",
+   "options": [
+    "Close",
+    "Open",
+    "Drop 2",
+    "Spread"
+   ],
+   "default": "Open"
+  },
+  {
+   "key": "h_leading",
+   "name": "Leading",
+   "options": [
+    "Off",
+    "On"
+   ],
+   "default": "On"
+  },
+  {
+   "key": "h_strum",
+   "name": "Strum",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "h_memory",
+   "name": "Memory",
+   "options": [
+    "Off",
+    "1 Bar",
+    "2 Bars",
+    "4 Bars",
+    "8 Bars",
+    "16 Bars",
+    "32 Bars",
+    "64 Bars",
+    "Forever"
+   ],
+   "default": "Forever"
+  },
+  {
+   "key": "h_memory__open",
+   "name": "Memory List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "h_memory",
+   "type": "enum"
+  },
+  {
+   "key": "h_hold",
+   "name": "Hold",
+   "options": [
+    "Off",
+    "On"
+   ],
+   "default": "Off"
+  },
+  {
+   "key": "h_onstop",
+   "name": "On Stop",
+   "options": [
+    "Keep",
+    "Fade",
+    "Cut"
+   ],
+   "default": "Fade"
+  },
+  {
+   "key": "g_listen",
+   "name": "Ground Listen",
+   "options": [
+    "Notes",
+    "Harmony",
+    "Free"
+   ],
+   "default": "Harmony"
+  },
+  {
+   "key": "g_mute",
+   "name": "Ground Mute",
+   "options": [
+    "Off",
+    "On"
+   ],
+   "default": "Off"
+  },
+  {
+   "key": "g_level",
+   "name": "Ground Level",
+   "min": 0,
+   "max": 1,
+   "default": 0.7,
+   "display": "string"
+  },
+  {
+   "key": "g_cutoff",
+   "name": "Ground Tone",
+   "min": 0,
+   "max": 1,
+   "default": 0.690176,
+   "display": "string"
+  },
+  {
+   "key": "g_table",
+   "name": "Ground Table",
+   "options": [
+    "Felt Piano",
+    "Celesta",
+    "Glass Harmonica",
+    "Cello Tasto",
+    "Choir Ah-Oo",
+    "Reed Organ",
+    "Sine Bloom",
+    "Tape Strings",
+    "Sine",
+    "Triangle",
+    "Saw",
+    "Square"
+   ],
+   "default": "Cello Tasto"
+  },
+  {
+   "key": "g_table__open",
+   "name": "Ground Table List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "g_table",
+   "type": "enum"
+  },
+  {
+   "key": "g_age",
+   "name": "Ground Age",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "g_sway",
+   "name": "Ground Sway",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "g_swayrate",
+   "name": "Ground Rate",
+   "min": 0,
+   "max": 1,
+   "default": 0.46598,
+   "display": "string"
+  },
+  {
+   "key": "g_beat",
+   "name": "Ground Beat",
+   "min": 0,
+   "max": 1,
+   "default": 0.1,
+   "display": "string"
+  },
+  {
+   "key": "g_gravity",
+   "name": "Gravity",
+   "min": 0,
+   "max": 1,
+   "default": 0.584804,
+   "display": "string"
+  },
+  {
+   "key": "g_fade",
+   "name": "Ground Fade",
+   "min": 0,
+   "max": 1,
+   "default": 0.68502,
+   "display": "string"
+  },
+  {
+   "key": "g_sub",
+   "name": "Ground Sub",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "g_root",
+   "name": "Ground Root",
+   "min": 0,
+   "max": 1,
+   "default": 1.0,
+   "display": "string"
+  },
+  {
+   "key": "g_fifth",
+   "name": "Ground Fifth",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "g_oct",
+   "name": "Gnd Octave",
+   "min": 0,
+   "max": 1,
+   "default": 0.25,
+   "display": "string"
+  },
+  {
+   "key": "g_color",
+   "name": "Ground Color",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "g_colint",
+   "name": "Color Int",
+   "options": [
+    "min3",
+    "maj3",
+    "4th",
+    "min7",
+    "9th",
+    "11th"
+   ],
+   "default": "9th"
+  },
+  {
+   "key": "g_reg",
+   "name": "Ground Reg",
+   "options": [
+    "Low",
+    "Mid",
+    "High"
+   ],
+   "default": "Mid"
+  },
+  {
+   "key": "g_body",
+   "name": "Ground Body",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "g_breath",
+   "name": "Gnd Breath",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "g_space",
+   "name": "Ground Space",
+   "min": 0,
+   "max": 1,
+   "default": 0.4,
+   "display": "string"
+  },
+  {
+   "key": "g_width",
+   "name": "Ground Width",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "g_pan",
+   "name": "Ground Pan",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "b_listen",
+   "name": "Bloom Listen",
+   "options": [
+    "Notes",
+    "Harmony",
+    "Free"
+   ],
+   "default": "Notes"
+  },
+  {
+   "key": "b_mute",
+   "name": "Bloom Mute",
+   "options": [
+    "Off",
+    "On"
+   ],
+   "default": "Off"
+  },
+  {
+   "key": "b_level",
+   "name": "Bloom Level",
+   "min": 0,
+   "max": 1,
+   "default": 0.7,
+   "display": "string"
+  },
+  {
+   "key": "b_cutoff",
+   "name": "Bloom Tone",
+   "min": 0,
+   "max": 1,
+   "default": 0.799313,
+   "display": "string"
+  },
+  {
+   "key": "b_reso",
+   "name": "Bloom Reso",
+   "min": 0,
+   "max": 1,
+   "default": 0.1,
+   "display": "string"
+  },
+  {
+   "key": "b_fmode",
+   "name": "Bloom Filter",
+   "options": [
+    "LP",
+    "BP",
+    "HP"
+   ],
+   "default": "LP"
+  },
+  {
+   "key": "b_table",
+   "name": "Bloom Table",
+   "options": [
+    "Felt Piano",
+    "Celesta",
+    "Glass Harmonica",
+    "Cello Tasto",
+    "Choir Ah-Oo",
+    "Reed Organ",
+    "Sine Bloom",
+    "Tape Strings",
+    "Sine",
+    "Triangle",
+    "Saw",
+    "Square"
+   ],
+   "default": "Felt Piano"
+  },
+  {
+   "key": "b_table__open",
+   "name": "Bloom Table List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "b_table",
+   "type": "enum"
+  },
+  {
+   "key": "b_age",
+   "name": "Bloom Age",
+   "min": 0,
+   "max": 1,
+   "default": 0.6,
+   "display": "string"
+  },
+  {
+   "key": "b_sway",
+   "name": "Bloom Sway",
+   "min": 0,
+   "max": 1,
+   "default": 0.25,
+   "display": "string"
+  },
+  {
+   "key": "b_swayrate",
+   "name": "Bloom Rate",
+   "min": 0,
+   "max": 1,
+   "default": 0.514689,
+   "display": "string"
+  },
+  {
+   "key": "b_smear",
+   "name": "Bloom Smear",
+   "min": 0,
+   "max": 1,
+   "default": 0.1,
+   "display": "string"
+  },
+  {
+   "key": "b_tableb",
+   "name": "Bloom Table B",
+   "options": [
+    "Felt Piano",
+    "Celesta",
+    "Glass Harmonica",
+    "Cello Tasto",
+    "Choir Ah-Oo",
+    "Reed Organ",
+    "Sine Bloom",
+    "Tape Strings",
+    "Sine",
+    "Triangle",
+    "Saw",
+    "Square"
+   ],
+   "default": "Sine"
+  },
+  {
+   "key": "b_tableb__open",
+   "name": "Bloom Table B List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "b_tableb",
+   "type": "enum"
+  },
+  {
+   "key": "b_boct",
+   "name": "Bloom B Oct",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "b_blend",
+   "name": "Bloom Blend",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "b_couple",
+   "name": "Bloom Couple",
+   "options": [
+    "Mix",
+    "FM",
+    "AM",
+    "Ring"
+   ],
+   "default": "Mix"
+  },
+  {
+   "key": "b_camt",
+   "name": "Couple Amt",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "b_unison",
+   "name": "Bloom Unison",
+   "options": [
+    "1",
+    "2"
+   ],
+   "default": "1"
+  },
+  {
+   "key": "b_detune",
+   "name": "Bloom Detune",
+   "min": 0,
+   "max": 1,
+   "default": 0.16,
+   "display": "string"
+  },
+  {
+   "key": "b_swell",
+   "name": "Bloom Swell",
+   "min": 0,
+   "max": 1,
+   "default": 0.714363,
+   "display": "string"
+  },
+  {
+   "key": "b_release",
+   "name": "Blm Release",
+   "min": 0,
+   "max": 1,
+   "default": 0.79898,
+   "display": "string"
+  },
+  {
+   "key": "b_vel",
+   "name": "Bloom Vel",
+   "min": 0,
+   "max": 1,
+   "default": 0.4,
+   "display": "string"
+  },
+  {
+   "key": "b_breath",
+   "name": "Bloom Breath",
+   "min": 0,
+   "max": 1,
+   "default": 0.05,
+   "display": "string"
+  },
+  {
+   "key": "b_tail",
+   "name": "Bloom Tail",
+   "options": [
+    "Voice",
+    "Space"
+   ],
+   "default": "Space"
+  },
+  {
+   "key": "b_space",
+   "name": "Bloom Space",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "b_width",
+   "name": "Bloom Width",
+   "min": 0,
+   "max": 1,
+   "default": 0.6,
+   "display": "string"
+  },
+  {
+   "key": "b_pan",
+   "name": "Bloom Pan",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "s_mode",
+   "name": "Space Type",
+   "options": [
+    "Room",
+    "Hall",
+    "Plate",
+    "Space",
+    "Haze",
+    "Abyss"
+   ],
+   "default": "Hall"
+  },
+  {
+   "key": "s_mode__open",
+   "name": "Space Type List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "s_mode",
+   "type": "enum"
+  },
+  {
+   "key": "s_size",
+   "name": "Space Size",
+   "min": 0,
+   "max": 1,
+   "default": 0.6,
+   "display": "string"
+  },
+  {
+   "key": "s_decay",
+   "name": "Space Decay",
+   "min": 0,
+   "max": 1,
+   "default": 0.768267,
+   "display": "string"
+  },
+  {
+   "key": "s_predelay",
+   "name": "Pre-Delay",
+   "min": 0,
+   "max": 1,
+   "default": 0.493242,
+   "display": "string"
+  },
+  {
+   "key": "s_damp",
+   "name": "Space Damp",
+   "min": 0,
+   "max": 1,
+   "default": 0.598104,
+   "display": "string"
+  },
+  {
+   "key": "s_lowcut",
+   "name": "Low Cut",
+   "min": 0,
+   "max": 1,
+   "default": 0.458014,
+   "display": "string"
+  },
+  {
+   "key": "s_mod",
+   "name": "Space Mod",
+   "min": 0,
+   "max": 1,
+   "default": 0.4,
+   "display": "string"
+  },
+  {
+   "key": "s_width",
+   "name": "Space Width",
+   "min": 0,
+   "max": 1,
+   "default": 1.0,
+   "display": "string"
+  },
+  {
+   "key": "s_freeze",
+   "name": "Freeze",
+   "options": [
+    "Off",
+    "On"
+   ],
+   "default": "Off"
+  },
+  {
+   "key": "s_shimmer",
+   "name": "Shimmer",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "s_shint",
+   "name": "Shimmer Int",
+   "options": [
+    "+12",
+    "+7",
+    "+19",
+    "-12"
+   ],
+   "default": "+12"
+  },
+  {
+   "key": "s_rise",
+   "name": "Space Rise",
+   "min": 0,
+   "max": 1,
+   "default": 0.2,
+   "display": "string"
+  },
+  {
+   "key": "s_return",
+   "name": "Space Level",
+   "min": 0,
+   "max": 1,
+   "default": 0.8,
+   "display": "string"
+  },
+  {
+   "key": "o_tilt",
+   "name": "Tilt",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
    "key": "preset",
    "name": "Preset",
    "min": 0,
