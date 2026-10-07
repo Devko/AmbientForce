@@ -35,10 +35,15 @@ harmony, in just intonation, into a long reverb.
   samples. On Stop: Keep, an 8-second Fade, or Cut.
 - **Nine touchscreen pages** in four tabs (PLAY, STRATA, SPACE, BROWSE), a 16-knob Q-Link set each;
   user presets, favorites, a browser.
-- **Factory presets:** 16 in five categories (Templates, Drones, Beds, Blooms, Choirs),
-  level-matched at −16 LUFS (Task 10).
-- **CPU:** about 7% of a block for Init holding a chord and 14% at its heaviest, estimated from ARM
-  instruction counts (device bench: Task 13).
-- **Builds:** armhf against glibc 2.31, profile-guided, the test suite run against the shipped
-  objects, checked with the plugin catalog's `catalog_check.py`. Not yet run on a Force; MPC OS 2.x
-  is untested (it doesn't draw a plugin's pages).
+- **16 factory presets:** Init, and Drones (Low Tide Hum, Harbour at 4am, Fifth Light), Beds
+  (Lydian Morning, Slow Aurora, Felt Room, Night Ferry), Blooms (First Snow, Glass Orchard, Tape
+  Bloom, Sine Garden) and Choirs (Lantern Choir, Distant Ah, Cathedral Breath, Choir in Haze), each
+  in its own key and scale, level-matched at −16 LUFS on a phrase of two held chords and their
+  release, peaks under −1 dBFS.
+- **On the Force** (MPC OS 3.9, measured on the device): Init holding a chord 4.2% of a block on
+  average (p99 5.4%), the heaviest patch there is p99 10.6%, inside the 15% budget; the tables built
+  in 1.6–1.7 s when the first instance loads.
+- **Builds:** armhf against glibc 2.31, profile-guided (trained on every factory preset), the test
+  suite run against the shipped objects, checked with the plugin catalog's `catalog_check.py`.
+  Installed and benched on an Akai Force with MPC OS 3.9; MPC OS 2.x is untested (it doesn't draw a
+  plugin's pages).

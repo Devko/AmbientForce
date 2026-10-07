@@ -1,12 +1,12 @@
 # Performance
 
 - [The budget](#the-budget)
-- [How it is measured](#how-it-is-measured)
-- [Estimates by instruction count](#estimates-by-instruction-count)
 - [Device measurements](#device-measurements)
+- [How it is measured](#how-it-is-measured)
+- [Instruction counts](#instruction-counts)
 - [Memory and load time](#memory-and-load-time)
 - [What keeps it cheap](#what-keeps-it-cheap)
-- [If the device disagrees](#if-the-device-disagrees)
+- [If it runs over](#if-it-runs-over)
 
 ---
 
@@ -28,46 +28,86 @@ AmbientForce's ceiling is everything on at once, so the whole budget is planned 
 Air, Weather, Echo and Patina (M2, M3) take the rest, to 13.9% with everything on. **M1's gate:**
 Bloom 6×2 with Ground and Space at p99 ≤ 15% on the device.
 
+## Device measurements
+
+2026-10-07, the Force (Cortex-A17, MPC OS 3.9), `afbench -s 3 -c 1` while MPC runs, the
+profile-guided build, percent of the 2902 µs block:
+
+| Case | avg | p99 | max | |
+|---|---|---|---|---|
+| idle (asleep) | 0.11 | 0.13 | 0.58 | PASS |
+| init chord: Init, one key (its triad, Ground on the root, the Hall) | 4.20 | 5.36 | 6.67 | PASS |
+| drone: Ground alone, every partial at full, Body and Breath | 3.42 | 4.34 | 5.40 | PASS |
+| bloom 6x2: Bloom alone, six voices of unison 2 with FM | 6.68 | 7.99 | 8.66 | PASS |
+| **worst** (below) | **8.95** | **10.63** | 11.84 | **PASS** |
+
+The worst case: six keys let go for six others every 2 s (every voice taken from its release),
+unison 2 with FM, Ground at full (every partial, Body, Breath), Sway at full depth and 2 Hz on both
+strata, Bloom's Smear and Breath at full (the read position crossing frames in every render, the
+dearest read), Space in Abyss with Shimmer 100%, Tilt on. No preset comes near it.
+
+**M1 passes its gate with room:** everything M1 has, at its heaviest, is p99 10.6%, which leaves
+about 4.4 points of the 15% for Air, Weather, Echo and Patina (the concept's estimate for them: 4.7).
+Bloom's unison 2, planned as the first cap to fall, stays.
+
+Where the time goes, from the profiling build (it reads the clock between stages, so its totals run
+a little over the shipped build's), µs per block:
+
+| Case | ground | bloom | space | out |
+|---|---|---|---|---|
+| init chord | 22.3 | 35.6 | 79.2 | 2.8 |
+| drone | 28.3 | 6.8 | 78.9 | 3.0 |
+| bloom 6x2 | 2.3 | 123.7 | 79.2 | 2.9 |
+| worst | 37.9 | 139.1 | 97.2 | 6.0 |
+
+- **Space is the largest fixed cost**, about 80 µs (2.7% of the block) in the Hall whatever plays,
+  97 µs (3.3%) in Abyss with shimmer: under its 3.8% share.
+- **Bloom**: six voices of unison 2 with FM, 124 µs (4.3%), 139 µs (4.8%) with the worst case's
+  motion, against its 4.0% share; a triad at Init's settings, 36 µs (1.2%).
+- **Ground**: every partial with Body and Breath, 28 µs (1.0%), 38 µs (1.3%) with a fast Sway;
+  the default drone 22 µs (0.8%), its share.
+- **The output** (tilt, volume, the guard, the limiter, Stop's fade): 3 to 6 µs.
+
 ## How it is measured
 
 - **`make bench-device`** copies the `.so`, its profiling build and `afbench` (`tools/bench.cpp`) to
-  the Force, runs them pinned to core 1 while MPC keeps running, and deletes them. Each case plays
-  MIDI through the plugin's own entry points and times every block with the thread's CPU clock
-  ([Building](BUILDING.md#benchmarking-on-the-device)). The cases: idle (asleep), the Init preset
-  holding a triad, Ground alone with every partial, Body and Breath, Bloom alone at six voices of
-  unison 2 with FM, and the worst case (six-note chords re-struck every 2 s, unison 2, FM, Ground at
-  full, Space in Abyss with shimmer).
+  the Force, runs them pinned to core 1 while MPC keeps running, and deletes them
+  ([Building](BUILDING.md#benchmarking-on-the-device)). Each case is a fresh instance set up through
+  its parameters by index, played 2 s untimed (the voices sounding, the reverb full) and then timed
+  for `-s` seconds, every `processReplacing` call on the thread's CPU clock. Before the first case
+  the bench waits for the table builder to finish, so no case plays the sine fallback or times the
+  builder.
 - **Stage timing**: the profiling build (`-DAF_STAGE_TIMING`, `make arm-bench-stages`) laps a clock
-  between the engine's stages, ground, bloom, space and out (tilt, volume, the guard, the limiter,
-  Stop's fade), and `afbench` prints each case's time per stage. It reads the clock between stages,
-  so it reads a little higher than the shipped build.
+  between the engine's stages: ground, bloom, space and out.
 - **Profile-guided**: the shipped `.so` is built with a profile from `tools/pgo_train.cpp`, which
-  plays phrases, chords past six voices, the pedal and the factory presets under `qemu-arm`.
-- **Instruction counts**, until the device: ARM instructions per 128-sample block, counted under a
-  plugin-enabled `qemu-arm` for code built with the device's flags. They are exact and repeatable,
-  so every review measured its change with them.
+  plays an ambient phrase through every Space mode, Couple mode, Listen pair, tuning, chord type and
+  voicing, Hold and the pedal, Stop and a suspend, then every factory preset, under `qemu-arm`.
+- **Instruction counts**, between device runs: ARM instructions per 128-sample block, counted under
+  a plugin-enabled `qemu-arm` for code built with the device's flags. They are exact and
+  repeatable, so every review measured its change with them ([below](#instruction-counts)).
 
-## Estimates by instruction count
+`make bench` on x86 only proves the bench works; the Force is far slower per sample.
 
-From the code's own measurements (each header in `dsp/` gives its figures), 2026-10-07. The percentages
-take **PolyForce's calibration, about 1 ns an instruction on the device** (its instruction counts
-against its device bench): 2902 µs is about 2.9 million instructions.
+## Instruction counts
 
-| Case | ARM instructions per block | ≈ % of the block |
-|---|---|---|
-| Asleep (idle) | 0.4k (about 425) | 0.01 |
-| **Init holding a triad** (the knobs' defaults) | **206k**: Space 113k, Bloom 46k, Ground 35k, the engine 4.5k | **7.1** |
-| **The worst case** (6 voices of unison 2 with FM, every Ground partial and Body, Abyss with shimmer) | **394k**: Bloom 224k, Space 107k, Ground 46k, the engine 7k | **13.6** |
+ARM instructions per block, the whole plugin through `VSTPluginMain` (the bench's cases), and each
+stratum on its own (from the headers in `dsp/`, which give the figures):
 
-Per stratum:
-
-| Stratum | ARM instructions per block | ≈ % of the block | Target |
+| Case | ARM instructions per block | By ~1 ns an instruction | On the device (avg) |
 |---|---|---|---|
-| Bloom, 6 voices sounding, unison 1 (Mix / FM) | 97k / 121k | 3.3 / 4.2 | 4.0 |
-| Bloom, 6 voices sounding, unison 2 (Mix / FM) | 153k / 203k | 5.3 / 7.0 | 4.0 |
-| Ground, every partial / the default four / Root alone | 40.0k / 34.3k / 17.0k | 1.4 / 1.2 / 0.6 | 0.8 |
-| Ground's Body, Breath | +5.3k, +0.6k | 0.2, 0.02 | |
-| Space (Hall at Init's settings; Abyss with shimmer) | 107k–113k | 3.7–3.9 | 3.8 |
+| idle | 1.1k | 0.04% | 0.11% |
+| init chord | 210k | 7.2% | 4.20% |
+| drone | 175k | 6.0% | 3.42% |
+| bloom 6x2 | 355k | 12.2% | 6.68% |
+| worst (its re-strike blocks) | 423k (433k) | 14.6% (14.9%) | 8.95% |
+
+| Stratum on its own | ARM instructions per block |
+|---|---|
+| Bloom, 6 voices sounding, unison 1 (Mix / FM) | 97k / 121k |
+| Bloom, 6 voices sounding, unison 2 (Mix / FM) | 153k / 203k |
+| Ground, every partial / the default four / Root alone | 40.0k / 34.3k / 17.0k |
+| Ground's Body, Breath | +5.3k, +0.6k |
+| Space (Hall at Init's settings; Abyss with shimmer) | 113k; 107k |
 
 The oscillator's inner loop, ARM instructions a sample over one frame / a pair of frames / a
 position crossing frames within the render: Hermite (Bloom's A) 41 / 65 / 84, linear (Bloom's B,
@@ -75,27 +115,12 @@ Ground's partials) 20 / 34 / 52; FM adds 3 to 5. A Bloom voice at unison 1 is ab
 instructions a sample: A's read 74, the breath, SVF, pan and gains 36, the control steps and the
 bus the rest.
 
-**How far to trust them.** Instruction counts miss what the Force adds: cache misses, and VFP
-divisions and flag transfers that stall. PolyForce's ~1 ns an instruction is one calibration;
-EffectForce's (36k–44k instructions to a point of the block on its everything-on case) would put the
-worst case nearer 9–11% on average, and its device p99 ran 1.24 times its average. Both put M1's
-worst case under the gate, with Bloom's unison 2 the largest single cost and over Bloom's own share:
-the device bench has the final word.
-
-## Device measurements
-
-(device bench: Task 13)
-
-| Case | avg | p99 | max |
-|---|---|---|---|
-| Idle (asleep) | (Task 13) | (Task 13) | (Task 13) |
-| Init holding a triad | (Task 13) | (Task 13) | (Task 13) |
-| Ground alone: every partial, Body, Breath | (Task 13) | (Task 13) | (Task 13) |
-| Bloom alone: 6 voices, unison 2, FM | (Task 13) | (Task 13) | (Task 13) |
-| **The worst case** | (Task 13) | (Task 13) | (Task 13) |
-
-Percent of the 2902 µs block, the profile-guided build, MPC running. `make bench` on x86 only proves
-the bench works; the Force is far slower per sample.
+**The calibration.** Before the device run the percentages took PolyForce's figure, about 1 ns an
+instruction on the Force, and put the worst case at 14.6–14.9%, inside the gate with little room
+for the device's jitter. The device ran AmbientForce's code at **about 0.55–0.6 ns an instruction**
+on average (init chord 0.58, drone 0.57, bloom 6x2 0.55, worst 0.61), with p99 1.2–1.3 times the
+average: the counts over-predicted by two thirds. They stay the measure of a change between device
+runs; for the budget, the device's figures count.
 
 ## Memory and load time
 
@@ -105,14 +130,15 @@ the bench works; the Force is far slower per sample.
   use in a shared cache (≤ 13.5 MB); M1 keeps its whole library of twelve built instead.
 - **An instance**: Space's buffers, about 870 KB (two of the lines' buffers doubled for Abyss);
   everything else is fixed arrays.
-- **Load time**: the builder thread builds all twelve tables in 0.42 s on x86 at -O2 and 4.3 s under
-  qemu (about 50 ms and 0.5–0.6 s a lifetime table); on the Force: (device: Task 13). It runs at
-  nice 10 on its own thread, and the slots play a sine until their tables arrive.
+- **Load time**: the builder thread builds all twelve tables in **1.6–1.7 s on the Force** (0.4 s on
+  x86, 4.3–4.9 s under qemu). It runs at nice 10 on its own thread, and the slots play a sine until
+  their tables arrive.
 
 ## What keeps it cheap
 
 - **Asleep is free:** before the first note, after a Fade or a Cut, and whenever nothing can be heard
-  and Space is silent, `render()` writes zeros and runs no DSP.
+  and Space is silent, `render()` writes zeros and runs no DSP (0.11% of a block, the plugin's own
+  glue).
 - **One drone voice**, not one per note: Ground costs the same for any chord.
 - **The tail handoff:** a long release costs a voice for 1.5 s, and Space carries the rest. Six
   voices feel like many more.
@@ -129,9 +155,10 @@ the bench works; the Force is far slower per sample.
   rate, Equal's ratios, the pans, the handoff's boost) is worked out again only when what it depends
   on changes.
 
-## If the device disagrees
+## If it runs over
 
 The caps fall in the concept's order ([§11](CONCEPT.md#11-budget)): **Bloom's unison 2 → 1** first,
-then Air 6 → 4 voices, then Weather 16 → 12 grains. In M1 only the first applies; the PolyForce CPU
-guard (shedding tails above 40% and 65% of a block) is planned as the second line of defence
+then Air 6 → 4 voices, then Weather 16 → 12 grains. M1 needs none of them (its worst case is p99
+10.6%); M2's device bench decides for Air and Weather. The PolyForce CPU guard (shedding tails above
+40% and 65% of a block) is planned as the second line of defence
 ([Roadmap](ROADMAP.md#planned-not-yet-placed)).

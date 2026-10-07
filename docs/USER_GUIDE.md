@@ -495,17 +495,33 @@ The MIX page has every stratum's level, pan, send and mute in one place, then th
 
 ## Presets
 
-**Factory presets** are planned in five categories, level-matched at −16 LUFS on a phrase of two
-held chords and their release, with peaks under −1 dBFS. They are being made; until then only Init
-ships:
+**16 factory presets**, each in its own key and scale. Drones put Ground forward with Bloom quiet
+and following the harmony; Beds use both strata with long swells; Blooms put Bloom forward over a
+low Ground; Choirs sing Choir Ah-Oo on both strata, Ground with Body.
 
-| Category | Presets |
+| Preset | What it is |
 |---|---|
-| Templates | Init |
-| Drones (Ground forward, Bloom quiet on Harmony) | Low Tide Hum, Harbour at 4am, Fifth Light |
-| Beds (both strata, long swells) | Lydian Morning, Slow Aurora, Felt Room, Night Ferry |
-| Blooms (Bloom forward, Ground low) | First Snow, Glass Orchard, Tape Bloom, Sine Garden |
-| Choirs (Choir Ah-Oo with Body) | Lantern Choir, Distant Ah, Cathedral Breath, Choir in Haze |
+| **Templates / Init** | The defaults, level-matched: C Major in Just, Felt Piano triads on the keys over a Cello Tasto drone, into an 8 s hall |
+| **Drones / Low Tide Hum** | E Phrygian: a dark Reed Organ drone up front, breathing, with quiet Sine Bloom chords following the harmony, into Space |
+| **Drones / Harbour at 4am** | G Minor: a Cello Tasto drone held on the tonic (Free) with a vowel, Celesta sevenths late in their life following the harmony, into Haze |
+| **Drones / Fifth Light** | A Mixolydian in Pythagorean tuning: a Sine Bloom drone strong in fifths and octaves under Glass Harmonica fifths, into Abyss with a shimmer a fifth up |
+| **Beds / Lydian Morning** | D Lydian: Add9 chords in the Spread voicing, strummed over 1.5 s, on Felt Piano at Age 0.7, over the drone |
+| **Beds / Slow Aurora** | F# Major: Sus2 chords spread wide on Sine Bloom in unison 2, following the harmony, swaying over 80 s and swelling over 10 s, into Abyss with shimmer |
+| **Beds / Felt Room** | D# Major, equal-tempered: Felt Piano sevenths in Drop 2, the drone on your lowest key, a small room, each release in its own voice |
+| **Beds / Night Ferry** | B Minor: a low drone beating fast under dark, resonant Tape Strings in unison 2, into Space with a shimmer an octave down |
+| **Blooms / First Snow** | F major pentatonic: strummed Celesta late in its life, shimmering with Smear, over a quiet high sine drone |
+| **Blooms / Glass Orchard** | C# Hirajoshi: strummed Glass Harmonica Add9 chords in unison 2, into a plate with a shimmer a twelfth up |
+| **Blooms / Tape Bloom** | A# Major, equal-tempered: Tape Strings with a triangle an octave down blended in, wide unison and Smear, into a short plate |
+| **Blooms / Sine Garden** | E Dorian: Quartal chords, Close, on Sine Bloom swaying deep, a touch of FM from a sine an octave up |
+| **Choirs / Lantern Choir** | G# Major: Spread chords strummed over 1.2 s on Choir Ah-Oo in unison 2, the choir drone leaning into each chord over 20 s |
+| **Choirs / Distant Ah** | F Minor: the choir held at its "ah", wide unison, far back in Haze behind a long pre-delay and Rise |
+| **Choirs / Cathedral Breath** | C Dorian: the choir in the Spread voicing, swaying over 28 s, over a choir drone with a strong just fifth and Body, into Abyss with shimmer |
+| **Choirs / Choir in Haze** | F# minor pentatonic: the choir drone up front, its vowel towards "u", choir chords late in their life in wide unison, deep in Haze |
+
+Between them they use every Space type, the three tunings and nine of the twelve scales. Every one
+is level-matched at −16 LUFS on a phrase in its own key (a chord on the tonic held 12 s, one on the
+fourth held 12 s, in Lydian on the second, then 16 s of release), with peaks under −1 dBFS and
+without leaning on the limiter.
 
 - **PRESETS page**: categories on the left (FAVORITES and RECENT first), presets on the right; tap
   to load. **FAV** marks the loaded preset as a favorite, **RND** loads a random preset of the
@@ -565,17 +581,19 @@ a project starts asleep, as a fresh instance does.
 
 ### CPU
 
-From instruction counts, not yet from the device (device bench: Task 13):
+Measured on the Force (MPC OS 3.9), in percent of MPC's audio block, average and p99:
 
-- The Init sound holding a triad: about 7% of MPC's block; the heaviest patch (six voices of unison 2
-  with FM, every Ground partial with Body, Abyss with shimmer): about 14%.
-- **Unison 2** costs most: Bloom's six voices go from about 3–4% to 5–7% of a block.
-- **Space** is the biggest fixed cost, about 4%, and runs for as long as its tail lasts (minutes in
-  Abyss at long Decay).
-- Ground with every partial on is about 1.4%; a partial at 0, a muted stratum and a sleeping
-  instance cost next to nothing.
+- **Init holding a chord**: 4.2% (p99 5.4%).
+- **The heaviest patch there is** (six voices of unison 2 with FM, re-struck every 2 s; every Ground
+  partial with Body and Breath; fast Sway and full Smear; Abyss with shimmer): 9.0% (p99 10.6%),
+  inside the 15% budget. No factory preset comes near it.
+- **Space** is the biggest fixed cost, about 2.7% (3.3% in Abyss with shimmer), and runs for as long
+  as its tail lasts (minutes in Abyss at long Decay).
+- **Bloom**: six voices of unison 2 with FM about 4.3%; a triad at Init's settings about 1.2%.
+- **Ground** with every partial, Body and Breath about 1%; a partial at 0, a muted stratum and a
+  sleeping instance cost next to nothing (asleep: 0.1%).
 
-[Performance](PERFORMANCE.md) has the figures and the device bench.
+[Performance](PERFORMANCE.md) has every case and where the time goes.
 
 ### Known limits
 
@@ -585,5 +603,5 @@ From instruction counts, not yet from the device (device bench: Task 13):
   notes won't be able to play other tracks.
 - **No file import yet.** Lifetime tables from your own recordings come in M3; the tables are the
   computed ones.
-- **The first seconds after loading** the first instance, a table not yet built plays as a sine
-  ([Lifetime tables](#lifetime-tables)).
+- **The first seconds after loading** the first instance (1.6–1.7 s on the Force), a table not yet
+  built plays as a sine ([Lifetime tables](#lifetime-tables)).

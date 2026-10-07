@@ -17,18 +17,20 @@ The milestones come from the [concept](CONCEPT.md#14-roadmap); M1's tasks from
 
 ## What's next
 
-- 🔜 **The factory presets** (M1 Task 10): 16 sounds in five categories, level-matched at −16 LUFS.
-- 🔜 **Bench cases, the PGO trainer, the soak** (M1 Task 11): the cases of the
-  [budget](PERFORMANCE.md), `make soak HOURS=1` passing.
-- 🔜 **The device run** (M1 Task 13): `make bench-device` against the 15% gate, install, play, and the
-  [Phase 0](#phase-0-the-probe) questions answered from the trace; a listening session; a
-  `tested.json` entry.
-- ⬜ **0.0.1**, the first release, from a tag; then the plugin catalog's entry.
+- 🔜 **Playing it on the Force** (M1 Task 13): the pads, Stop, the pad latch, a pedal, MIDI tracks
+  on other channels, with the trace on: the [Phase 0](#phase-0-the-probe) answers, written up in
+  `docs/PROBE.md`.
+- 🔜 **A listening session** on real speakers: every factory preset, Init, the strata's ranges; the
+  presets and voicing constants tuned from it.
+- ⬜ **0.0.1**, the first release, from a tag; the release zip installed and played, then a
+  `tested.json` entry and the plugin catalog's.
 
 ## M1: First light
 
-🔜 Done in code (2026-10-07); the presets, the bench cases and the device run are next. The gate:
-playable on the device, and Bloom 6×2 with Ground and Space at p99 ≤ 15% of the block.
+🔜 Built, installed and benched (2026-10-07): the gate's CPU half passes on the device (everything
+M1 has at its heaviest, p99 10.6% of the block against 15%: [Performance](PERFORMANCE.md)).
+Playing it on the device and the listening session are next. The gate: playable on the device, and
+Bloom 6×2 with Ground and Space at p99 ≤ 15% of the block.
 
 | Task | | |
 |---|---|---|
@@ -41,10 +43,10 @@ playable on the device, and Bloom 6×2 with Ground and Space at p99 ≤ 15% of t
 | 7 | Bloom: six chord voices, strum, voice-led moves, unison, the tail handoff | ✅ |
 | 8 | The engine: Listen routing, the pedal and Hold, Space, tilt, limiter, Stop, the guard | ✅ |
 | 9 | Parameters, nine pages in four tabs, the patch map | ✅ |
-| 10 | 16 factory presets, level-matched | 🔜 |
-| 11 | Bench cases, a PGO trainer for the presets, an offline soak | 🔜 |
+| 10 | 16 factory presets, each in its own key, level-matched at −16 LUFS on an ambient phrase (`tools/phrase.h`); `make demos` maps each one | ✅ |
+| 11 | Bench cases (the worst with motion), a PGO trainer for the presets, an offline soak that fails on the guard and watches the limiter | ✅ |
 | 12 | Docs | ✅ |
-| 13 | The device run: bench, install, the probe questions, listening, `tested.json` | 🔜 |
+| 13 | The device run: installed (a snapshot of m1, 2026-10-07) ✅; `make bench-device` ✅ (all five cases pass, worst p99 10.6%; the tables built in 1.6–1.7 s); playing it, the probe questions, listening 🔜; `tested.json` with the first release ⬜ | 🔜 |
 
 Every task was implemented by a subagent and reviewed twice, for the spec and then for code
 quality; each finding was checked against the code and fixed with a check that fails without it
@@ -52,10 +54,12 @@ quality; each finding was checked against the code and fixed with a check that f
 
 ## Phase 0: the probe
 
-What MPC does with an **instrument** plugin, measured on the device. Folded into M1's first device
-run: the M1 build traces every parameter change and every suspend and resume, and where the audio
-thread took the resume ([diagnostics](BUILDING.md#diagnostics-on-the-device)). The answers go in
-`docs/PROBE.md`, and then the concept becomes `docs/DESIGN.md`.
+What MPC does with an **instrument** plugin, measured on the device. Folded into M1's device run:
+with `/tmp/ambientforce.trace` present the M1 build logs every parameter change, every suspend and
+resume and where the audio thread took the resume, every MIDI event as it came in (channel and
+all), each table's build time, and which of MPC's threads made each call
+([diagnostics](BUILDING.md#diagnostics-on-the-device)). The answers go in `docs/PROBE.md`, and then
+the concept becomes `docs/DESIGN.md`.
 
 - ⬜ **What Stop sends to an instrument**: all-notes-off, a suspend (as it does to an insert, within
   ~100 ms), or nothing? The engine takes a falling transport or a suspend under 250 ms as Stop; the
@@ -67,11 +71,9 @@ thread took the resume ([diagnostics](BUILDING.md#diagnostics-on-the-device)). T
 - ⬜ **The crossfader learned on an instrument track** (the scenes' morph in M3).
 - ⬜ **The plugin writing a WAV to the SSD** (Memory's Keep in M2).
 - ⬜ **Two instances at once**: the shared tables, the CPU, the pages.
-- ⬜ **How fast the lifetime tables build on the A17**: all twelve take 0.42 s on x86 and 4.3 s under
-  qemu; until a table is built its slots play a sine.
-
-The trace logs neither MIDI (notes, CC 64, channels) nor the builds' times: those questions are
-answered by playing and watching on the device, unless a trace of them is added first.
+- ✅ **How fast the lifetime tables build on the A17**: all twelve in 1.6–1.7 s when the first
+  instance loads (0.4 s on x86, 4.3–4.9 s under qemu), at nice 10 on their own thread; until a table
+  is built its slots play a sine.
 
 ## M2 to M4
 
@@ -244,3 +246,24 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 - 2026-10-07 — **Option lists are the engine's names**, checked entry by entry as
   `plugin/patch_map.cpp` compiles; Color Int's options read min3, maj3 (segments show capitals, so
   m3 and M3 would look alike).
+
+### Presets, bench, soak, the device
+
+- 2026-10-07 — **The demo phrase plays each preset in its own key and scale** (the tonic chord, then
+  IV, in Lydian II; held 12 s each, 16 s of release), so a preset sounds as it is meant to and the
+  levels still compare.
+- 2026-10-07 — **Presets are matched without touching the limiter**: `preset-levels` sets each
+  preset's volume for −16 LUFS on the phrase and the limiter only holds the peaks under −1 dBFS; how
+  hard it works is printed, and a preset that leans on it is one to fix, not to turn down.
+- 2026-10-07 — **The worst bench case includes motion**: Sway at full depth and 2 Hz on both strata,
+  Bloom's Smear and Breath at full, so the read position crosses frames in every render (the dearest
+  read: 423k ARM instructions a block against 404k without).
+- 2026-10-07 — **The bench waits for the tables**: no case plays the sine fallback or times the
+  builder.
+- 2026-10-07 — **The soak fails on a trip of the guard**, whose zeroed block would otherwise look
+  clean, and warns when the limiter works more than 5% of a window.
+- 2026-10-07 — **The trace never writes from the audio thread**: it leaves notes (the resume, a ring
+  of MIDI events) that MPC's own threads write at their next call.
+- 2026-10-07 — **Bloom's unison 2 stays**: the device bench puts everything M1 has at its heaviest at
+  p99 10.6%. The instruction counts at PolyForce's ~1 ns an instruction had put it at 14.6–14.9%; the
+  Force ran AmbientForce's code at about 0.6 ns an instruction.

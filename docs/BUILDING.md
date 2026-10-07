@@ -66,8 +66,8 @@ changes; it checks the layout and every factory preset before writing anything. 
 | `test-arm-pgo` | The suite linked against the profile-guided objects the shipped `.so` is made of |
 | `test-module M=<suite>` | One dsp suite on its own under ASan/UBSan, quicker to iterate on: `test/<suite>_test.cpp` with every `dsp/*.cpp` (`M=harmony`, `reverb`, `lifeosc`, `ground`, `bloom`, `engine`) |
 | `test-module-arm M=<suite>` | The same for the Force's CPU, under `qemu-arm` |
-| `demos` | Render every factory preset playing the demo phrase to `build/demos-out/*.wav` (stereo, as the plugin plays), and all of them back to back as `tour.wav`; prints each one's loudness |
-| `preset-levels` | Set every factory preset's volume for `PRESET_LUFS` (default −16) on the demo phrase, never peaking over −1 dBFS |
+| `demos` | Render every factory preset playing the demo phrase to `build/demos-out/*.wav` (stereo, as the plugin plays), and all of them back to back as `tour.wav`; prints what each one measures ([below](#the-demo-phrase-and-the-presets-levels)) |
+| `preset-levels` | Set every factory preset's volume so its demo phrase plays at `PRESET_LUFS` (default −16); the limiter holds the peaks under −1 dBFS, and how hard it works for that is printed |
 | `bench` | x86 bench: only proves the bench and the profiling build work |
 | `arm-plugin` | `build/arm/ambientforce.so`; profile-guided when `qemu-arm` is installed |
 | `arm-bench` | `build/arm/afbench`, the CPU bench for the device |
@@ -80,9 +80,31 @@ changes; it checks the layout and every factory preset before writing anything. 
 
 `make` on its own runs the tests and builds the device `.so` and the x86 profiling build.
 
-The demo phrase (`tools/demos.cpp`, 120 BPM), which `preset-levels` matches the loudness on: two
-held chords, then their release, the same for every preset (Task 10 sets its timing: a chord held
-12 s, a second held 12 s, then 16 s of release, the loudness measured over all 40 s).
+### The demo phrase and the presets' levels
+
+The demo phrase (`tools/phrase.h`, shared by `demos`, `preset-levels` and `test/preset_test.cpp`)
+is made for an ambient instrument: one chord held 12 s, a second chord held 12 s, then 16 s of
+release, 40 s at 120 BPM with the transport playing. Every preset plays it **in its own key and
+scale**, so it sounds as the preset is meant to and the levels still compare:
+
+- the first chord on the tonic, between C3 and B3; the second on IV, a fourth above (in Lydian, whose
+  IV is diminished, on II; in the five- and six-tone scales on the tone a fourth above, or the nearest
+  one under it);
+- one key per chord, the preset's Chord type building on it; with Chord Off three keys, an open
+  triad; keys mapped back through the preset's Input, velocity 100.
+
+The loudness is ITU-R BS.1770 / EBU R128 integrated loudness of the stereo pair over all 40 s (the
+−70 LUFS and −10 LU gates). `preset-levels` sets each preset's volume for −16 LUFS on it without
+touching the limiter: the limiter holds the peaks under −1 dBFS, and a preset that leans on it is one
+to fix, not to turn down. `test/preset_test.cpp` plays every factory preset through the phrase and
+holds it finite, within −16 ± 1 LUFS and under −1 dBFS.
+
+`make demos` prints a map of each preset, for listening without a device: LUFS and peak; the peak
+before the limiter and the most it took off (from a second render 20 dB down, the volume being the
+only thing before the limiter); the spectral centroid of the holds and the release; motion (how far
+the loudness and the timbre move within the holds); wet (the return against the dry, from a third
+render with the return at 0); L/R correlation and side against mid; and the tail (how long until
+the release is 20 and 40 dB down).
 
 ## Make variables
 
@@ -98,7 +120,7 @@ held chords, then their release, the same for every preset (Task 10 sets its tim
 | `BENCH_ARGS` | `afbench` arguments for `bench-device` (default `-s 3`) |
 | `PRESET_LUFS` | The loudness `preset-levels` matches the factory presets to (default −16) |
 | `M` | The suite for `test-module` and `test-module-arm` |
-| `HOURS` | How long `soak` plays |
+| `HOURS`, `SEED` | How long `soak` plays (default 1 hour), and its random sequence (default 1) |
 
 Pass variables on the command line, or keep your own in `local.mk` next to the Makefile (git
 ignores it):
@@ -126,9 +148,9 @@ turn, `aft::Turn`), so stepping never depends on the machine's speed. The suites
 | `test/ground_test.cpp` | The just partials in every tuning; the linear read's images; Beat in Hz in two registers; Gravity; the root's octave and a Register change; the fade; gains and mute; no steps when the patch or the table changes; Body, Breath, Width, Tone; odd parameters and sequences; stability; the headroom sweep; determinism |
 | `test/bloom_test.cpp` | A chord and its release; the strum to the sample; stealing; voice-led moves; the tail handoff (free at 1.5 s, the send's energy equal to Tail Voice's); Swell; velocity; unison; owners and notes pressed again; the filter, breath, width, mute; the send gate; stability; determinism; nothing allocating |
 | `test/reverb_test.cpp` | EffectForce's Reverb suite (decay against the target, damping, density, freeze, shimmer, width, robustness, fingerprints); Haze and Abyss; no mode growing over a minute; Space's Rise and `silent()` |
-| `test/plugin_test.cpp` | The VST2 basics, every getter at every index, playing, Stop and suspend through the plugin, `process()` against `processReplacing`, MIDI mapping, a stress run of floods and random patches |
+| `test/plugin_test.cpp` | The VST2 basics, every getter at every index, playing, Stop and suspend through the plugin, `process()` against `processReplacing`, MIDI mapping, the trace (nothing written from a block; the resume and the MIDI written at the host's next call, a full ring's drops counted), a stress run of floods and random patches |
 | `test/params_test.cpp` | Every default and its text, the display formats, the popups, the patch map (Init plays what `Patch{}` plays), every option landing on its value, every sound value at both ends of its range while a chord sounds |
-| `test/preset_test.cpp` | Saved state round trips and bad input, presets (init, save, step, the ends, missing files), user numbering, files appearing while running, the browser, favorites, stepping and the values pushed back (a Q-Link turn on the stepper: one preset per detent; a tile's release echo), every factory preset playing |
+| `test/preset_test.cpp` | Saved state round trips and bad input, presets (init, save, step, the ends, missing files), user numbering, files appearing while running, the browser, favorites, stepping and the values pushed back (a Q-Link turn on the stepper: one preset per detent; a tile's release echo); every factory preset through the [demo phrase](#the-demo-phrase-and-the-presets-levels): finite, −16 ± 1 LUFS, under −1 dBFS |
 
 `make test-arm` runs the same suite cross-compiled for the Force's CPU under `qemu-arm` (no
 sanitizers): it catches 32-bit and ARM-only paths (the FPSCR flush, NEON float code). `make
@@ -155,23 +177,58 @@ Copies the plugin, its profiling build and the bench (`afbench`) to `/tmp` on th
 pinned to core 1 while MPC keeps running (MPC's audio workers own cores 2–3), then deletes them.
 The bench `dlopen()`s the `.so` like MPC and times every 128-frame block with the thread's CPU
 clock; the profiling build also reports each block's time in the engine's stages (ground, bloom,
-space, out). It reads no user folders, saves nothing, and fails if any case fails (p99 over 15% or
-max over 50% of the block; up to 35% / 80% it warns). The cases (Task 11): idle (asleep); the Init
-preset holding a triad; Ground alone with every partial, Body and Breath; Bloom alone, six voices
-of unison 2 with FM; and the worst case, six-note chords re-struck every 2 s with unison 2 and FM,
-Ground at full and Space in Abyss with shimmer. The results go in [Performance](PERFORMANCE.md).
+space, out). It reads no user folders, saves nothing, sets `AF_FIXED_SEED`, and fails if any case
+fails (p99 over 15% or max over 50% of the block; up to 35% / 80% it warns).
+
+Each case is a fresh instance set up through its parameters by index (real values, made MPC's 0..1
+by `plugin/patch_map.cpp`, which the bench links), played 2 s untimed and then timed:
+
+| Case | Load |
+|---|---|
+| idle | Asleep: no note yet |
+| init chord | Init, one key held: its triad on Bloom, Ground on the root, the Hall |
+| drone | Ground only (Bloom muted): every partial at full, Body and Breath |
+| bloom 6x2 | Bloom only (Ground muted): Chord Off and six keys, unison 2, Couple FM |
+| worst | Six keys let go for six others every 2 s (every voice taken from its release), unison 2, FM; Ground at full (every partial, Body, Breath); Sway at full depth and 2 Hz on both strata, Bloom's Smear and Breath at full (the read position crossing frames all the time: the dearest read); Space in Abyss with Shimmer 100%, Freeze off; Tilt on |
+
+Before the cases, the bench opens an instance and waits until the table builder it starts has
+published every table (it watches the process's threads in `/proc/self/task`), and says how long
+that took: every case then reads real tables, not the sine fallback, and the builder isn't timed
+with a case. No builder thread, or one still running after 300 s, fails the bench. The results are
+in [Performance](PERFORMANCE.md#device-measurements).
 
 ## Soak
 
 ```sh
-make soak HOURS=1
+make soak HOURS=1 SEED=1
 ```
 
-Renders hours of audio offline on x86 (-O2), as fast as the machine allows, through the plugin:
-chords changing every 20–90 s (seeded random), with Freeze and Shimmer switching on and off. It
-fails on a sample that isn't finite, a peak over −1 dBFS, a 10-minute window whose mean |DC| is
-over −60 dBFS, or a 10-minute window's loudness more than ±6 LU from the first one's. M1 runs it for
-an hour; the concept's 24-hour soak is M2's gate.
+Renders hours of audio offline on x86 (-O2), as fast as the machine allows, through the plugin's own
+entry points, the way a long ambient set plays it. From one seeded random sequence: a new chord every
+20–90 s (one to three keys, a quarter of the changes under the pedal); Freeze on for 10–60 s every
+3–8 minutes; Shimmer every 2–6 minutes; the next factory preset (the browser's Next button) or
+another Space mode every 8–16 minutes; the transport stopping and starting again, at a new tempo,
+every 15–30 minutes; the host suspending and resuming, as a Stop or a reset, every 20–40 minutes. The
+surface's clock runs with the audio and `AF_FIXED_SEED` is set, so a run plays the same samples every
+time.
+
+It fails on:
+
+- a sample that isn't finite;
+- any trip of the engine's non-finite guard (`af::guardTrips()`: the guard zeroes the block and
+  resets the DSP, so the output looks clean, but a trip is a fault in the DSP);
+- a peak over −1 dBFS;
+- a 10-minute window whose mean |DC| (of 10 s means) is over −60 dBFS;
+- a 10-minute window whose loudness is more than 6 LU from the first window's (BS.1770 integrated,
+  gated, so a Stop's silence doesn't count: `tools/loudness.h`, a meter that clears per window and
+  keeps its filters running).
+
+It prints every window (loudness and its drift, peak, DC, **the share of time the limiter worked**,
+from `af::limitedSamples()`, and what happened in it) and warns, without failing, when the limiter
+worked more than 5% of a window: the presets are levelled well under the ceiling, so a limiter that
+works that much means something is louder than it should be. Then the CPU time against the audio's
+length (on x86: it says nothing about the device). `AF_SOAK_EVENTS=1` prints every event as it
+happens. M1 runs it for an hour; the concept's 24-hour soak is M2's gate.
 
 ## Packaging and installing
 
@@ -223,20 +280,30 @@ testing, but the catalog refuses it.
 
 ## Diagnostics on the device
 
-To see what MPC sends when a control is touched, turned or tapped, and when it suspends and resumes
-the plugin, create the flag file while MPC runs (no restart):
+To see what MPC sends (a control touched, turned or tapped, MIDI, a suspend and resume), create the
+flag file while MPC runs (no restart):
 
 ```sh
 ssh root@<ip> touch /tmp/ambientforce.trace
 ```
 
-Within a second every AmbientForce instance appends to `/tmp/ambientforce.log`: one line per
-`setParameter` (the time, the instance, the parameter, the value MPC sent, the value it had read back
-before and the plugin's value and text after); one per suspend and resume with its time in ms; and
-one where the audio thread takes the resume: how long after the suspend, whether the host said so
-or the next block did, and whether it counted as Stop (On Stop) or a reset. What Stop does to an
-instrument is a [Phase 0](ROADMAP.md#phase-0-the-probe) question. A table the
-builder can't build, or a builder that can't start, is logged too. Remove the flag file to stop. The
+Within a second every AmbientForce instance appends to `/tmp/ambientforce.log`, each line with the
+time and, for an instance's lines, the instance and the thread MPC called it on (`[tid 1234]`):
+
+- one per `setParameter`: the parameter, the value MPC sent, the value it had read back before, and
+  the plugin's value and text after;
+- one per suspend and resume, with its time in ms, and one where the audio thread took the resume:
+  how long after the suspend, whether the host said so or the next block did, and whether it counted
+  as Stop (On Stop) or a reset;
+- every MIDI event as it came in, channel and all (`midi ch 2 note-on 60 vel 100 @12`, @ its sample
+  in the block). The audio thread only copies them into a ring of 256; MPC's next call into the
+  plugin writes them, and a full ring's drops are counted;
+- each table's build time and the total, from the builder thread, and a table or a builder that
+  fails.
+
+Nothing in `processReplacing` traces or allocates: the audio thread leaves notes, and the host's
+threads write them at their next call (a parameter set, a display read, a suspend or a resume). These
+lines answer the [Phase 0](ROADMAP.md#phase-0-the-probe) questions. Remove the flag file to stop. The
 log stops growing at 2 MB; `/tmp` is cleared when the device restarts.
 
 ## Binary compatibility

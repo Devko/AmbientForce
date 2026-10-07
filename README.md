@@ -12,9 +12,10 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 
 > [!NOTE]
 > **Preview (0.0.1), milestone M1 "First light".** The harmony brain, two of the four strata
-> (Ground and Bloom), Space and the pages are built and pass the full test suite on x86 and under
-> ARM emulation; the factory presets are being made. It has not been run on a Force yet, it is not
-> in the plugin catalog, and nothing is released. Air, Weather, motion and scenes come in later milestones
+> (Ground and Bloom), Space, the pages and 16 factory presets are built and pass the full test suite
+> on x86 and under ARM emulation. On a Force (MPC OS 3.9) it installs and benches, at 4–5% of a
+> block for a held chord and 10.6% at its heaviest; playing it there is next. It is not in the plugin
+> catalog, and nothing is released yet. Air, Weather, motion and scenes come in later milestones
 > ([Roadmap](docs/ROADMAP.md)). The parameter list may still change before v0.1: sounds are saved by
 > name and survive that, but recorded automation (stored by parameter index) could then move a
 > different control.
@@ -51,9 +52,11 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 - **Built for MPC:** nine pages in four tabs, a 16-knob Q-Link set on each; a limiter that holds
   the output at −1 dBFS and a guard against non-finite samples, for nights of running; what Stop
   does is a setting (Keep, an 8-second Fade, or Cut).
-- **On the CPU:** estimated at about 7% of a block for the Init sound holding a chord and 14% at its
-  heaviest (by ARM instruction counts; the device bench comes with the first device run:
-  [Performance](docs/PERFORMANCE.md)).
+- **16 factory presets**: Init and 15 in four categories (Drones, Beds, Blooms, Choirs), each in its
+  own key and scale, level-matched at −16 LUFS; user presets, favorites, a browser.
+- **Light enough on the CPU:** on the Force, Init holding a chord takes 4.2% of a block on average
+  (p99 5.4%), and everything M1 has at its heaviest p99 10.6%, inside the 15% budget with room for
+  the strata still to come ([Performance](docs/PERFORMANCE.md)).
 
 ## Documentation
 
@@ -63,7 +66,7 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 | [Concept](docs/CONCEPT.md) | What AmbientForce is meant to become, and why |
 | [Building](docs/BUILDING.md) | Toolchain, make targets, tests, device bench, packaging, release builds |
 | [Architecture](docs/ARCHITECTURE.md) | Source layout, the signal path, threads and real-time rules, saved state |
-| [Performance](docs/PERFORMANCE.md) | The CPU budget, the estimates, the device bench |
+| [Performance](docs/PERFORMANCE.md) | The CPU budget, what each case costs on the Force, where the time goes |
 | [Roadmap](docs/ROADMAP.md) | What's done, what's next, decisions |
 | [Changelog](CHANGELOG.md) | What changed in each release |
 
@@ -116,20 +119,30 @@ The [user guide](docs/USER_GUIDE.md#the-screen) shows them all.
 
 ## Factory presets
 
-M1 plans 16 factory presets in five categories, level-matched at −16 LUFS (they are being made:
-until then only Init ships):
+16 factory presets, each in its own key and scale, between them every Space type, the three tunings
+and nine of the twelve scales. All are level-matched at −16 LUFS on a phrase of two held chords and their
+release, peaks under −1 dBFS:
 
-| Category | Presets |
-|---|---|
-| Templates | Init |
-| Drones | Low Tide Hum, Harbour at 4am, Fifth Light |
-| Beds | Lydian Morning, Slow Aurora, Felt Room, Night Ferry |
-| Blooms | First Snow, Glass Orchard, Tape Bloom, Sine Garden |
-| Choirs | Lantern Choir, Distant Ah, Cathedral Breath, Choir in Haze |
+| Category | Presets | |
+|---|---|---|
+| Templates | Init | The defaults, level-matched: Felt Piano chords over a Cello Tasto drone, into a hall |
+| Drones | Low Tide Hum, Harbour at 4am, Fifth Light | Ground forward, Bloom quiet and following the harmony |
+| Beds | Lydian Morning, Slow Aurora, Felt Room, Night Ferry | Both strata, long swells |
+| Blooms | First Snow, Glass Orchard, Tape Bloom, Sine Garden | Bloom forward, Ground low |
+| Choirs | Lantern Choir, Distant Ah, Cathedral Breath, Choir in Haze | Choir Ah-Oo on both strata, Ground with Body |
+
+Each one in a line: [User guide](docs/USER_GUIDE.md#presets).
 
 Your own presets (SAVE writes `User NNN.afp`) go to `Presets/User/` in the plugin folder; presets
 in `/media/AkaiForce/AmbientForce Presets/` on the Force's drive show up too, a folder for each
 category ([User guide](docs/USER_GUIDE.md#presets)).
+
+## Listen
+
+From source, on Linux or WSL: `make demos` renders every factory preset playing its demo phrase
+through the plugin's own entry points into `build/demos-out/` (stereo WAVs, and all of them back to
+back as `tour.wav`), the way MPC plays it, and prints what each one measures (loudness, how hard the
+limiter works, brightness, motion, how wet and wide, how long the tail): no device needed.
 
 ## Building from source
 
@@ -150,8 +163,9 @@ checker): see [Building](docs/BUILDING.md#release-builds).
 | Stage | |
 |---|---|
 | M1 in code: the harmony brain, Ground, Bloom, the lifetime tables and oscillator, Space with Haze and Abyss, the engine, nine pages, tests | ✅ |
-| M1 presets (16), bench cases, soak | 🔜 |
-| M1 on the device: installs, plays, benches; the open questions about what MPC sends an instrument ([Roadmap](docs/ROADMAP.md#phase-0-the-probe)) | 🔜 |
+| M1: 16 factory presets, bench cases, a profile-guided build trained on them, the soak | ✅ |
+| On the device: installs; benches (`make bench-device`: worst case p99 10.6%, [Performance](docs/PERFORMANCE.md)) | ✅ |
+| On the device: playing it, listening, and what MPC sends an instrument ([Roadmap](docs/ROADMAP.md#phase-0-the-probe)) | 🔜 |
 | 0.0.1, the first release; then the plugin catalog | ⬜ |
 | M2 Weather, M3 Long time, M4 v0.1 (parameter list frozen, append-only from then on) | ⬜ |
 

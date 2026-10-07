@@ -63,7 +63,7 @@ flowchart LR
 | `plugin/presets.*` | Factory and user presets |
 | `plugin/state.*` | The state text shared by projects and preset files |
 | `plugin/paths.*` | Plugin folder, preset roots, data folder, atomic file writes |
-| `plugin/trace.*` | Device diagnostics while `/tmp/ambientforce.trace` exists ([Building](BUILDING.md#diagnostics-on-the-device)) |
+| `plugin/trace.*` | Device diagnostics while `/tmp/ambientforce.trace` exists: parameter sets, suspends and resumes, MIDI, table build times ([Building](BUILDING.md#diagnostics-on-the-device)) |
 | `plugin/vst2.h` | A hand-written slice of the VST2 ABI (no Steinberg SDK) |
 | `plugin/exports.map`, `exports_stages.map` | Linker version scripts: only `VSTPluginMain` exported (plus `AmbientForceStageTimes` in the profiling build) |
 | `surface/surface.py` | Parameters, pages, the layout and preset checks; generates everything the skin and the C++ side need |
@@ -74,10 +74,11 @@ flowchart LR
 | `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine; saved state, presets, the browser, stepping |
 | `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
-| `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC and times every block |
-| `tools/pgo_train.cpp` | The trainer for the profile-guided build (runs under `qemu-arm`) |
-| `tools/demos.cpp` | Renders the factory presets to WAV and level-matches them (BS.1770 loudness) |
-| `tools/soak.cpp` | The offline soak test: hours of chords, freeze and shimmer, checked for runaway, DC and loudness drift (`make soak`) |
+| `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
+| `tools/pgo_train.cpp` | The trainer for the profile-guided build (runs under `qemu-arm`): every mode, then every factory preset |
+| `tools/phrase.h` | The demo phrase (two held chords and their release, in each preset's own key) and the loudness the presets are matched by; `demos` and `test/preset_test.cpp` share it |
+| `tools/demos.cpp` | Renders the factory presets to WAV, level-matches them, and prints what each one measures |
+| `tools/soak.cpp`, `loudness.h` | The offline soak test (`make soak`): hours of a long set, failing on a non-finite sample, a guard trip, a peak, DC or loudness drift; BS.1770 loudness in windows |
 | `third_party/mpc-vst-plugins/` | Vendored skin generator, previews, installer and catalog checker (MIT), with marked local patches |
 | `.github/workflows/build.yml` | CI: the test suites, the glibc 2.31 device build, the package and its catalog check; releases from `vX.Y.Z` tags |
 
@@ -214,6 +215,9 @@ phase; Space's quiet counts saturate. Installations run for days.
   decides there whether it was a Stop or a reset.
 - Denormals are flushed to zero while a block renders (FZ on ARM, FTZ and DAZ on x86), for the
   plugin's own arithmetic only: MPC's callbacks run in its own FP mode.
+- The trace never writes from the audio thread (it locks, stats a file and allocates). The audio
+  thread leaves notes: the resume's under a sequence lock, MIDI events (while the trace is on) in a
+  lock-free ring of 256; MPC's own threads write them at their next call into the plugin.
 
 **The table builder.** Every instance reads the same tables (`sharedTables()`), about 38 MB for the
 eight lifetime tables (256 frames each) and the four one-frame waves.
@@ -266,9 +270,10 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 - What MPC does with an **instrument** on Stop (all-notes-off? a suspend, as it does to an insert?),
   with the Force's pad latch and CC 64, and with MIDI tracks routed to a plugin's track, is still to
   be measured ([Roadmap](ROADMAP.md#phase-0-the-probe)). The engine takes either a falling transport
-  or a short suspend as Stop, and `/tmp/ambientforce.trace` logs every suspend and resume, and where
-  the audio thread took the resume: how long after the suspend, whether the host said so, and
-  whether it counted as Stop or a reset ([diagnostics](BUILDING.md#diagnostics-on-the-device)).
+  or a short suspend as Stop, and `/tmp/ambientforce.trace` logs every suspend and resume, where the
+  audio thread took the resume (how long after the suspend, whether the host said so, Stop or
+  reset), every MIDI event as it came in, channel and all, and which of MPC's threads made each call
+  ([diagnostics](BUILDING.md#diagnostics-on-the-device)).
 
 ## Parameters and saved state
 
