@@ -14,14 +14,20 @@ the bar.
 - **Four macros on PLAY** (and on PRESETS' Q-Links): **Horizon** (near and dry to far, wet and
   long), **Motion** (still to drifting), **Glow** (dark to bright) and **Density** (sparse to thick),
   −100% to +100%. Each bends several controls of the loaded preset at once without moving their
-  knobs, every result inside its control's range; at 0 the preset plays bit for bit as saved. They
-  keep the level near the preset's: no macro at either end drives a factory preset into the limiter,
-  and none takes more than 4.2 LU off one. Saved with the sound; the factory presets keep them at 0.
-  What each one moves: [User guide](docs/USER_GUIDE.md#the-macros).
+  knobs, every result inside its control's range; at 0 (under 0.5% either way, as the knob reads) the
+  preset plays bit for bit as saved. They keep the level near the preset's: over all 28 factory
+  presets with each macro at either end, the limiter never works on more than 0.05% of the demo
+  phrase and no preset drops more than 8.0 LU (Frozen Sky, nearly all reverb, brought near); all
+  four at once in their 16 corners on the three hottest presets, no limiting and at most 5.4 LU
+  down (`AF_FULL_MACRO_SWEEP=1`). A Bloom Tone on a band-pass or high-pass is left where it is
+  (it picks a band, not a brightness). Saved with the sound; the factory presets keep them at 0, and loading a preset sets them back to 0 with
+  everything else (a preset is a complete sound). What each one moves:
+  [User guide](docs/USER_GUIDE.md#the-macros).
 - **The help line:** move any control and for 4 s the status line at the top of every page says
   what it does and what its range means (`BLOOM AGE: where in a note's life you listen, struck to
   fading`), then shows the meter again. A control kept moving keeps its line; another takes over no
-  sooner than half a second after, so automation doesn't make it flicker. MPC echoing a value back,
+  sooner than half a second after, so automation doesn't make it flicker (automation playing shows
+  help lines too: it moves controls). MPC echoing a value back, even rounded to its 1/1000, and
   preset and project loads show nothing.
 - **Preset descriptions:** a preset file may carry an `about=` line; when a preset loads (a tile,
   the stepper, NEXT, RND, INIT) the status line shows `NAME: description` for 6 s. All 28 factory
@@ -38,8 +44,11 @@ the bar.
   30.5 min, by default the 14 s it always had), and the Breath and both strata's sways can run
   **Sync**ed: one cycle per **Div** (1/4, 1/2, 1 to 64 bars of 4/4), locked to MPC's position while
   it plays, at the tempo while it is stopped; a synced breath tops on each division's downbeat, and
-  Bloom's voices then sway together. **Free** stays the default everywhere (phasing needs free
-  cycles), and a preset that leaves them plays bit for bit as before. On the DRONE page (Breath and
+  Bloom's voices sway staggered on the bar, each a sixth of a cycle after the one before, so a chord
+  still shimmers. A cycle never jumps: MPC starting, locating or looping, and Free <-> Sync, glide
+  over about 50 ms; back on Free each voice drifts back to its own phase. A division too fast for
+  the tempo doubles (a sway at most 4 Hz, a breath 8 Hz). **Free** stays the default everywhere
+  (phasing needs free cycles), and a preset that leaves them plays bit for bit as before. On the DRONE page (Breath and
   Sway cards) and BLOOM OSC (Sway). Motion bends the free rates, Breath Rate among them, and leaves
   synced ones on their bars. Pulse Drone breathes on every beat.
 - **The PLAY page** has the macros, Freeze, Hold, Bloom Age and the volume on its first Q-Link bank;
@@ -47,7 +56,10 @@ the bar.
   and Shimmer, which Glow and Horizon now bend, left it (they are on their strata's pages).
 - **Parameters:** eleven new sound parameters after Tilt (the four macros, then `g_breathrate`,
   `g_breathsync`, `g_breathdiv`, `g_swaysync`, `g_swaydiv`, `b_swaysync`, `b_swaydiv`), so every
-  earlier sound parameter keeps its index; 151 in all.
+  earlier sound parameter keeps its index; 151 in all. The plugin's own parameters after them (the
+  preset stepper and its buttons, the browser's tiles, buttons and readouts) moved up by 14 (the
+  eleven and the three Divs' popup flags): nothing a project keeps moved, the sound values being
+  saved by name and automated by their unchanged indices.
 
 ## 0.0.1 (unreleased)
 

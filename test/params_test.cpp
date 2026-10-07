@@ -325,7 +325,7 @@ struct MacroSpec {
 std::vector<MacroSpec> macroSpecs() {
     using namespace af;
     return {
-        {P_M_HORIZON, {{"groundSpace", 1, 0, 1}, {"bloomSpace", 1, 0, 1}, {"spaceReturn", 1, 0, 1}, {"g.level", -1, 0, 1},
+        {P_M_HORIZON, {{"groundSpace", 1, 0, 1}, {"bloomSpace", 1, 0, 1}, {"g.level", -1, 0, 1},
                        {"b.level", -1, 0, 1}, {"r.decayS", 1, lo(P_S_DECAY), hi(P_S_DECAY)},
                        {"r.predelayMs", 1, lo(P_S_PREDELAY), hi(P_S_PREDELAY)}, {"g.cutoffHz", -1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)},
                        {"b.cutoffHz", -1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)}, {"r.dampHz", -1, lo(P_S_DAMP), hi(P_S_DAMP)},

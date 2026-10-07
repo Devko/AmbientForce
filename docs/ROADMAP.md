@@ -270,11 +270,20 @@ knobs are doing".
   last move and counts preset loads (atomics); `processReplacing` decides which line shows (another
   control takes over only after half a second, so automation doesn't flicker) and pushes
   `audioMasterUpdateDisplay`; `statusText()` reads what it decided. A move is a set that changes the
-  value: MPC's echoes, preset and project loads show nothing.
+  value by more than MPC's rounding (0.0006: MPC sends values to 1/1000, so a preset's value echoed
+  back rounded isn't one); preset and project loads show nothing. While automation plays, the help
+  lines show: they are moves too.
 - 2026-10-07 — **The macros keep the level.** Horizon's far half steps the dry back 3 dB and raises
   the sends only 3 dB (+6 dB put Cathedral Breath, Abyss with shimmer, on the limiter for 14% of its
   phrase); Glow's tilt is ±0.3 (±0.6 made the dark half up to 3 LU louder); dark and thick trim the
   volume by 1.5 and 1 dB. Over the 16 presets at both ends: no limiting, at most 4.2 LU down (far).
+  2026-10-07 (review), the full sweep over all 28 at both ends (`AF_FULL_MACRO_SWEEP=1`) found two:
+  Glow moved Overtone Choir's band-pass off the overtone it sings (dark +3.1 LU and on the
+  limiter 2.5% of the phrase, bright 11 LU down), and Horizon's near end took Frozen Sky, nearly
+  all reverb, 11.1 LU down. Now Bloom Tone moves with Glow and Horizon only on a low-pass (on BP or
+  HP it picks a band, not a brightness), and near takes the sends down 6 dB (was 9) and leaves Space
+  Level alone (it took 3 dB off too). The sweep then: no limiting, at most 8.0 LU down (Frozen Sky,
+  near); the 16 corners of all four on the three hottest presets at most 5.4 LU down, no limiting.
 - 2026-10-07 — **Density leaves Blend alone**: crossfading toward Table B dipped the level 2–5 LU, and
   with B a sine (the default) it thinned the sound rather than thickening it. Unison and the chord
   aren't macro targets either: switching them would jump.
@@ -283,11 +292,28 @@ knobs are doing".
   division (1/4 to 64 bars of 4/4) on a beat clock per stratum, locked to MPC's position while it
   plays (SubForce's synced busses' rule) and running on at the tempo while it is stopped. Free is
   the default everywhere, because phasing (CONCEPT §7.2) needs cycles that never line up. A synced
-  breath tops on each division's downbeat; synced, Bloom's voices sway together (on their own
-  phases they wouldn't sound on the bar). Breath got a rate knob of its own, its default the
+  breath tops on each division's downbeat, one pulse. Synced, Bloom's voices are staggered on the
+  bar (decided at the review): voice i sways a sixth of a cycle times i after the bar's phase, the
+  same place from note to note, so a synced chord still shimmers while it stays locked; in lockstep
+  a chord's notes moved as one, on their own random phases they wouldn't be on the bar. Breath got a
+  rate knob of its own, its default the
   knob's middle (0.07 Hz, 128 times either way), so it reads back bit for bit as the breath every
   preset was made with. Motion bends the free rates, Breath Rate among them, never a division
   (that would jump).
+- 2026-10-07 (review) — **A synced cycle is pulled to the bar, never set.** Setting the phase to the
+  clock's stepped the breath's level up to 6 dB when MPC started, located or looped, or on Free ->
+  Sync, and collapsed Bloom's voices onto one phase for good. Now every cycle keeps its own free
+  phase, always moving on (per voice in Bloom), and the phase it plays is pulled toward its target
+  (the clock's synced, plus a Bloom voice's stagger; its own free) with a 50 ms time constant, the
+  short way round, landing
+  exactly on it within 1e-9: across those events the gain moves at most 0.10 dB a control step at
+  Breath 100%, a locked cycle is exactly the clock's, Free stays bit for bit what it was, and back on
+  Free Bloom's voices drift apart again. A division faster than 4 Hz (a sway) or 8 Hz (a breath) at
+  the tempo doubles.
+- 2026-10-07 (review) — **A macro under 0.5% is 0**, as its knob reads: a knob turned back by hand
+  lands within MPC's 1/1000 of the middle, and the preset then plays as saved (no shimmer of 0.0006
+  woken up). Loading a preset sets the macros back to 0 with every other control: a preset is a
+  complete sound.
 - 2026-10-07 — **The DRONE and BLOOM OSC pages traded repeats for motion**: DRONE's second bank,
   which repeated GROUND's, is the Breath (depth, rate, Sync, Div) and the Sway (the same); BLOOM
   OSC's is the Sway and the voice's Age, Smear, Pan and Width, Blend and Breath moving up to the

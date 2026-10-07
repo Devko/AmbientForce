@@ -424,7 +424,13 @@ void testStatusLine() {
     h.run(2);
     h.press(af::P_PRE_INIT);
     CHECK(told(h, 4) && h.display(af::P_STATUS) == "INIT: " + af::presetAbout(init));
-    h.run(static_cast<int>(5.9 * kBlocksPerSec));
+    // MPC sending back a value the preset set, rounded to its 1/1000 (Init's volume, 0.81818 as 0.818), is no move:
+    // the description stays.
+    const float volume = h.get(af::P_VOLUME), echo = std::round(volume * 1000.0f) / 1000.0f;
+    h.setN(af::P_VOLUME, echo);
+    h.run(kBlocksPerSec * 3 / 5);
+    CHECK(echo != volume && h.display(af::P_STATUS) == "INIT: " + af::presetAbout(init));
+    h.run(static_cast<int>(5.3 * kBlocksPerSec));
     CHECK(h.display(af::P_STATUS) == "INIT: " + af::presetAbout(init));
     CHECK(toldWhenItChanges(h, kBlocksPerSec / 5) && meter(h));
     // NEXT loads the next preset and says which; PREV at the first preset loads nothing and shows its help.
@@ -598,7 +604,7 @@ void testSync() {
     // MPC jumps to beat 101, a beat past a downbeat: the tops land on beats 104, 108, ..., 1.5 s on and every 2 s.
     h.log.time.ppqPos = 101.0;
     h.run(static_cast<int>(8.5 * 44100.0 / kBlock));
-    const double jumped = apart(top(h, 0, 4), 3 * kBar / 4);
+    const double jumped = apart(top(h, kBar, 3), 3 * kBar / 4);   // from beat 105, once the breath has glided there
     std::printf("  after a jump to beat 101: the top %.0f ms from beat 104's place in the bar\n", jumped);
     CHECK(jumped <= 30.0);
     // Stopped (On Stop: Keep), it breathes on at the tempo from where it was: the tops stay on the same grid.

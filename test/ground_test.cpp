@@ -708,6 +708,68 @@ void testBreath() {
     CHECK(std::fabs(hi - rel(2000.0)) < 1.0 && std::fabs(lo - rel(500.0)) < 1.0);
 }
 
+// A synced Breath (1/4 at 120 BPM, Breath 1: +-3 dB, two breaths a second) never steps the level: across MPC
+// pressing Play, a locate, Free -> Sync and a loop that wraps off the beat, the output's gain moves at most 0.5 dB
+// from one control step to the next (set to the clock's phase at once, a half-cycle jump stepped it 6 dB). And it
+// gets there: 0.4 s after each, the breath is on the clock's phase again.
+void testBreathSync() {
+    std::printf("== ground: a synced Breath glides to the bar\n");
+    af::GroundPatch p = steady(af::TB_SINE, 1.0f, 0.0f);
+    p.breath = 1.0f;
+    p.breathHz = 0.13f;                // Free: a breath of its own, far from the clock's
+    af::Ground g;
+    g.seed(41);
+    g.set(p, af::HarmonyPatch{});
+    g.setTarget(48);
+    float buf[4][af::kChunk];
+    double beats = 0.0, worst = 0.0;
+    bool playing = false;
+    float was = 0.0f;
+    // `steps` control steps, MPC's position moving on while it plays; the largest step of the gain after the first.
+    auto run = [&](int steps) {
+        for (int k = 0; k < steps; ++k) {
+            std::fill(&buf[0][0], &buf[0][0] + 4 * af::kChunk, 0.0f);
+            g.setTransport(120.0, beats, playing);
+            g.render(tables(), buf[0], buf[1], buf[2], buf[3], 0.0f, af::kChunk);
+            if (playing) beats += af::kChunk * 2.0 / af::kRate;
+            const float now = g.outputGain();
+            if (was > 0.0f && now > 0.0f) worst = std::max(worst, std::fabs(20.0 * std::log10(now / was)));
+            was = now;
+        }
+    };
+    run(kSec / af::kChunk / 2);                       // in, free, MPC stopped
+    // On the bar's phase: the gain where the clock's breath (1/4, its top on each beat) puts it.
+    auto onBeat = [&]() {
+        const double ph = beats - std::floor(beats) + 0.25;   // 1/4: one breath a beat
+        const double want = 3.0 * std::sin(2.0 * 3.14159265358979 * ph);
+        return std::fabs(20.0 * std::log10(g.outputGain()) - want) < 0.05;
+    };
+    p.breathBeats = 1.0f;                             // Free -> Sync, stopped: on the clock running on at the tempo
+    g.set(p, af::HarmonyPatch{});
+    worst = 0.0;
+    run(kSec / af::kChunk / 2);
+    const double freeToSync = worst;
+    playing = true;                                   // Play pressed at beat 7.4: the clock jumps there
+    beats = 7.4;
+    worst = 0.0;
+    run(kSec / af::kChunk * 2 / 5);
+    const double play = worst;
+    const bool locked = onBeat();
+    beats = 33.7;                                     // a locate
+    worst = 0.0;
+    run(kSec / af::kChunk * 2 / 5);
+    const double locate = worst;
+    const bool relocked = onBeat();
+    beats -= 6.6;                                     // a loop of 6.6 beats wrapping, off the beat
+    worst = 0.0;
+    run(kSec / af::kChunk * 2 / 5);
+    const double loop = worst;
+    std::printf("  the gain's largest step: %.3f dB Free -> Sync, %.3f Play, %.3f a locate, %.3f a loop; on the beat %s\n",
+                freeToSync, play, locate, loop, locked && relocked && onBeat() ? "again each time" : "NOT");
+    CHECK(freeToSync <= 0.5 && play <= 0.5 && locate <= 0.5 && loop <= 0.5);
+    CHECK(locked && relocked && onBeat());
+}
+
 // Width: at 0, L and R are the same, sample for sample; at 1 each partial sits where kPan puts it,
 // by the equal-power law, unity in the middle: Sub in the middle, Root and Octave left, Fifth and
 // Color right, L^2 + R^2 twice what the partial has in the middle (at Width 0, the same phases).
@@ -1239,6 +1301,7 @@ void groundTests() {
     testTableSwitch();
     testBody();
     testBreath();
+    testBreathSync();
     testWidth();
     testTone();
     testOddParameters();

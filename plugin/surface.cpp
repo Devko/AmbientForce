@@ -23,9 +23,10 @@ constexpr int kTextEveryBlocks     = 4;    // at most one UpdateDisplay per ~12 
 constexpr float kQuant             = 0.0015f;   // MPC rounds values to 1/1000
 constexpr long long kGestureMs     = 300;   // sends closer than this belong to one gesture
 constexpr float kFirstMoveMax      = 0.16f; // a gesture's first event is a turn, not a jump
-constexpr double kRate             = 44100.0;   // the status line's clock: MPC OS always runs 44.1 kHz
+constexpr float kMoved            = 0.0006f;   // a set moves a control only past this: MPC rounds what it sends to 1/1000
 
-uint64_t samplesOf(double s) { return static_cast<uint64_t>(s * kRate); }
+// The status line's clock: the engine's rate (MPC OS always runs 44.1 kHz).
+uint64_t samplesOf(double s) { return static_cast<uint64_t>(s * static_cast<double>(af::kRate)); }
 
 // A stepper's 0..1 range: one item per 1/1023, or per 1/(items-1) for longer lists.
 int stepperRange(int items) { return std::max(kStepperRange, items - 1); }
@@ -133,8 +134,10 @@ void Surface::set(int i, float n) {
     apply(i, n);
     shown();
     if (k != Kind::Synth) refresh();   // a sound parameter's text is computed when MPC asks
-    // MPC sending a value back (ours, or a step that doesn't step) moves nothing: no help.
-    if (want_[i].load(std::memory_order_relaxed) != before && loads_.load(std::memory_order_relaxed) == loads) touch(i);
+    // MPC sending a value back (ours, or a step that doesn't step, or ours rounded to its 1/1000) moves
+    // nothing: no help.
+    if (std::fabs(want_[i].load(std::memory_order_relaxed) - before) > kMoved && loads_.load(std::memory_order_relaxed) == loads)
+        touch(i);
 }
 
 void Surface::touch(int i) {

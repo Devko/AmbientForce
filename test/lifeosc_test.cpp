@@ -351,29 +351,71 @@ void testSway() {
     a.reset(0.25f);
     CHECK(std::fabs(a.step(af::LifePos{0.5f, 1.0f, 0.0f, 0.0f}, 0.0f) - 0.75f) < 1e-4f);   // a quarter cycle in: the top
 
-    // Synced (swayBeats, on a BeatClock): the sway is the clock's, one cycle per 4 beats, at Age on the downbeat and
-    // rising; two scans of other seeds sway together, and a jump of the clock takes them both with it.
+    // Synced (swayBeats, on a BeatClock that MPC moves on): the sway is pulled onto the clock's phase, one cycle per
+    // 4 beats, at Age on the downbeat and rising, and stays there exactly; two scans of other seeds sway together, and
+    // one staggered by a quarter cycle (setSyncOffset) sits a quarter cycle on. A
+    // jump of the clock glides (no step over 0.02 of the table at full sway) and lands on the bar again. Back on
+    // Free, each goes its own way again.
     af::BeatClock clock;
     const af::LifePos bar{0.5f, 1.0f, 0.05f, 0.0f, 4.0f};
-    bool onBar = true, together = true;
-    for (double beat : {0.0, 1.0, 2.0, 3.0, 4.0, 101.0, 102.5}) {
-        clock.set(120.0, beat, true);
-        const float v = a.step(bar, kStepS, &clock);
-        const float want = 0.5f + 0.25f * static_cast<float>(std::sin(2.0 * 3.14159265358979 * beat / 4.0));
-        onBar = onBar && std::fabs(v - want) < 1e-3f;
-        together = together && b.step(bar, kStepS, &clock) == v;
+    double beat = 0.0;
+    float va = 0.0f, vb = 0.0f, vd = 0.0f, jumpStep = 0.0f;
+    af::LifeScan d;   // staggered a quarter cycle on (setSyncOffset, as Bloom staggers its voices)
+    d.seed(5);
+    d.setSyncOffset(0.25);
+    // `steps` control steps with MPC playing from `beat` on.
+    const auto play = [&](int steps) {
+        for (int i = 0; i < steps; ++i) {
+            clock.set(120.0, beat, true);
+            clock.advance(32);
+            beat += 32.0 * 2.0 / 44100.0;
+            const float wa = a.step(bar, kStepS, &clock);
+            jumpStep = std::max(jumpStep, std::fabs(wa - va));
+            va = wa;
+            vb = b.step(bar, kStepS, &clock);
+            vd = d.step(bar, kStepS, &clock);
+        }
+    };
+    const auto onBar = [&]() {
+        return std::fabs(va - (0.5f + 0.25f * static_cast<float>(std::sin(2.0 * 3.14159265358979 * beat / 4.0)))) < 1e-4f;
+    };
+    play(static_cast<int>(1.5f / kStepS));
+    jumpStep = 0.0f;
+    const bool locked = onBar() && va == vb &&
+                        std::fabs(vd - (0.5f + 0.25f * static_cast<float>(std::sin(2.0 * 3.14159265358979 * (beat / 4.0 + 0.25))))) < 1e-4f;
+    beat = 101.0;   // a locate
+    play(static_cast<int>(0.5f / kStepS));
+    const bool relocked = onBar() && va == vb;
+    std::printf("  synced to 1 bar: on it and together %s, a locate's largest step %.4f, on the bar again %s\n",
+                locked ? "yes" : "NO", jumpStep, relocked ? "yes" : "NO");
+    CHECK(locked && relocked && jumpStep < 0.02f);   // set at once, the locate jumped 0.5
+    // Back on Free the two scans drift back to their own phases: apart again.
+    const af::LifePos unsynced{0.5f, 1.0f, 0.05f, 0.0f, 0.0f};
+    float fa = 0.0f, fb = 0.0f;
+    for (int i = 0; i < static_cast<int>(1.0f / kStepS); ++i) {
+        fa = a.step(unsynced, kStepS, &clock);
+        fb = b.step(unsynced, kStepS, &clock);
     }
-    CHECK(onBar && together);
+    std::printf("  back on Free: %.4f and %.4f\n", fa, fb);
+    CHECK(std::fabs(fa - fb) > 0.01f);
     // Not locked (MPC stopped), the clock runs on at the tempo: at 120 BPM a 4-beat sway takes 2 s.
-    clock.set(120.0, 0.0, true);
-    float first = a.step(bar, 0.0f, &clock), back = -1.0f;
-    for (int i = 0; i < static_cast<int>(2.0f / kStepS); ++i) {
-        clock.set(120.0, 1e9, false);   // the transport says nothing it may lock to
-        clock.advance(32);
-        back = a.step(bar, kStepS, &clock);
+    af::LifeScan c;
+    c.seed(7);
+    af::BeatClock run;
+    run.set(120.0, 0.0, true);
+    float first = 0.0f;
+    for (int i = 0; i < static_cast<int>(1.0f / kStepS); ++i) {   // pulled onto the clock first
+        run.advance(32);
+        first = c.step(bar, kStepS, &run);
     }
-    std::printf("  synced to 1 bar: %.4f at the downbeat, %.4f two seconds on, stopped\n", first, back);
-    CHECK(std::fabs(first - 0.5f) < 1e-4f && std::fabs(back - first) < 2e-3f);
+    float back = -1.0f;
+    for (int i = 0; i < static_cast<int>(2.0f / kStepS); ++i) {
+        run.set(120.0, 1e9, false);   // the transport says nothing it may lock to
+        run.advance(32);
+        back = c.step(bar, kStepS, &run);
+    }
+    std::printf("  synced to 1 bar: %.4f, and %.4f two seconds on, stopped\n", first, back);
+    CHECK(std::fabs(back - first) < 2e-3f);
 }
 
 // Check 5: Smear at 1 wanders within Age +- 0.03, smoothly, changing direction every 50-200 ms

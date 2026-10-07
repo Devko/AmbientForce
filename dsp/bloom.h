@@ -153,6 +153,7 @@ public:
         int note = -1;      // the note sounding (stage != ST_FREE; in ST_STEAL the one fading out)
         int next = -1;      // a note waiting to start in it (a strum, a steal's fade); -1: none
         float env = 0.0f;   // the envelope at the last control step, 0..1 (before velocity and fades)
+        float pos = 0.0f;   // where in the table's life it read at the last control step (Age, Sway, Smear)
     };
 
     Bloom();
@@ -168,8 +169,11 @@ public:
     void moveTo(const Chord& c, float vel);
     void reset();                         // every voice free and silent at once; the seed's numbers again
     // MPC's tempo and, while it plays (locked), its position at the next render's first sample: a
-    // synced sway's clock (LifePos swayBeats), on which every voice sways together. Not locked, the
-    // clock runs on at the tempo.
+    // synced sway's clock (LifePos swayBeats). Synced, the voices are staggered on it, voice i a
+    // sixth of a cycle times i after the bar's phase, so a chord still shimmers while it stays on
+    // the bar, and each voice keeps its place from note to note. Not locked, the clock runs on at
+    // the tempo. Each voice keeps its own free phase meanwhile, and goes back to it, gliding, when
+    // the sway is Free again (LifeScan).
     void setTransport(double bpm, double beats, bool locked) { clock_.set(bpm, beats, locked); }
     // Adds the dry into outL/outR and the send, at spaceSend 0..1 (gliding across the call from the
     // last call's), into sendL/sendR. n <= kMaxBlock (more is rendered kMaxBlock at a time).

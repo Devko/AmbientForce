@@ -187,8 +187,14 @@ Ground and Bloom are rendered a control step at a time. Before each piece the en
 MPC's tempo and its position at the piece's first sample (the block's, moved on by the samples
 since); each keeps a `BeatClock` (`dsp/common.h`) that takes that position while the transport
 plays and runs on at the tempo while it is stopped, and moves it on by each step's samples. A synced
-cycle (Ground's Breath, a sway: `breathBeats`, `LifePos::swayBeats`) reads its phase from that clock,
-so it sits on the bar whatever the blocks or a jump; a free one keeps its own phase, as it always did. Each step they read their table pointers
+cycle (Ground's Breath, a sway: `breathBeats`, `LifePos::swayBeats`) takes its target phase from
+that clock (a Bloom voice's plus its stagger, voice i at i / 6 of a cycle), so it sits on the bar
+whatever the blocks; a free one's target is its own phase, which
+moves on at its rate all the time, as it always did. The phase used is never set, only pulled
+toward the target (`pullPhase`, 50 ms, the short way round, landing exactly within 1e-9): a lock,
+a locate, a loop or Free <-> Sync glides instead of stepping, a locked cycle is exactly the
+clock's, and a free one exactly its own, bit for bit as before Sync existed. A division faster than
+4 Hz (a sway) or 8 Hz (a breath) at the tempo doubles. Each step they read their table pointers
 (`TableSet::get`), step their `LifeScan` positions, envelopes, glides, fades and filter targets;
 every gain then moves in a straight line across the step and the filters' coefficients glide per
 sample (the cutoffs evenly in octaves), so nothing steps. Bloom also ends a step where a strummed
@@ -263,7 +269,8 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
   every 4 blocks, plus the CPU meter's at most twice a second.
 - The status line (parameter 0) is the plugin's own text: the CPU meter, or for 4 s after a move the
   control's help line, for 6 s after a preset load its description. The UI thread only notes the
-  last move (which control, with a count, in one atomic; a set that changes nothing is no move) and
+  last move (which control, with a count, in one atomic; a set that moves the value by no more than
+  MPC's own rounding to 1/1000 is no move) and
   counts preset loads; `processReplacing` times both on its sample count, decides which line shows
   (another control's only once the one shown has had 0.5 s) and asks MPC to read it again;
   `effGetParamDisplay` reads that decision and a cached string.

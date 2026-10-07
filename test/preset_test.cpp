@@ -398,8 +398,9 @@ void testFactory() {
 // most 1% of the phrase, as at 0) or drops it by more than 10 LU (Horizon's far end is the quietest, a few LU
 // down: the dry steps back). On Init, and on the hottest preset (the highest peak on its phrase, testFactory) of
 // each Space type: the ones nearest the limiter, in every reverb, whichever presets there are. x86 only: under
-// qemu a phrase takes 7.6 s; and every factory preset (all 16 at both ends of the four took 0 limiting and at most
-// 4.2 LU off when the macros were tuned) would add a minute and a half to make test.
+// qemu a phrase takes 7.6 s. AF_FULL_MACRO_SWEEP=1 sweeps them all instead (every factory preset at both ends of
+// each macro, and the 16 corners of all four at +-1 on the three hottest presets): minutes more, so it is run by
+// hand when the presets or the macros change (CHANGELOG 0.0.2 has the last result).
 void testMacroLevels() {
 #if defined(__arm__)
     std::printf("== the macros at both ends: on x86 only\n");
@@ -419,9 +420,13 @@ void testMacroLevels() {
         limited = static_cast<double>(af::limitedSamples() - was) / static_cast<double>(L.size());
         return afl::lufs(L, R);
     };
-    std::vector<int> pick;   // Init, then the hottest of each Space type
+    const char* sweep = std::getenv("AF_FULL_MACRO_SWEEP");
+    const bool full = sweep && *sweep && *sweep != '0';
+    std::vector<int> pick;   // Init, then the hottest of each Space type; or all of them
     for (const Played& p : g_played)
-        if (std::string(af::kFactoryPresets[p.index].name) == "Init") pick.push_back(p.index);
+        if (full) pick.push_back(p.index);
+    for (const Played& p : g_played)
+        if (!full && std::string(af::kFactoryPresets[p.index].name) == "Init") pick.push_back(p.index);
     for (int mode = 0; mode < af::PARAM_INFO[af::P_S_MODE].nopts; ++mode) {
         const Played* hottest = nullptr;
         for (const Played& p : g_played)
@@ -430,7 +435,7 @@ void testMacroLevels() {
                 hottest = &p;
         if (hottest && std::find(pick.begin(), pick.end(), hottest->index) == pick.end()) pick.push_back(hottest->index);
     }
-    CHECK(pick.size() >= 2);
+    CHECK(pick.size() >= 2 && (!full || pick.size() == g_played.size()));
     double worstDrop = 0.0, worstLimited = 0.0;
     for (int i : pick) {
         const std::string text = af::kFactoryPresets[i].text;
@@ -453,6 +458,40 @@ void testMacroLevels() {
         CHECK(ok);
     }
     std::printf("  (LU from the preset as saved)  worst drop %.1f LU, the limiter on at most %.1f%%\n", worstDrop, 100.0 * worstLimited);
+    if (!full) return;
+    // The 16 corners: all four macros at +-1 at once, on the three hottest presets.
+    std::vector<Played> hot = g_played;
+    std::sort(hot.begin(), hot.end(), [](const Played& a, const Played& b) { return a.peak > b.peak; });
+    hot.resize(std::min<size_t>(3, hot.size()));
+    double cornerDrop = 0.0, cornerLimited = 0.0;
+    for (const Played& p : hot) {
+        const std::string text = af::kFactoryPresets[p.index].text;
+        double limited = 0.0;
+        const double base = play(text, -1, 0.0f, limited);
+        std::string line = std::string("  corners ") + af::kFactoryPresets[p.index].name + ":";
+        bool ok = true;
+        for (int corner = 0; corner < 16; ++corner) {
+            Host h;
+            h.load(text);
+            for (int m = 0; m < 4; ++m) h.set(macros[m], corner >> m & 1 ? 1.0f : -1.0f);
+            std::vector<float> L, R;
+            const uint32_t was = af::limitedSamples();
+            afl::render(h.e, h.log.time, afl::phrase(text), L, R);
+            limited = static_cast<double>(af::limitedSamples() - was) / static_cast<double>(L.size());
+            const double lufs = afl::lufs(L, R);
+            cornerDrop = std::max(cornerDrop, base - lufs);
+            cornerLimited = std::max(cornerLimited, limited);
+            const bool good = limited <= afl::kMaxLimitedShare && lufs >= base - kMaxDropLu;
+            ok = ok && good;
+            char b[24];
+            std::snprintf(b, sizeof b, " %+.1f%s", lufs - base, good ? "" : "!");
+            line += b;
+        }
+        std::printf("%s\n", line.c_str());
+        CHECK(ok);
+    }
+    std::printf("  the corners (H M G D at -/+ in binary order): worst drop %.1f LU, the limiter on at most %.1f%%\n", cornerDrop,
+                100.0 * cornerLimited);
 #endif
 }
 

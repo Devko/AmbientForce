@@ -189,7 +189,7 @@ enum("g_colint", "Color Int", ["min3", "maj3", "4th", "min7", "9th", "11th"], "9
 enum("g_reg", "Ground Reg", ["Low", "Mid", "High"], "Mid",                                     # registerOct 1..3
      help="the octave the drone starts in: C1, C2 or C3")
 num("g_body", "Ground Body", "lin", 0, 1, 0, "pct", help="a vowel on the drone: off, then a, o and u")
-num("g_breath", "Gnd Breath", "lin", 0, 1, 0.3, "pct", help="a slow swell of level and tone, 14 s a cycle")
+num("g_breath", "Gnd Breath", "lin", 0, 1, 0.3, "pct", help="how deep the breath goes, in level and tone")
 num("g_space", "Ground Space", "lin", 0, 1, 0.4, "pct", help="how much of the drone goes into the reverb")
 num("g_width", "Ground Width", "lin", 0, 1, 0.5, "pct", help="spreads the partials across the stereo field")
 num("g_pan", "Ground Pan", "lin", -1, 1, 0, "pan", help="where the drone sits, left to right")
@@ -272,7 +272,7 @@ popup_flag("g_breathdiv")
 enum("g_swaysync", "Gnd Rate Sync", SYNC, "Free", help="Free at Ground Rate, or Sync to MPC's bars")
 enum("g_swaydiv", "Gnd Rate Div", BAR_DIVS, "8 Bars", help="one synced drone sway, 1/4 to 64 bars")
 popup_flag("g_swaydiv")
-enum("b_swaysync", "Blm Rate Sync", SYNC, "Free", help="Free at Bloom Rate, or all voices on the bars")
+enum("b_swaysync", "Blm Rate Sync", SYNC, "Free", help="Free at Bloom Rate, or staggered on the bar")
 enum("b_swaydiv", "Blm Rate Div", BAR_DIVS, "8 Bars", help="one synced chord sway, 1/4 to 64 bars")
 popup_flag("b_swaydiv")
 

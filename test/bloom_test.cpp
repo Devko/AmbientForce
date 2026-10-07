@@ -1066,7 +1066,62 @@ void testNoAllocation() {
 
 } // namespace
 
+// A synced sway (LifePos swayBeats on Bloom's clock, MPC playing): every voice of a chord on the bar, staggered,
+// voice i reading where the bar's phase plus i / 6 of a cycle puts it, and staying there. Back on Free, each glides off
+// to its own phase: off those places.
+void testSwaySync() {
+    std::printf("== bloom: a synced sway, staggered, and back to Free\n");
+    Bloom b;
+    b.seed(9);
+    af::BloomPatch p = plain();
+    p.table = af::TB_FELT_PIANO;
+    p.pos = af::LifePos{0.5f, 1.0f, 0.3f, 0.0f, 4.0f};   // full sway, one per bar
+    b.set(p, af::HarmonyPatch{});
+    b.play(chordOf({60, 64, 67}), 1, 1.0f);
+    Run r;
+    double beat = 0.0;
+    // How far the chord's voices read from their staggered places on the bar (-1: a voice missing), and how far
+    // apart they read.
+    const auto offBar = [&b, &beat](float& spread) {
+        float off = 0.0f, lo = 1.0f, hi = 0.0f;
+        for (int note : {60, 64, 67}) {
+            const int v = voiceOf(b, note);
+            if (v < 0) return -1.0f;
+            const double ph = beat / 4.0 + static_cast<double>(v) / Bloom::kVoices;
+            const float want = 0.5f + 0.25f * static_cast<float>(std::sin(2.0 * kPi * ph));
+            off = std::max(off, std::fabs(b.voice(v).pos - want));
+            lo = std::min(lo, b.voice(v).pos);
+            hi = std::max(hi, b.voice(v).pos);
+        }
+        spread = hi - lo;
+        return off;
+    };
+    const auto play = [&](double seconds) {
+        for (int k = 0; k < samples(seconds) / kBlk; ++k) {
+            b.setTransport(120.0, beat, true);
+            render(b, r, kBlk);
+            beat += kBlk * 2.0 / af::kRate;
+        }
+    };
+    play(1.5);
+    float spread = 0.0f;
+    const float locked = offBar(spread);
+    play(1.0);
+    float later = 0.0f;
+    const float stillLocked = offBar(later);
+    p.pos.swayBeats = 0.0f;
+    b.set(p, af::HarmonyPatch{});
+    play(1.0);
+    float apart = 0.0f;
+    const float freed = offBar(apart);
+    std::printf("  synced: %.6f off their places (%.3f apart), a second on %.6f; a second after Free %.3f off them\n", locked,
+                spread, stillLocked, freed);
+    CHECK(locked >= 0.0f && locked < 1e-4f && stillLocked >= 0.0f && stillLocked < 1e-4f && spread > 0.05f);
+    CHECK(freed > 0.01f && apart > 0.01f);
+}
+
 void bloomTests() {
+    testSwaySync();
     testChord();
     testStrum();
     testSteal();

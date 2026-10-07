@@ -46,8 +46,10 @@
 // - Breath: a sine LFO at breathHz moves the level by +-3 dB and the cutoff by +-1 octave, both
 //   times breath. Synced (breathBeats > 0) it breathes once every breathBeats quarter notes on
 //   the stratum's BeatClock instead, at its top on each division's downbeat: on the bar while MPC
-//   plays, at the tempo while it is stopped (setTransport). The sway syncs the same way (LifePos
-//   swayBeats).
+//   plays, at the tempo while it is stopped (setTransport); a division that would breathe faster
+//   than kMaxSyncBreathHz doubles. The phase it breathes on is pulled to its target over about
+//   50 ms (pullPhase), never set: MPC starting, locating or looping, or Free <-> Sync, glides
+//   instead of stepping the level. The sway syncs the same way (LifePos swayBeats).
 // - Width: partial i is panned to width * kPan[i], equal power (unity in the middle, as
 //   PolyForce pans): Sub in the middle, Root and Octave to the left, Fifth and Color to the right.
 // - A new table (another one chosen, or the slot's table published over the sine it played
@@ -159,6 +161,7 @@ public:
     int note() const { return note_; }
     double pitch() const { return pitch_; }
     double goal() const { return goal_; }
+    float outputGain() const { return gain_; }   // the output's gain as the last step ended (level, fade, breath, dip)
 
 private:
     // What one control step works out for its samples: the gains at its two ends, Body's share,
@@ -218,7 +221,8 @@ private:
     bool fresh_ = true;                  // the drone starts from off: its first step puts the root on its goal
     float fadeDb_ = -60.0f;
     float dip_ = 1.0f;                   // a Register change's gain: 1 none, 0 the bottom
-    double breathPhase_ = 0.0;           // cycles, 0..1
+    double breathPhase_ = 0.0;           // cycles, 0..1: the phase it breathes on
+    double breathOwn_ = 0.0;             // its own phase, at breathHz (Free's target)
     BeatClock clock_;                    // the synced cycles' beats (setTransport)
     float gain_ = 0.0f, send_ = 0.0f;    // the output's gain and the send's, as the last step ended
     float wet_ = 0.0f;                   // Body's share (0..1) as the last step ended

@@ -150,7 +150,7 @@ void Ground::reset() {
     xorshift(r);
     scan_.seed(seed_);
     for (TableOscLinear& o : osc_) o.reset(lifeosc::rand01(r));   // Sub, Root, Fifth, Octave, Color
-    breathPhase_ = lifeosc::rand01(r);
+    breathPhase_ = breathOwn_ = lifeosc::rand01(r);
     target_ = -1;
     std::fill(curL_, curL_ + kParts, 0.0f);
     std::fill(curR_, curR_ + kParts, 0.0f);
@@ -239,14 +239,18 @@ Ground::Step Ground::control(float spaceSend, int n) {
         s.ending = fadeDb_ <= kFloorDb;
     }
 
-    // Breath: +-3 dB and +-1 octave of cutoff at 1. The Tone's coefficients for this step. Synced:
-    // the clock's phase at this step's end, a quarter cycle on (the top on the downbeat).
+    // Breath: +-3 dB and +-1 octave of cutoff at 1. The Tone's coefficients for this step. Its own
+    // phase moves on at breathHz all the while; it breathes on that (Free) or on the clock's at this
+    // step's end, a quarter cycle on (Sync: the top on the downbeat; the division doubled past
+    // kMaxSyncBreathHz), pulled there (pullPhase): a lock, a jump or a switch glides.
     clock_.advance(n);
+    breathOwn_ += static_cast<double>(breathHz_ * dt);
+    breathOwn_ -= floorFast(breathOwn_);
     if (breathBeats_ > 0.0f) {
-        breathPhase_ = clock_.phase(static_cast<double>(breathBeats_), 0.25);
+        const double beats = clock_.cycleBeats(static_cast<double>(breathBeats_), kMaxSyncBreathHz);
+        breathPhase_ = pullPhase(breathPhase_, clock_.cycles(beats, dt), clock_.phase(beats, 0.25), dt);
     } else {
-        breathPhase_ += static_cast<double>(breathHz_ * dt);
-        breathPhase_ -= floorFast(breathPhase_);
+        breathPhase_ = pullPhase(breathPhase_, static_cast<double>(breathHz_ * dt), breathOwn_, dt);
     }
     const float b = breath_ > 0.0f ? breath_ * sinCycle(static_cast<float>(breathPhase_)) : 0.0f;
     const float cutoff = clampf(cutoff_ * exp2Fast(kBreathOct * b), 20.0f, 0.45f * kRate);

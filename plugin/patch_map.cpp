@@ -179,19 +179,26 @@ Patch patchFromParams(const float* norm) {
 }
 
 Macros macrosFromParams(const float* norm) {
+    // Under half a percent is 0, as the knob reads ("0%"): a knob turned back by hand lands within
+    // MPC's 1/1000 of the middle, and the preset should play as saved then (not, say, a shimmer
+    // of 0.0006 woken up).
+    auto at = [norm](int id) {
+        const float v = paramValue(id, norm[id]);
+        return std::fabs(v) < 0.005f ? 0.0f : v;
+    };
     Macros m;
-    m.horizon = paramValue(P_M_HORIZON, norm[P_M_HORIZON]);
-    m.motion = paramValue(P_M_MOTION, norm[P_M_MOTION]);
-    m.glow = paramValue(P_M_GLOW, norm[P_M_GLOW]);
-    m.density = paramValue(P_M_DENSITY, norm[P_M_DENSITY]);
+    m.horizon = at(P_M_HORIZON);
+    m.motion = at(P_M_MOTION);
+    m.glow = at(P_M_GLOW);
+    m.density = at(P_M_DENSITY);
     return m;
 }
 
 // --- the macros ------------------------------------------------------------------------------------
 // Fixed and relative: each macro moves the fields it owns from wherever the preset has them, the same way in
 // every preset. Times, rates and frequencies move in octaves (x 2^(k x)), depths toward their ends, levels and
-// sends as gains (their knobs squared, 0..1). A field at 0 that a macro scales stays 0 (a send, the Space
-// Level, a partial, Body, Beat, Detune, Breath), so what a preset switched off stays off. Where two macros share
+// sends as gains (their knobs squared, 0..1). A field at 0 that a macro scales stays 0 (a send, a
+// partial, Body, Beat, Detune, Breath), so what a preset switched off stays off. Where two macros share
 // a field (Horizon and Glow both move the tones) they apply one after the other, each clamping. Far steps the
 // dry back, and dark and thick take a little off the volume, so the level stays near the preset's
 // (test/preset_test.cpp: none leans on the limiter or drops far).
@@ -214,10 +221,12 @@ float fadeOrScale(float v, float x, float oct, float hi) {
 }
 
 // Horizon, near (-1) to far (+1): the wet up and the dry back, the reverb longer, later and darker, blooming
-// after the note.
-constexpr float kHorizonSendNear = 1.5f;    // both strata's sends: x 2^(1.5 h) near (to -9 dB) ...
+// after the note. Near takes the sends down 6 dB and leaves Space Level alone: on a preset that is nearly all
+// reverb (Frozen Sky) more took it 11 LU down. A Tone moves only on Bloom's low-pass: a band-pass's or
+// high-pass's Tone picks a band, not a brightness (Overtone Choir's whistle), and moving it changes the sound
+// more than the level allows.
+constexpr float kHorizonSendNear = 1.0f;    // both strata's sends: x 2^h near (to -6 dB) ...
 constexpr float kHorizonSendFar = 0.5f;     // ... x 2^(0.5 h) far (to +3 dB)
-constexpr float kHorizonReturnOct = 0.5f;   // near only: Space Level x 2^(0.5 h), to -3 dB
 constexpr float kHorizonDryOct = 0.5f;      // toward far only: the dry levels down to x 2^-0.5 (-3 dB)
 constexpr float kHorizonDecayOct = 1.3f;    // Space Decay x 2^(1.3 h): 0.41x..2.46x
 constexpr float kHorizonPredelayMs = 50.0f; // Pre-Delay + 50 h ms
@@ -230,7 +239,7 @@ constexpr float kMotionSmearUp = 0.6f;      // Bloom Smear toward 1 by 60%
 constexpr float kMotionBreathUp = 0.7f;     // Ground Breath toward 1 by 70%
 constexpr float kMotionBeatOct = 1.5f;      // Ground Beat x 2^(1.5 m) moving (capped at 3 Hz), to 0 still
 // Glow, dark (-1) to bright (+1).
-constexpr float kGlowToneOct = 2.0f;        // both Tones x 2^(2 g): two octaves either way
+constexpr float kGlowToneOct = 2.0f;        // both Tones x 2^(2 g): two octaves either way (Bloom's on LP only)
 constexpr float kGlowTilt = 0.3f;           // Tilt + 0.3 g
 constexpr float kGlowDampOct = 1.0f;        // Space Damp x 2^g
 constexpr float kGlowShimmerUp = 0.35f;     // bright only: Shimmer + 0.35 g (an upward interval only)
@@ -256,14 +265,13 @@ void applyMacros(Patch& p, const Macros& m) {
         const float send = h * (h < 0.0f ? kHorizonSendNear : kHorizonSendFar);
         p.groundSpace = gain01(octaves(p.groundSpace, send));
         p.bloomSpace = gain01(octaves(p.bloomSpace, send));
-        p.spaceReturn = gain01(octaves(p.spaceReturn, kHorizonReturnOct * std::min(h, 0.0f)));
         const float back = -kHorizonDryOct * std::max(h, 0.0f);
         g.level = gain01(octaves(g.level, back));
         b.level = gain01(octaves(b.level, back));
         r.decayS = clampTo(P_S_DECAY, octaves(r.decayS, kHorizonDecayOct * h));
         r.predelayMs = clampTo(P_S_PREDELAY, r.predelayMs + kHorizonPredelayMs * h);
         g.cutoffHz = clampTo(P_G_CUTOFF, octaves(g.cutoffHz, kHorizonToneOct * h));
-        b.cutoffHz = clampTo(P_B_CUTOFF, octaves(b.cutoffHz, kHorizonToneOct * h));
+        if (b.filterMode == FM_LP) b.cutoffHz = clampTo(P_B_CUTOFF, octaves(b.cutoffHz, kHorizonToneOct * h));
         r.dampHz = clampTo(P_S_DAMP, octaves(r.dampHz, kHorizonToneOct * h));
         p.space.rise = toward(p.space.rise, h, 0.0f, 1.0f, 1.0f, kHorizonRiseUp);
     }
@@ -281,7 +289,7 @@ void applyMacros(Patch& p, const Macros& m) {
     if (m.glow != 0.0f) {
         const float x = std::clamp(m.glow, -1.0f, 1.0f);
         g.cutoffHz = clampTo(P_G_CUTOFF, octaves(g.cutoffHz, kGlowToneOct * x));
-        b.cutoffHz = clampTo(P_B_CUTOFF, octaves(b.cutoffHz, kGlowToneOct * x));
+        if (b.filterMode == FM_LP) b.cutoffHz = clampTo(P_B_CUTOFF, octaves(b.cutoffHz, kGlowToneOct * x));
         p.tilt = clampTo(P_O_TILT, p.tilt + kGlowTilt * x);
         r.dampHz = clampTo(P_S_DAMP, octaves(r.dampHz, kGlowDampOct * x));
         if (r.shimmerInterval != Reverb::DOWN_OCTAVE)   // a shimmer an octave down darkens: left as it is

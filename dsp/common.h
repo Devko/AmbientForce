@@ -77,7 +77,33 @@ struct BeatClock {
         const double c = beats / periodBeats + offset;
         return c - std::floor(c);
     }
+    // A synced cycle's length in quarter notes: the division, doubled until the cycle runs no
+    // faster than maxHz at this tempo (a sway at 1/4 runs 4 Hz at 240 BPM).
+    double cycleBeats(double divBeats, double maxHz) const {
+        double b = divBeats > 0.0 ? divBeats : 1.0;
+        while (bpm / 60.0 / b > maxHz) b *= 2.0;
+        return b;
+    }
+    // How far a cycle of `periodBeats` moves in `seconds` at this tempo, in cycles.
+    double cycles(double periodBeats, double seconds) const { return bpm / 60.0 / periodBeats * seconds; }
 };
+constexpr double kMaxSyncSwayHz = 4.0;     // a synced sway runs no faster (a free one tops out at 2 Hz)
+constexpr double kMaxSyncBreathHz = 8.0;   // a synced breath no faster (Breath Rate tops out at 8.96 Hz free)
+
+// A cycle's phase (0..1) drawn to where it should be, so it never jumps. `cur` moves on by `adv`
+// cycles (the target's own speed: following a target that moves leaves no lag), then a share of
+// what is left, the short way round, with a time constant of kPhasePullS: MPC starting, locating or
+// looping, or Free <-> Sync, is a glide of that order instead of a step. Within 1e-9 of the target
+// it lands on it exactly, so a locked cycle is exactly the clock's and a free one exactly its own.
+constexpr double kPhasePullS = 0.05;
+inline double pullPhase(double cur, double adv, double want, double seconds) {
+    const double next = cur + adv;
+    double err = want - next;
+    err -= std::floor(err + 0.5);   // -0.5..0.5
+    if (std::fabs(err) < 1e-9) return want;
+    const double to = next + err * (1.0 - std::exp(-seconds / kPhasePullS));
+    return to - std::floor(to);
+}
 
 inline double divSeconds(double beats, double bpm) { return beats * 60.0 / bpm; }
 

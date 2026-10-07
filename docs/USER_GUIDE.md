@@ -101,8 +101,10 @@ goes back to the meter.
 - A control you keep moving keeps its line: 4 s from its last move.
 - Another control takes the line over once the one shown has had half a second, so automation that
   moves several controls at once doesn't make it flicker.
-- Only moves count. MPC sending a control's own value back, a preset or a project loading, and the
-  plugin's own steps change nothing there.
+- Only moves count. MPC sending a control's own value back (even rounded to its 1/1000), a preset
+  or a project loading, and the plugin's own steps change nothing there.
+- Automation is moves too: while MPC plays automation, the status line shows the help of the
+  controls it moves (the last one moved in a block, at most every half second).
 
 Every control's name says what it belongs to ("Ground Tone", "Bloom Swell"), because MPC's Q-Link
 overlay shows the name without the page; a few are shortened to fit MPC's name box (Gnd Octave,
@@ -139,8 +141,10 @@ The Q-Link sets:
 Four knobs at the top left of PLAY (and Q-Links 2–5 on PRESETS, to bend a preset while you audition
 it) each move several controls at once in one musical direction. They bend the sound the other
 knobs make without moving those knobs: with Glow up, Bloom Tone still reads 5.00 kHz, and sounds
-brighter. Each runs from −100% to +100%, and at **0 the preset plays exactly as saved**. They are
-saved with the sound like any other control; the factory presets keep them at 0.
+brighter. Each runs from −100% to +100%, and at **0 the preset plays exactly as saved** (under
+0.5% either way counts as 0, as the knob reads). They are saved with the sound like any other
+control; the factory presets keep them at 0, and loading a preset sets them back to 0 with every
+other control, because a preset is a complete sound.
 
 | Macro | −100% | +100% |
 |---|---|---|
@@ -153,16 +157,17 @@ What each one moves (h, m, g, d: the macro from −1 to +1):
 
 | Macro | Moves |
 |---|---|
-| **Horizon** | Ground Space and Bloom Space × 2^(1.5 h) near (to −9 dB), × 2^(0.5 h) far (to +3 dB); Space Level near only, × 2^(0.5 h) (to −3 dB); Ground Level and Bloom Level far only, × 2^(−0.5 h) (to −3 dB); Space Decay × 2^(1.3 h) (0.41× to 2.46×); Pre-Delay + 50 ms × h; Ground Tone, Bloom Tone and Space Damp × 2^(−0.5 h) (half an octave brighter near, darker far); Space Rise toward 0 near, 60% of the way to 100% far |
+| **Horizon** | Ground Space and Bloom Space × 2^h near (to −6 dB), × 2^(0.5 h) far (to +3 dB); Ground Level and Bloom Level far only, × 2^(−0.5 h) (to −3 dB); Space Decay × 2^(1.3 h) (0.41× to 2.46×); Pre-Delay + 50 ms × h; Ground Tone, Bloom Tone (on LP) and Space Damp × 2^(−0.5 h) (half an octave brighter near, darker far); Space Rise toward 0 near, 60% of the way to 100% far |
 | **Motion** | Ground Sway and Bloom Sway toward 0, or 80% of the way to 100%; Ground Rate, Bloom Rate and Breath Rate × 2^(2 m) (a quarter to four times as fast; a cycle synced to the bar keeps its division); Bloom Smear toward 0, or 60% of the way to 100%; Gnd Breath toward 0, or 70% of the way to 100%; Ground Beat to 0 still, × 2^(1.5 m) moving (at most 3 Hz) |
-| **Glow** | Ground Tone and Bloom Tone × 2^(2 g) (two octaves either way); Tilt + 30 points × g; Space Damp × 2^g; Shimmer + 35 points × g, bright only (not with Shimmer Int at −12, which darkens); Ground Body × 2^(−g) (twice as much, darker vowels, toward dark; half toward bright); the volume down 1.5 dB × (−g), dark only |
+| **Glow** | Ground Tone and Bloom Tone × 2^(2 g) (two octaves either way; Bloom Tone only on LP: on BP or HP it picks a band, not a brightness); Tilt + 30 points × g; Space Damp × 2^g; Shimmer + 35 points × g, bright only (not with Shimmer Int at −12, which darkens); Ground Body × 2^(−g) (twice as much, darker vowels, toward dark; half toward bright); the volume down 1.5 dB × (−g), dark only |
 | **Density** | Ground Sub, Gnd Octave and Ground Color × (1 + d) sparse (to 0), × 2^d thick (Root and Fifth stay); Bloom Detune and Bloom Breath likewise (no detune: unison 2 plays as one voice); Strum × 2^(−d) + 0.6 s × (−d) sparse (one note after another even from 0), × (1 − 0.75 d) thick (a quarter); the volume down 1 dB × d, thick only |
 
 - Every result stays inside its control's range, and what a preset has switched off stays off (a
-  send or the Space Level at 0, a partial at 0, Body off, no Beat), Shimmer aside: Glow's bright half
+  send at 0, a partial at 0, Body off, no Beat), Shimmer aside: Glow's bright half
   adds one (unless the preset's shimmer goes down).
 - Two macros can move one control (Horizon and Glow both move the Tones and Space Damp); each adds
-  its share.
+  its share. Bloom Tone moves only on Bloom Filter LP: on BP or HP it picks a band (Overtone Choir's
+  whistle), and the macros leave it there.
 - The level stays near the preset's: far is a few LU quieter (the dry steps back), dark and thick are
   trimmed by the volume. No macro at either end drives a factory preset into the limiter.
 - Nothing that would jump is touched: not Unison, the chord, the voicing or the tables.
@@ -428,8 +433,15 @@ runs one cycle per **Div** instead: 1/4 (a quarter note), 1/2, 1 Bar and on to 6
   says, after a loop, a jump or a tempo change too. A synced breath is at its top on each
   division's downbeat: Breath Div 1/4 throbs on every beat.
 - While it is stopped, a synced cycle runs on at the tempo from where it was, and locks back to the
-  bar when MPC plays again (a jump, as it takes up the bar's position).
-- Synced, Bloom's six voices sway together, on the bar, instead of each on its own phase.
+  bar when MPC plays again.
+- A cycle never jumps: whenever its place changes at once (MPC starting, locating or looping off the
+  beat, Free to Sync and back) it glides there, over about 50 ms, and then stays exactly on it.
+- Synced, Bloom's six voices sway staggered on the bar: each a sixth of a cycle after the one
+  before, in the same place from note to note, so a synced chord still shimmers and stays locked.
+  Ground's breath is one pulse. Each voice keeps its own free phase meanwhile, and back on Free they
+  drift back to it, each its own way.
+- A division too fast for the tempo doubles: a synced sway runs at most 4 Hz (1/4 above 240 BPM is
+  1/2), a breath at most 8 Hz.
 - The rate knobs stay what Free plays; Sync and Div leave them alone, and the Motion macro bends
   only the free rates.
 

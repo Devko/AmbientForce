@@ -142,7 +142,10 @@ void Bloom::seed(uint32_t s) {
 void Bloom::reseed() {
     rng_ = seed_ * 0x9E3779B1u + 0x85EBCA6Bu;
     if (rng_ == 0) rng_ = 0x85EBCA6Bu;   // xorshift's one stuck state
-    for (int i = 0; i < kVoices; ++i) v_[i].scan.seed(seed_ * 16u + static_cast<uint32_t>(i));
+    for (int i = 0; i < kVoices; ++i) {
+        v_[i].scan.seed(seed_ * 16u + static_cast<uint32_t>(i));
+        v_[i].scan.setSyncOffset(static_cast<double>(i) / kVoices);   // synced: a sixth of a cycle apart, each in its place
+    }
 }
 
 void Bloom::set(const BloomPatch& p, const HarmonyPatch& h) {
@@ -885,6 +888,7 @@ Bloom::VoiceView Bloom::voice(int i) const {
     w.note = v.stage != ST_FREE ? v.note : -1;
     w.next = v.next;
     w.env = v.stage != ST_FREE ? v.env : 0.0f;
+    w.pos = v.pos;
     return w;
 }
 
