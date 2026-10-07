@@ -826,7 +826,7 @@ void testRise() {
 
 // Check 11 (not a gate): the worst case's cost on this machine.
 void testCost() {
-    std::printf("== engine: cost of the worst case (x86, not a gate)\n");
+    std::printf("== engine: cost of the worst case\n");
     Engine e(saws());
     Patch p = loudest(true);
     p.bloom.unison = 2;
@@ -839,6 +839,50 @@ void testCost() {
     playChords(e, 10.0, 2.5);
     const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::printf("  10 s of 6-note chords, unison 2, FM, every partial, Abyss with shimmer: %.2f s\n", s);
+#if defined(__SANITIZE_ADDRESS__)
+    CHECK(s < 10.0);   // under ASan, in real time with room to spare (qemu's time says nothing)
+#endif
+}
+
+// The limiter lets go: a second after the last peak over the knee its gain is exactly 1 again and
+// it only looks (its release, in float, used to stall at 0.9998 and keep the gain computer running).
+void testLimiterRelease() {
+    std::printf("== engine: the limiter lets go\n");
+    Engine e(sines());
+    Patch p = bloomSine();
+    p.volumeDb = 12.0f;
+    e.setPatch(p);
+    for (int k : {57, 60, 64, 67, 71, 74}) e.noteOn(k, 127);
+    render(e, 0.5);
+    const float down = e.info().limiterGain;
+    p.volumeDb = -20.0f;   // every peak far under the knee from here
+    e.setPatch(p);
+    render(e, 1.5);
+    std::printf("  limited to %.1f dB; 1.5 s after the volume came down: gain %.9f, limiting %d\n", db(down),
+                e.info().limiterGain, e.info().limiting);
+    CHECK(down < 0.9f && e.info().limiterGain == 1.0f && !e.info().limiting);
+}
+
+// The harmony keeps 16 keys. With the pedal down a long phrase passes that: the oldest key the
+// pedal holds goes, and the harmony follows the latest key. Fingers on 16 keys keep them all.
+void testManyKeys() {
+    std::printf("== engine: more keys than the harmony keeps\n");
+    Engine e(sines());
+    Patch p = dry();
+    p.harmony.input = af::IN_AS_PLAYED;
+    e.setPatch(p);
+    e.sustain(true);
+    for (int k = 40; k < 60; ++k) {
+        e.noteOn(k, 100);
+        e.noteOff(k);
+    }
+    CHECK(e.harmony().held() == af::Harmony::kHeldMax);
+    CHECK(e.info().harmonyRoot == af::buildChord(p.harmony, 59).root && e.info().groundTarget % 12 == 59 % 12);
+    e.sustain(false);
+    CHECK(e.harmony().held() == 0);
+    // Sixteen fingers: the seventeenth key isn't heard by the harmony, the sixteen stay.
+    for (int k = 40; k < 57; ++k) e.noteOn(k, 100);
+    CHECK(e.harmony().held() == af::Harmony::kHeldMax && e.info().harmonyRoot == af::buildChord(p.harmony, 55).root);
 }
 
 } // namespace
@@ -858,6 +902,8 @@ void engineTests() {
     testClock();
     testRise();
     testLimiter();
+    testLimiterRelease();
+    testManyKeys();
     testCost();
 }
 

@@ -23,9 +23,11 @@
 // when the chord is let go, not from when the fingers left it, and Ground in Notes mode stays on
 // the chord the pedal or Hold keeps sounding. (Under Chord Off, where the harmony's chord is the
 // notes held, the latched keys leave the harmony before the new one goes down, or they would stay
-// in its chord.) Hold turned off lets the latched keys go (to the pedal, if it is down). CC 123
-// lets every key go, held by a finger, the pedal or Hold, but the engine stays awake: what the
-// harmony remembers goes on sounding.
+// in its chord.) The harmony keeps 16 keys: full, a new key lets the oldest one the pedal or Hold
+// keeps go first (a pedal down through a long phrase), while 16 fingers keep theirs and the new
+// key isn't heard there. Hold turned off lets the latched keys go (to the pedal, if it is down).
+// CC 123 lets every key go, held by a finger, the pedal or Hold, but the engine stays awake: what
+// the harmony remembers goes on sounding.
 //
 // Stop (CONCEPT.md 7.4): the transport stopping (playing to stopped, from setTransport) or a
 // suspend that resumes within kStopWindowS applies On Stop: Keep does nothing; Fade fades the
@@ -56,8 +58,10 @@
 // - The limiter: no lookahead. A stereo-linked gain computer (1 ms attack, 150 ms release) holds
 //   the peak at kKnee (0.95 of the ceiling); what the attack lets through goes into a soft clip
 //   (softclip(), a tanh-like curve) from kKnee up to kCeiling, which it never passes: the output
-//   stays at or under -1 dBFS (0.8913) whatever comes in. Under the knee, with the gain back at 1,
-//   it only looks.
+//   stays at or under -1 dBFS (0.8913) whatever comes in. It keeps its gain as the distance under
+//   1, so the release (a float step of 1.5e-4 of that distance) never stalls short of 1; with no
+//   peak over the knee in a piece and the gain within 0.1% of 1, it lands on 1 (a step of 0.009
+//   dB). Under the knee, with the gain back at 1, it only looks.
 //
 // Control rate: every kChunk samples the harmony's memory advances at the transport's tempo, the
 // routes are looked at again (the memory may have forgotten the chord), Stop's fade and the tilt
@@ -134,6 +138,7 @@ public:
         uint32_t guards = 0;          // blocks the non-finite guard zeroed
         uint64_t samples = 0;         // rendered so far
         float limiterGain = 1.0f;
+        bool limiting = false;        // the last piece ran the limiter's gain computer
         float spaceDecayS = 0.0f;     // the decay Space was given (the tail's hold applied)
     };
 
@@ -200,6 +205,8 @@ private:
     // Keys: down, held by the pedal or latched by Hold (the harmony keeps each one's mapped note),
     // and the chord Bloom played for each (Notes).
     KeyState key_[128] = {};
+    uint64_t keyAge_[128] = {};              // the note-on that put each key down: the oldest goes first
+    uint64_t keysPressed_ = 0;
     Chord keyChord_[128];
     bool pedal_ = false;
     Chord prev_;                             // the chord Bloom played last (Notes): Leading's start
@@ -230,7 +237,8 @@ private:
     float tiltNow_ = 0.0f;
     float tiltG_ = 0.0f, tiltLow_ = 1.0f, tiltHigh_ = 1.0f;   // the one-pole's G, the shelf's gains
     float tiltS_[2] = {};                    // the one-pole's state, L and R
-    float limit_ = 1.0f;                     // the limiter's gain
+    float limitD_ = 0.0f;                    // the limiter's gain under 1 (1 - gain)
+    bool limiting_ = false;
 
     // A piece's buffers: Ground's and Bloom's dry when panned, the sends (and Space's wet in them).
     float gL_[kChunk] = {}, gR_[kChunk] = {}, bL_[kChunk] = {}, bR_[kChunk] = {};

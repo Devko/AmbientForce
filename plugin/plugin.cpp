@@ -126,15 +126,17 @@ long long nowMs() {
 // a resume the audio thread hasn't seen yet starts over (the latest one wins: a reset covers a
 // Stop). What MPC sends on Stop is a Phase 0 question: the trace shows it.
 void suspended(Plugin* p) {
-    if (tracing()) trace("%p suspend", static_cast<void*>(&p->fx));
+    const long long now = nowMs();
+    if (tracing()) trace("%p suspend at %lld ms", static_cast<void*>(&p->fx), now);
     if (p->suspendMs.load() < 0 || p->resumeMs.load() >= 0) {
         p->resumeMs.store(-1);
-        p->suspendMs.store(nowMs());
+        p->suspendMs.store(now);
     }
 }
 void resumed(Plugin* p) {
-    if (tracing()) trace("%p resume", static_cast<void*>(&p->fx));
-    if (p->suspendMs.load() >= 0 && p->resumeMs.load() < 0) p->resumeMs.store(nowMs());
+    const long long now = nowMs();
+    if (tracing()) trace("%p resume at %lld ms", static_cast<void*>(&p->fx), now);
+    if (p->suspendMs.load() >= 0 && p->resumeMs.load() < 0) p->resumeMs.store(now);
 }
 
 // Copies at most cap - 1 bytes, never cutting a UTF-8 character in half.

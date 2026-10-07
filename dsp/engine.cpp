@@ -20,6 +20,7 @@ constexpr float kTiltDb = 6.0f;             // the shelf's highs (and, the other
 constexpr float kTiltStep = 0.029f;         // a control step's tilt glide: the whole range in 50 ms
 constexpr float kFloorDb = -60.0f;          // Stop's fade ends here, and resets
 constexpr float kLand = 1e-6f;              // a gain this near its target is there
+constexpr float kLimitLand = 1e-3f;         // the limiter's release lands on 1 from here (0.009 dB)
 constexpr float kSqrt2 = 1.41421356f;
 constexpr int kTonicNote = 48;              // where Free's tonic chord is built (C3 + key)
 
@@ -186,8 +187,21 @@ void Engine::noteOn(int note, int velocity) {
     // go down afresh, mapped as now.
     const bool again = key_[note] != K_UP;
     if (again) harmony_.noteOff(note);
+    // The harmony keeps Harmony::kHeldMax keys. Full, the oldest key the pedal or Hold keeps goes,
+    // so a pedal held down through a long phrase doesn't freeze the harmony; with only fingers on
+    // keys, the new one is ignored there (Bloom still plays it). (Under Hold and Chord Off the
+    // latched keys have left the harmony already.)
+    if (harmony_.held() >= Harmony::kHeldMax) {
+        int oldest = -1;
+        for (int k = 0; k < 128; ++k)
+            if ((key_[k] == K_PEDAL || (key_[k] == K_HOLD && !(p_.hold && chordOff))) &&
+                (oldest < 0 || keyAge_[k] < keyAge_[oldest]))
+                oldest = k;
+        if (oldest >= 0) letGo(oldest);
+    }
     harmony_.noteOn(note, mapped);
     key_[note] = K_DOWN;
+    keyAge_[note] = ++keysPressed_;
 
     if (p_.bloom.listen == LI_NOTES) {
         const Chord built = buildChord(h, mapped);
@@ -302,7 +316,8 @@ void Engine::clearDsp() {
     bloom_.reset();
     space_.reset();
     tiltS_[0] = tiltS_[1] = 0.0f;
-    limit_ = 1.0f;
+    limitD_ = 0.0f;
+    limiting_ = false;
     groundWant_ = -2;   // nothing given: the next route() gives Ground its target again
     bloomSync_ = true;
     freePlayed_ = Chord{};
@@ -404,7 +419,8 @@ bool Engine::piece(float* L, float* R, int n) {
     if (!g && !b && !wet) {   // nothing to hear: no DSP, and the output's state where it settles
         idle_ = true;
         tiltS_[0] = tiltS_[1] = 0.0f;
-        limit_ = 1.0f;
+        limitD_ = 0.0f;
+        limiting_ = false;
         volumeNow_ = volume_;
         fade_.now = fade_.target;
         ret_.now = ret_.target;
@@ -501,15 +517,19 @@ bool Engine::output(float* L, float* R, int n) {
     if (e == 0x7F800000u) return false;
 
     // The limiter: the gain computer only where a peak passes the knee or the gain is still down.
+    // It runs on the gain's distance under 1 (d, and the wanted one wd): near 1 a float gain can't
+    // take the release's small steps, a float distance can.
     float pk = 0.0f;
     for (int i = 0; i < n; ++i) pk = std::max(pk, std::max(std::fabs(L[i]), std::fabs(R[i])));
-    if (pk > kKnee || limit_ < 1.0f) {
+    limiting_ = pk > kKnee || limitD_ > 0.0f;
+    if (limiting_) {
         constexpr float w = kCeiling - kKnee, invW = 1.0f / w;
-        float gain = limit_;
+        float d = limitD_;
         for (int i = 0; i < n; ++i) {
             const float a = std::max(std::fabs(L[i]), std::fabs(R[i]));
-            const float want = a > kKnee ? kKnee / a : 1.0f;
-            gain += (want - gain) * (want < gain ? kAttack : kRelease);
+            const float wd = a > kKnee ? 1.0f - kKnee / a : 0.0f;
+            d += (wd - d) * (wd > d ? kAttack : kRelease);
+            const float gain = 1.0f - d;
             float l = L[i] * gain, r = R[i] * gain;
             // What the attack lets through: a soft clip from the knee up to the ceiling.
             if (std::fabs(l) > kKnee) l = std::copysign(kKnee + w * softclip((std::fabs(l) - kKnee) * invW), l);
@@ -517,7 +537,8 @@ bool Engine::output(float* L, float* R, int n) {
             L[i] = l;
             R[i] = r;
         }
-        limit_ = 1.0f - gain < kLand ? 1.0f : gain;
+        // Released all but 0.1% with nothing over the knee: back at 1, the next piece only looks.
+        limitD_ = pk <= kKnee && d < kLimitLand ? 0.0f : d;
     }
 
     ramp(L, R, n, fade_.now, fade_.target);
@@ -543,7 +564,8 @@ Engine::Info Engine::info() const {
     i.harmonyVersion = harmony_.version();
     i.guards = guards_;
     i.samples = samples_;
-    i.limiterGain = limit_;
+    i.limiterGain = 1.0f - limitD_;
+    i.limiting = limiting_;
     i.spaceDecayS = spaceParams_.reverb.decayS;
     return i;
 }

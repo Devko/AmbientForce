@@ -218,19 +218,35 @@ void testStop() {
     p.e->dispatcher(p.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
     p.e->dispatcher(p.e, vst::effStartProcess, 0, 0, nullptr, 0.0f);   // a second later
     CHECK(p.run(1) == 0.0f);
-    // A resume without a suspend does nothing; of two suspends before a resume, the first counts.
+    // A resume without a suspend does nothing.
     p.on(57);
     p.run(10);
     p.e->dispatcher(p.e, vst::effStartProcess, 0, 0, nullptr, 0.0f);
     CHECK(p.run(1) > 0.0f);
+    // Of two suspends before a resume the first counts, and of two resumes the first: suspended at
+    // t0 and again at t0 + 200 ms, resumed at t0 + 300 ms and again at t0 + 400 ms is 300 ms away, a
+    // reset (counted from the second suspend it would be 100 ms, a Stop).
     {
         Turn t(100);
-        p.e->dispatcher(p.e, vst::effStopProcess, 0, 0, nullptr, 0.0f);
-        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
-        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);   // 200 ms after the first
-        p.e->dispatcher(p.e, vst::effStartProcess, 0, 0, nullptr, 0.0f);
+        p.e->dispatcher(p.e, vst::effStopProcess, 0, 0, nullptr, 0.0f);       // t0
+        {
+            Turn later(200);
+            p.e->dispatcher(p.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);   // t0 + 200
+        }
+        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);       // t0 + 300
+        p.e->dispatcher(p.e, vst::effStartProcess, 0, 0, nullptr, 0.0f);      // t0 + 400
     }
-    CHECK(p.run(1) > 0.0f);   // a Stop: fading, not reset
+    CHECK(p.run(1) == 0.0f && p.voices() == 0);   // reset
+    // The same, the suspends 100 ms apart: 200 ms away, a Stop (fading, not reset).
+    p.on(57);
+    p.run(10);
+    {
+        Turn t(100);
+        p.e->dispatcher(p.e, vst::effStopProcess, 0, 0, nullptr, 0.0f);       // t0
+        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);      // t0 + 100
+        p.e->dispatcher(p.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);      // t0 + 200
+    }
+    CHECK(p.run(1) > 0.0f);
     CHECK(p.finite);
 
     // The transport stopping is a Stop too.
