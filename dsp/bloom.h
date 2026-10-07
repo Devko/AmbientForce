@@ -14,7 +14,11 @@
 //   x envelope x velocity -> pan (equal power) -> the dry and the send
 // A new Table or Table B (another one chosen, or the slot's table published over the sine it
 // played until it was built) fades in over 20 ms in every sounding voice, both pairs of tables
-// read only for that long, as Ground does; a second change waits for the fade under way.
+// read only for that long, as Ground does; a second change waits for the fade under way. So Bloom
+// keeps the TableSet's table pointers from one render to the next (the pair it plays, and the old
+// pair while a new one fades in): the tables must outlive it, as plugin/tables.h promises while
+// an instance lives (nothing is unpublished or freed). A Bloom still around after
+// releaseTables() must be reset() before it renders again.
 //
 // Unison 2: a second pair, the two detuned by -Detune/2 and +Detune/2 cents, each at 1/sqrt 2 (the
 // same loudness as one, their slow drift averaging their sum to it), in the SVF's two lanes. Below
@@ -32,8 +36,9 @@
 // and the voice is free there. Velocity: a gain of 1 - Vel + Vel x vel (linear in amplitude).
 //
 // The tail handoff (CONCEPT.md 8), Tail Space with Release longer than kHandoffS and the send open
-// (the last render's spaceSend above 0; the engine passes 0 when Space's return is 0 too, and with
-// no Space to carry it a release is Tail Voice's): once released, a voice's dry follows its release
+// (the last render's spaceSend above 0; the engine passes 0 when Space's return is 0, when Space is
+// off or bypassed, or when Bloom's own send is 0, and with no Space to carry it a release is Tail
+// Voice's): once released, a voice's dry follows its release
 // times a cos^2 fade from 1 to 0 over kHandoffS, while its send carries the same energy into Space
 // as the whole release would have with Tail Voice. The send is the release times a boost that ramps
 // from 1 to B over 0.2 s, and over the handoff's last 0.2 s it fades out too (cos^2), so it never

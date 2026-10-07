@@ -24,10 +24,11 @@ constexpr float kInvSqrt2 = 0.70710678f;
 constexpr float kLog2e = 1.44269504f;
 constexpr float kLog2Thousand = 9.96578428f;   // -60 dB in octaves of amplitude
 
-// cos(pi / 2 u)^2 for u in 0..1: the handoff's fades, 1 to 0.
+// cos(pi / 2 u)^2 for u in 0..1: the handoff's fades, 1 to 0. At most 1: sinCycle's quarter-wave
+// series reads up to 3.6e-6 over 1 near the peak.
 float cos2(float u) {
     const float c = sinCycle(0.25f + 0.25f * clampf(u, 0.0f, 1.0f));
-    return c * c;
+    return std::min(1.0f, c * c);
 }
 
 // Equal-power pan, p -1..1: (L, R) = (cos, sin) of pi / 4 (p + 1).
@@ -499,7 +500,8 @@ void Bloom::control(int m) {
                     v.stage = ST_SUSTAIN;
                     v.env = 1.0f;
                 } else {
-                    v.env = 0.5f - 0.5f * sinCycle(0.25f + 0.5f * v.x);   // 0.5 - 0.5 cos(pi x)
+                    // 0.5 - 0.5 cos(pi x), kept to 0..1 (sinCycle reads a hair past +-1 at its peaks)
+                    v.env = clampf(0.5f - 0.5f * sinCycle(0.25f + 0.5f * v.x), 0.0f, 1.0f);
                 }
                 break;
             case ST_SUSTAIN: v.env = 1.0f; break;
@@ -659,9 +661,10 @@ void Bloom::renderVoice(Voice& v, int o, int m, const float* fade) {
     float a0[kChunk], a1[kChunk], scratch[2 * kChunk];
     const Wavetable& ta = *tabA_;
     const Wavetable& tb = *tabB_;
-    // The second half is heard while its gains, at either end of the step, are: unison 2, and the
-    // steps that glide it in or out. Else it is only skipped along, so that it comes back in at
-    // the same quarter cycle from the first (at Detune 0, where they share a pitch).
+    // The second half is heard while its gains, at either end of the step, are: unison 2 (from 1
+    // cent of Detune up), and the steps that glide it in or out. Else its oscillators are only
+    // skipped along, their phases moving on as if rendered, so it comes back in where its own
+    // pitch would have taken it.
     const bool uni = !zero2(v.P0[1]) || !zero2(v.P[1]) || !zero2(v.S0[1]) || !zero2(v.S[1]);
     const int cp = p_.couple;
     const float amt = p_.coupleAmt, blend = p_.blend;

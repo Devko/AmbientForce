@@ -837,6 +837,40 @@ void testTableChange() {
     }
 }
 
+// The envelope stays within 0..1 exactly, as checkInvariants() asks: through a swell rendered a
+// sample at a time (the S-curve's end, where the quarter-wave sine reads up to 3.6e-6 over 1: a
+// 0.1 s swell steps to within 2.3e-4 of it), and pressed again one sample into a handoff (its dry
+// fade, cos^2 of almost 0, folded in), with a release slow enough (30 s) that one sample of it
+// doesn't take the level under that hair.
+void testEnvelopeBounds() {
+    std::printf("== bloom: envelope bounds\n");
+    Bloom b;
+    b.seed(21);
+    af::BloomPatch p = plain();
+    p.tail = af::TL_SPACE;
+    p.releaseS = 30.0f;
+    p.swellS = 0.1f;
+    b.set(p, af::HarmonyPatch{});
+    float L[kBlk] = {}, R[kBlk] = {}, SL[kBlk] = {}, SR[kBlk] = {};
+    int bad = 0;
+    const auto samplesOf = [&](int n) {
+        for (int i = 0; i < n; ++i) {
+            b.render(tables(), L, R, SL, SR, 0.5f, 1);
+            bad += b.checkInvariants() ? 0 : 1;
+        }
+    };
+    b.play(chordOf({60}), 60, 1.0f);
+    samplesOf(samples(0.12));   // the 0.1 s swell, 4410 samples, and on into the sustain
+    b.release(60);
+    samplesOf(1);
+    CHECK(b.voice(voiceOf(b, 60)).stage == Bloom::ST_HANDOFF);
+    b.play(chordOf({60}), 60, 1.0f);
+    samplesOf(300);
+    std::printf("  %d samples out of %d broke the invariants\n", bad, samples(0.12) + 301);
+    CHECK(bad == 0);
+    CHECK(b.active() == 1);
+}
+
 // Odd input: NaN, infinities and values out of range everywhere. Nothing goes non-finite, the
 // state holds, and a sane patch plays as ever afterwards.
 void testOddInput() {
@@ -1047,6 +1081,7 @@ void bloomTests() {
     testPressedAgain();
     testRevoice();
     testTableChange();
+    testEnvelopeBounds();
     testOddInput();
     testWidthAndMute();
     testDeterminism();
