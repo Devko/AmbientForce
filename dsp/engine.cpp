@@ -19,14 +19,14 @@ constexpr float kTiltPivotHz = 800.0f;
 constexpr float kTiltDb = 6.0f;             // the shelf's highs (and, the other way, lows) at tilt 1
 constexpr float kTiltStep = 0.029f;         // a control step's tilt glide: the whole range in 50 ms
 constexpr float kFloorDb = -60.0f;          // Stop's fade ends here, and resets
-constexpr float kLand = 1e-6f;              // a gain this near its target is there
 constexpr float kLimitLand = 1e-3f;         // the limiter's release lands on 1 from here (0.009 dB)
+constexpr int kGlideSamples = 441;          // the volume, the return and the pans glide 10 ms
 constexpr float kSqrt2 = 1.41421356f;
 constexpr int kTonicNote = 48;              // where Free's tonic chord is built (C3 + key)
+constexpr uint32_t kAbsMask = 0x7FFFFFFFu, kInfBits = 0x7F800000u;
 
-// Set when the plugin loads (no guard to take on the audio thread). The volume glides 10 ms (a
-// one-pole a control step), the limiter's gain 1 ms down and 150 ms back up (a one-pole a sample).
-const float kVolumeGlide = 1.0f - std::exp(-static_cast<float>(kChunk) / (0.010f * kRate));
+// Set when the plugin loads (no guard to take on the audio thread): the limiter's gain moves 1 ms
+// down and 150 ms back up (a one-pole a sample).
 const float kAttack = smoothCoef(0.001f), kRelease = smoothCoef(0.150f);
 
 // The volume knob's gain: off at kVolumeOffDb, at most +12 dB. (common.h's dbToGain is the fast one
@@ -63,34 +63,60 @@ bool sameNotes(const Chord& a, const Chord& b) {
     return true;
 }
 
-// The exponent bits of x: all ones for an infinity or a NaN. Integer work, which no float
-// optimisation can fold away, and the block's maximum vectorises.
-inline uint32_t exponentOf(float x) {
+// |x|'s bits: for finite floats they order as the magnitudes do, and an infinity or a NaN is
+// kInfBits or more. Integer work, which no float optimisation can fold away; a block's maximum
+// vectorises, and gives both the guard's answer and the limiter's peak.
+inline uint32_t absBits(float x) {
     uint32_t u;
     std::memcpy(&u, &x, sizeof u);
-    return u & 0x7F800000u;
+    return u & kAbsMask;
 }
 
-// One gain's straight line across a piece of n samples, applied in place (both channels).
-void ramp(float* L, float* R, int n, float from, float to) {
-    if (from == to) {
-        if (from == 1.0f) return;
+} // namespace
+
+// --- glides -------------------------------------------------------------------------------------
+
+void Engine::Glide::aim(int samples) {
+    if (target == to) return;
+    to = target;
+    step = (to - now) / static_cast<float>(samples);
+    if (step == 0.0f) now = to;
+}
+
+inline float Engine::Glide::next() {
+    if (step != 0.0f) {
+        now += step;
+        if (step > 0.0f ? now >= to : now <= to) {
+            now = to;
+            step = 0.0f;
+        }
+    }
+    return now;
+}
+
+void Engine::Glide::land() {
+    now = to = target;
+    step = 0.0f;
+}
+
+// A gain across a piece, in place on both channels.
+void Engine::Glide::apply(float* L, float* R, int n) {
+    if (step == 0.0f) {
+        if (now == 1.0f) return;
         for (int i = 0; i < n; ++i) {
-            L[i] *= from;
-            R[i] *= from;
+            L[i] *= now;
+            R[i] *= now;
         }
         return;
     }
-    const float step = (to - from) / static_cast<float>(n);
-    float g = from;
     for (int i = 0; i < n; ++i) {
-        g += step;
+        const float g = next();
         L[i] *= g;
         R[i] *= g;
     }
 }
 
-} // namespace
+// --- the patch ----------------------------------------------------------------------------------
 
 Engine::Engine(const TableSet& tables) : tables_(tables) {
     setPatch(Patch{});
@@ -103,8 +129,6 @@ void Engine::seed(uint32_t s) {
     groundWant_ = -2;
     route();
 }
-
-// --- the patch ----------------------------------------------------------------------------------
 
 void Engine::setPatch(const Patch& in) {
     Patch p = in;
@@ -123,20 +147,23 @@ void Engine::setPatch(const Patch& in) {
     ground_.set(p.ground, p.harmony);
     bloom_.set(p.bloom, p.harmony);
 
-    // Space: the tail's hold (Abyss rings four times its Decay already).
+    // Space: the tail's hold. Abyss rings four times its Decay, so a quarter of the Release does.
     spaceParams_ = p.space;
     float& decay = spaceParams_.reverb.decayS;
-    if (p.bloom.tail == TL_SPACE && spaceParams_.reverb.mode != Reverb::ABYSS)
-        decay = std::max(decay, clampParam(p.bloom.releaseS, 0.01f, 30.0f, 0.0f));   // Bloom's range
+    if (p.bloom.tail == TL_SPACE) {
+        const float release = clampParam(p.bloom.releaseS, 0.01f, 30.0f, 0.0f);   // Bloom's range
+        decay = std::max(decay, spaceParams_.reverb.mode == Reverb::ABYSS ? 0.25f * release : release);
+    }
     space_.set(spaceParams_, transport_);
 
-    // The mix: Space's sends only where its return is heard.
+    // The mix: Space's sends only where its return is heard, and Bloom's only where Space can carry
+    // a tail (a frozen reverb takes no input: there Bloom releases as Tail Voice).
     groundSend_ = p.spaceReturn > 0.0f ? p.groundSpace : 0.0f;
-    bloomSend_ = p.spaceReturn > 0.0f ? p.bloomSpace : 0.0f;
+    bloomSend_ = p.spaceReturn > 0.0f && !p.space.reverb.freeze ? p.bloomSpace : 0.0f;
     ret_.target = p.spaceReturn;
     panGains(p.groundPan, gPanL_.target, gPanR_.target);
     panGains(p.bloomPan, bPanL_.target, bPanR_.target);
-    volume_ = volumeGain(p.volumeDb);
+    volume_.target = volumeGain(p.volumeDb);
     tilt_ = p.tilt;
 
     // Free's tonic chord: the patch's chord type on the key (a triad under Chord Off).
@@ -144,21 +171,46 @@ void Engine::setPatch(const Patch& in) {
     if (tonic.chord == CH_OFF) tonic.chord = CH_TRIAD;
     freeChord_ = buildChord(tonic, kTonicNote + p.harmony.key);
 
+    changed(was);
+    route();
+    if (fading_ && p.onStop == OS_CUT) reset();
+}
+
+// What a patch change does to what is sounding, besides the settings themselves.
+void Engine::changed(const Patch& was) {
     // Hold turned off: the latched keys go (to the pedal, while it is down).
-    if (was.hold && !p.hold)
+    if (was.hold && !p_.hold)
         for (int k = 0; k < 128; ++k)
             if (key_[k] == K_HOLD) {
                 if (pedal_) key_[k] = K_PEDAL;
                 else letGo(k);
             }
 
-    // Bloom's Listen changed: what it followed lets go, what it follows now is looked at afresh.
-    if (p.bloom.listen != was.bloom.listen) {
-        if (p.bloom.listen == LI_NOTES) bloom_.release(-1);   // the harmony's or the tonic's chord
-        if (p.bloom.listen == LI_HARMONY) bloomSync_ = true;
-        if (p.bloom.listen == LI_FREE) freePlayed_ = Chord{};
+    // Bloom's Listen: what it followed lets go, what it follows now is looked at afresh. Back on the
+    // notes, the keys held (by a finger, the pedal or Hold) play their chords again, oldest first,
+    // so Bloom and Ground agree; then the harmony's or the tonic's chord goes, after, so the notes
+    // they share carry on.
+    if (p_.bloom.listen != was.bloom.listen) {
+        switch (p_.bloom.listen) {
+            case LI_NOTES:
+                for (uint64_t after = 0;;) {
+                    int k = -1;
+                    for (int j = 0; j < 128; ++j)
+                        if (key_[j] != K_UP && keyAge_[j] > after && (k < 0 || keyAge_[j] < keyAge_[k])) k = j;
+                    if (k < 0) break;
+                    after = keyAge_[k];
+                    playKey(k, true);
+                }
+                bloom_.release(-1);
+                break;
+            case LI_HARMONY: bloomSync_ = true; break;
+            default: freePlayed_ = Chord{}; break;
+        }
     }
-    route();
+
+    // On Stop changed while a fade is under way: Keep turns it round, as a note-on does (Cut, once
+    // the routes are done: setPatch() resets).
+    if (fading_ && p_.onStop == OS_KEEP) fading_ = false;
 }
 
 // --- keys ---------------------------------------------------------------------------------------
@@ -169,53 +221,36 @@ void Engine::noteOn(int note, int velocity) {
         noteOff(note);
         return;
     }
-    const HarmonyPatch& h = p_.harmony;
-    const int mapped = mapInput(h, note);
+    const int mapped = mapInput(p_.harmony, note);
     if (mapped < 0) return;
     const float vel = static_cast<float>(std::min(velocity, 127)) / 127.0f;
     lastVel_ = vel;
     awake_ = true;
     fading_ = false;   // a fade under way turns round
 
-    // Hold: the keys it latched go once the new chord has started. Under Chord Off the harmony's
-    // chord is the keys held, so there they leave the harmony first.
-    const bool chordOff = h.chord == CH_OFF;
-    if (p_.hold && chordOff)
+    // Hold: a note-on with no other finger on a key starts a new chord, and the keys Hold latched go
+    // once it has started (play() before release(): the notes the two share carry on). With a
+    // finger still down, the key joins the chord. Under Chord Off the harmony's chord is the keys
+    // held, so for a new chord the latched keys leave the harmony first, or they would stay in it.
+    bool fresh = p_.hold;
+    for (int k = 0; k < 128 && fresh; ++k) fresh = k == note || key_[k] != K_DOWN;
+    const bool latchedOut = fresh && p_.harmony.chord == CH_OFF;
+    if (latchedOut)
         for (int k = 0; k < 128; ++k)
             if (k != note && key_[k] == K_HOLD) harmony_.noteOff(k);
-    // The same key again (held by the pedal or Hold, or a second note-on): the harmony hears it
-    // go down afresh, mapped as now.
+    // The same key again (held by the pedal or Hold, or a second note-on): the harmony hears it go
+    // down afresh, mapped as now.
     const bool again = key_[note] != K_UP;
     if (again) harmony_.noteOff(note);
-    // The harmony keeps Harmony::kHeldMax keys. Full, the oldest key the pedal or Hold keeps goes,
-    // so a pedal held down through a long phrase doesn't freeze the harmony; with only fingers on
-    // keys, the new one is ignored there (Bloom still plays it). (Under Hold and Chord Off the
-    // latched keys have left the harmony already.)
-    if (harmony_.held() >= Harmony::kHeldMax) {
-        int oldest = -1;
-        for (int k = 0; k < 128; ++k)
-            if ((key_[k] == K_PEDAL || (key_[k] == K_HOLD && !(p_.hold && chordOff))) &&
-                (oldest < 0 || keyAge_[k] < keyAge_[oldest]))
-                oldest = k;
-        if (oldest >= 0) letGo(oldest);
-    }
+    makeRoom(latchedOut);
     harmony_.noteOn(note, mapped);
     key_[note] = K_DOWN;
+    mapped_[note] = mapped;
+    keyVel_[note] = vel;
     keyAge_[note] = ++keysPressed_;
 
-    if (p_.bloom.listen == LI_NOTES) {
-        const Chord built = buildChord(h, mapped);
-        const Chord c = h.leading ? leadFrom(h, prev_, built) : built;
-        // A key whose chord came out otherwise this time (the patch changed) lets its old one go
-        // first, or its notes would stay with the key.
-        if (again && !sameNotes(c, keyChord_[note])) bloom_.release(note);
-        bloom_.play(c, note, vel);
-        keyChord_[note] = c;
-        prev_ = c;
-    }
-    if (p_.hold)
-        for (int k = 0; k < 128; ++k)
-            if (k != note && key_[k] == K_HOLD) letGo(k);
+    if (p_.bloom.listen == LI_NOTES) playKey(note, again);
+    if (fresh) releaseLatched(note);
     route();
 }
 
@@ -229,6 +264,37 @@ void Engine::noteOff(int note) {
         letGo(note);
         route();
     }
+}
+
+// Bloom (Notes) plays the key's chord: the chord on its mapped note, led from the chord before when
+// Leading is on (with Chord Off the single note). A key whose chord comes out otherwise than it
+// last played (the patch changed) lets the old one go first, or its notes would stay with the key.
+void Engine::playKey(int key, bool again) {
+    const HarmonyPatch& h = p_.harmony;
+    const Chord built = buildChord(h, mapped_[key]);
+    const Chord c = h.leading ? leadFrom(h, prev_, built) : built;
+    if (again && !sameNotes(c, keyChord_[key])) bloom_.release(key);
+    bloom_.play(c, key, keyVel_[key]);
+    keyChord_[key] = c;
+    prev_ = c;
+}
+
+void Engine::releaseLatched(int except) {
+    for (int k = 0; k < 128; ++k)
+        if (k != except && key_[k] == K_HOLD) letGo(k);
+}
+
+// The harmony keeps Harmony::kHeldMax keys. Full, the oldest key the pedal or Hold keeps goes, so a
+// pedal held down through a long phrase doesn't freeze the harmony; with only fingers on keys, a
+// new one isn't heard there (Bloom still plays it). latchedOut: the latched keys have left the
+// harmony already, and letting one go makes no room.
+void Engine::makeRoom(bool latchedOut) {
+    if (harmony_.held() < Harmony::kHeldMax) return;
+    int oldest = -1;
+    for (int k = 0; k < 128; ++k)
+        if ((key_[k] == K_PEDAL || (key_[k] == K_HOLD && !latchedOut)) && (oldest < 0 || keyAge_[k] < keyAge_[oldest]))
+            oldest = k;
+    if (oldest >= 0) letGo(oldest);
 }
 
 void Engine::letGo(int key) {
@@ -323,6 +389,15 @@ void Engine::clearDsp() {
     freePlayed_ = Chord{};
 }
 
+// The output's state where it settles with nothing to hear: the glides at their targets, the
+// filters empty, the limiter at 1.
+void Engine::settle() {
+    tiltS_[0] = tiltS_[1] = 0.0f;
+    limitD_ = 0.0f;
+    limiting_ = false;
+    for (Glide* g : {&volume_, &ret_, &gPanL_, &gPanR_, &bPanL_, &bPanR_, &fade_}) g->land();
+}
+
 void Engine::reset() {
     clearDsp();
     harmony_.clear();
@@ -332,17 +407,11 @@ void Engine::reset() {
     awake_ = false;
     fading_ = false;
     fadeDb_ = 0.0f;
-    fade_ = Glide{};
+    fade_.target = 1.0f;
     groundWant_ = -1;   // Ground's own after its reset
     bloomVersion_ = harmony_.version();
     bloomSync_ = false;
-    // The output's glides are where they go: the next sound starts there.
-    volumeNow_ = volume_;
-    ret_.now = ret_.target;
-    gPanL_.now = gPanL_.target;
-    gPanR_.now = gPanR_.target;
-    bPanL_.now = bPanL_.target;
-    bPanR_.now = bPanR_.target;
+    settle();
     tiltNow_ = tilt_;
     tiltFor(tiltNow_);
     idle_ = true;
@@ -372,6 +441,8 @@ void Engine::control() {
         fadeDb_ = std::min(0.0f, fadeDb_ + kRecoverDbPerS * static_cast<float>(kChunk) / kRate);
     }
     fade_.target = fadeDb_ < 0.0f ? dbToGain(fadeDb_) : 1.0f;
+    fade_.aim(kChunk);
+    for (Glide* g : {&volume_, &ret_, &gPanL_, &gPanR_, &bPanL_, &bPanR_}) g->aim(kGlideSamples);
     if (tiltNow_ != tilt_) {
         tiltNow_ = std::fabs(tilt_ - tiltNow_) <= kTiltStep ? tilt_ : tiltNow_ + std::copysign(kTiltStep, tilt_ - tiltNow_);
         tiltFor(tiltNow_);
@@ -416,18 +487,9 @@ bool Engine::piece(float* L, float* R, int n) {
     const size_t bytes = sizeof(float) * static_cast<size_t>(n);
     std::memset(L, 0, bytes);
     std::memset(R, 0, bytes);
-    if (!g && !b && !wet) {   // nothing to hear: no DSP, and the output's state where it settles
+    if (!g && !b && !wet) {   // nothing to hear: no DSP
         idle_ = true;
-        tiltS_[0] = tiltS_[1] = 0.0f;
-        limitD_ = 0.0f;
-        limiting_ = false;
-        volumeNow_ = volume_;
-        fade_.now = fade_.target;
-        ret_.now = ret_.target;
-        gPanL_.now = gPanL_.target;
-        gPanR_.now = gPanR_.target;
-        bPanL_.now = bPanL_.target;
-        bPanR_.now = bPanR_.target;
+        settle();
         return true;
     }
     idle_ = false;
@@ -436,32 +498,28 @@ bool Engine::piece(float* L, float* R, int n) {
     std::memset(sendR_, 0, bytes);
 
     // A stratum in the middle renders straight into the bus; panned, into its own buffer first.
-    const auto pan = [n, bytes, L, R](Glide& pl, Glide& pr, float* xl, float* xr, auto&& draw) {
-        if (pl.now == 1.0f && pl.target == 1.0f && pr.now == 1.0f && pr.target == 1.0f) {
+    // One not rendered has its pan where it goes.
+    const auto pan = [n, bytes, L, R](bool on, Glide& pl, Glide& pr, float* xl, float* xr, auto&& draw) {
+        if (!on) {
+            pl.land();
+            pr.land();
+        } else if (pl.still() && pr.still() && pl.now == 1.0f && pr.now == 1.0f) {
             draw(L, R);
-            return;
+        } else {
+            std::memset(xl, 0, bytes);
+            std::memset(xr, 0, bytes);
+            draw(xl, xr);
+            for (int i = 0; i < n; ++i) {
+                L[i] += xl[i] * pl.next();
+                R[i] += xr[i] * pr.next();
+            }
         }
-        std::memset(xl, 0, bytes);
-        std::memset(xr, 0, bytes);
-        draw(xl, xr);
-        const float sl = (pl.target - pl.now) / static_cast<float>(n), sr = (pr.target - pr.now) / static_cast<float>(n);
-        float gl = pl.now, gr = pr.now;
-        for (int i = 0; i < n; ++i) {
-            gl += sl;
-            gr += sr;
-            L[i] += xl[i] * gl;
-            R[i] += xr[i] * gr;
-        }
-        pl.now = pl.target;
-        pr.now = pr.target;
     };
-    if (g)
-        pan(gPanL_, gPanR_, gL_, gR_,
-            [&](float* xl, float* xr) { ground_.render(tables_, xl, xr, sendL_, sendR_, groundSend_, n); });
+    pan(g, gPanL_, gPanR_, gL_, gR_,
+        [&](float* xl, float* xr) { ground_.render(tables_, xl, xr, sendL_, sendR_, groundSend_, n); });
     clock.lap(STG_GROUND);
-    if (b)
-        pan(bPanL_, bPanR_, bL_, bR_,
-            [&](float* xl, float* xr) { bloom_.render(tables_, xl, xr, sendL_, sendR_, bloomSend_, n); });
+    pan(b, bPanL_, bPanR_, bL_, bR_,
+        [&](float* xl, float* xr) { bloom_.render(tables_, xl, xr, sendL_, sendR_, bloomSend_, n); });
     clock.lap(STG_BLOOM);
 
     if (wet) {
@@ -470,16 +528,13 @@ bool Engine::piece(float* L, float* R, int n) {
             sendL_[0] = std::numeric_limits<float>::quiet_NaN();
             poison_ = false;
         }
-        const float step = (ret_.target - ret_.now) / static_cast<float>(n);
-        float r = ret_.now;
         for (int i = 0; i < n; ++i) {
-            r += step;
+            const float r = ret_.next();
             L[i] += r * sendL_[i];
             R[i] += r * sendR_[i];
         }
-        ret_.now = ret_.target;
     } else {
-        ret_.now = ret_.target;
+        ret_.land();   // no wet to glide over
     }
     clock.lap(STG_SPACE);
     const bool finite = output(L, R, n);
@@ -505,22 +560,18 @@ bool Engine::output(float* L, float* R, int n) {
     } else {
         tiltS_[0] = tiltS_[1] = 0.0f;
     }
+    volume_.apply(L, R, n);
 
-    const float v0 = volumeNow_;
-    float v1 = v0 + (volume_ - v0) * kVolumeGlide;
-    if (std::fabs(volume_ - v1) < kLand) v1 = volume_;
-    ramp(L, R, n, v0, v1);
-    volumeNow_ = v1;
-
-    uint32_t e = 0;
-    for (int i = 0; i < n; ++i) e = std::max(e, std::max(exponentOf(L[i]), exponentOf(R[i])));
-    if (e == 0x7F800000u) return false;
+    // One pass for the guard and the limiter: the largest |sample|'s bits.
+    uint32_t top = 0;
+    for (int i = 0; i < n; ++i) top = std::max(top, std::max(absBits(L[i]), absBits(R[i])));
+    if (top >= kInfBits) return false;
+    float pk;
+    std::memcpy(&pk, &top, sizeof pk);
 
     // The limiter: the gain computer only where a peak passes the knee or the gain is still down.
     // It runs on the gain's distance under 1 (d, and the wanted one wd): near 1 a float gain can't
     // take the release's small steps, a float distance can.
-    float pk = 0.0f;
-    for (int i = 0; i < n; ++i) pk = std::max(pk, std::max(std::fabs(L[i]), std::fabs(R[i])));
     limiting_ = pk > kKnee || limitD_ > 0.0f;
     if (limiting_) {
         constexpr float w = kCeiling - kKnee, invW = 1.0f / w;
@@ -541,8 +592,7 @@ bool Engine::output(float* L, float* R, int n) {
         limitD_ = pk <= kKnee && d < kLimitLand ? 0.0f : d;
     }
 
-    ramp(L, R, n, fade_.now, fade_.target);
-    fade_.now = fade_.target;
+    fade_.apply(L, R, n);
     return true;
 }
 

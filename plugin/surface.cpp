@@ -31,8 +31,6 @@ long long steadyMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-long long nowMs() { return Surface::clock ? Surface::clock() : steadyMs(); }
-
 // NaN from the host becomes 0: kept, it would reach the engine's smoothers and never leave.
 float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -75,6 +73,8 @@ std::string upper(std::string s) {
 }
 
 } // namespace
+
+long long Surface::nowMs() { return clock ? clock() : steadyMs(); }
 
 Surface::Surface() : texts_(P_COUNT) {
     for (int i = 0; i < P_COUNT; ++i) {

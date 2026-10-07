@@ -113,20 +113,13 @@ struct Plugin {
 
 Plugin* self(AEffect* e) { return static_cast<Plugin*>(e->object); }
 
-// Milliseconds for the suspend's length: the surface's clock (the tests' own, when they set one).
-long long nowMs() {
-    if (Surface::clock) return Surface::clock();
-    timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<long long>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
-}
-
 // The host stopped processing (effMainsChanged 0, effStopProcess), or said it starts again
 // (effMainsChanged 1, effStartProcess). The first suspend counts from when it came; a suspend after
 // a resume the audio thread hasn't seen yet starts over (the latest one wins: a reset covers a
 // Stop). What MPC sends on Stop is a Phase 0 question: the trace shows it.
+// The suspend's length is read on the surface's clock (the tests' own, when they set one).
 void suspended(Plugin* p) {
-    const long long now = nowMs();
+    const long long now = Surface::nowMs();
     if (tracing()) trace("%p suspend at %lld ms", static_cast<void*>(&p->fx), now);
     if (p->suspendMs.load() < 0 || p->resumeMs.load() >= 0) {
         p->resumeMs.store(-1);
@@ -134,7 +127,7 @@ void suspended(Plugin* p) {
     }
 }
 void resumed(Plugin* p) {
-    const long long now = nowMs();
+    const long long now = Surface::nowMs();
     if (tracing()) trace("%p resume at %lld ms", static_cast<void*>(&p->fx), now);
     if (p->suspendMs.load() >= 0 && p->resumeMs.load() < 0) p->resumeMs.store(now);
 }
@@ -248,9 +241,15 @@ void runBlock(Plugin* p, float* L, float* R, int n, const Transport& tr) {
     const long long went = p->suspendMs.exchange(-1);
     if (went >= 0) {
         long long back = p->resumeMs.exchange(-1);
-        if (back < 0) back = nowMs();
+        const bool told = back >= 0;
+        if (!told) back = Surface::nowMs();
+        const double awayS = static_cast<double>(back - went) * 1e-3;
+        // What MPC does around Stop, for Phase 0 (the trace is off unless asked for).
+        if (tracing())
+            trace("%p resumed %lld ms after the suspend (%s): %s", static_cast<void*>(&p->fx), back - went,
+                  told ? "the host said so" : "this block", awayS <= Engine::kStopWindowS ? "On Stop" : "reset");
         p->engine.suspend();
-        p->engine.resume(static_cast<double>(back - went) * 1e-3);
+        p->engine.resume(awayS);
     }
     p->engine.setTransport(tr.bpm, tr.beats, tr.playing, tr.valid);
 

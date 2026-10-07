@@ -776,19 +776,41 @@ void testListenChanges() {
     e.setPatch(p);
     CHECK(e.info().groundTarget % 12 == 0);
 
-    // The decay hold: Tail Space holds the reverb at Release or longer, except in Abyss.
+    // The decay hold: Tail Space holds the reverb at Release or longer; Abyss, which rings four
+    // times its Decay, at a quarter of it.
     Patch d;
-    d.space.reverb.decayS = 4.0f;
+    d.space.reverb.decayS = 2.0f;
     d.bloom.releaseS = 12.0f;
     e.setPatch(d);
     CHECK(e.info().spaceDecayS == 12.0f);
     d.bloom.tail = af::TL_VOICE;
     e.setPatch(d);
-    CHECK(e.info().spaceDecayS == 4.0f);
+    CHECK(e.info().spaceDecayS == 2.0f);
     d.bloom.tail = af::TL_SPACE;
     d.space.reverb.mode = af::Reverb::ABYSS;
     e.setPatch(d);
-    CHECK(e.info().spaceDecayS == 4.0f);
+    CHECK(e.info().spaceDecayS == 3.0f);
+
+    // Back on the notes with keys held (one by the pedal, one by a finger): they play their chords
+    // again, so Bloom sounds what Ground (on the notes) hears; the keys own them.
+    Engine k(sines());
+    Patch q = bloomOnly();
+    q.bloom.listen = af::LI_HARMONY;
+    q.bloom.swellS = 0.05f;
+    k.setPatch(q);
+    k.sustain(true);
+    k.noteOn(60, 100);
+    k.noteOff(60);
+    k.noteOn(65, 100);
+    render(k, 0.3);
+    CHECK(bloomPcs(k) == af::buildChord(q.harmony, 65).pcs);   // the harmony's: the latest key
+    q.bloom.listen = af::LI_NOTES;
+    k.setPatch(q);
+    render(k, 0.3);
+    CHECK(bloomPcs(k) == (af::buildChord(q.harmony, 60).pcs | af::buildChord(q.harmony, 65).pcs));
+    k.sustain(false);
+    k.noteOff(65);
+    CHECK(bloomPcs(k) == 0);
 }
 
 // Rise (space.cpp's kFull) against a real pad's send: the Init levels (the knobs' defaults,
@@ -819,7 +841,194 @@ void testRise() {
     CHECK(db(wet[1] / wet[0]) < -20.0);
 }
 
-// Check 11 (not a gate): the worst case's cost on this machine.
+// Freeze: a frozen reverb takes no input, so a tail handed to it would be lost. Bloom is given a
+// send of 0 and releases as Tail Voice: its release is heard as it is with Space off.
+void testFreezeTail() {
+    std::printf("== engine: Freeze and Bloom's tail\n");
+    double level[2] = {};
+    for (int k = 0; k < 2; ++k) {
+        Engine e(sines());
+        Patch p = bloomSine();
+        p.bloom.releaseS = 6.0f;
+        p.bloom.tail = af::TL_SPACE;
+        if (k == 0) {   // Space on and frozen
+            p.spaceReturn = 0.64f;
+            p.space.reverb.freeze = true;
+        }
+        e.setPatch(p);
+        e.noteOn(69, 127);
+        render(e, 0.5);
+        e.noteOff(69);
+        if (k == 0) CHECK(stageOf(e, 69) == af::Bloom::ST_RELEASE);   // not a handoff
+        const Out o = render(e, 3.0);
+        level[k] = rms(o.L, 2 * 44100, 3 * 44100);   // 2..3 s into the release
+    }
+    std::printf("  2..3 s into a 6 s release: frozen Space %.1f dBFS, Space off %.1f dBFS\n", db(level[0]), db(level[1]));
+    CHECK(level[1] > 1e-3 && std::fabs(db(level[0] / level[1])) < 0.1);
+}
+
+// Hold: a key pressed while a finger is still down joins the chord; the first key after every
+// finger has left starts a new one, and the latched keys go.
+void testHoldJoins() {
+    std::printf("== engine: Hold, a chord built key by key\n");
+    Engine e(sines());
+    Patch p = bloomOnly();
+    p.hold = true;
+    p.harmony.chord = af::CH_OFF;
+    p.harmony.input = af::IN_AS_PLAYED;
+    p.bloom.swellS = 0.05f;
+    e.setPatch(p);
+    e.noteOn(60, 100);   // C
+    e.noteOn(64, 100);   // E
+    e.noteOff(60);
+    e.noteOn(67, 100);   // G, E still down: it joins
+    render(e, 0.3);
+    const uint16_t ceg = (1u << 0) | (1u << 4) | (1u << 7);
+    CHECK(bloomPcs(e) == ceg && e.harmony().current().n == 3);
+    e.noteOff(64);
+    e.noteOff(67);
+    render(e, 0.3);
+    CHECK(bloomPcs(e) == ceg && e.harmony().held() == 3);   // latched
+    e.noteOn(65, 100);   // F, every finger up: a new chord
+    render(e, 0.3);
+    CHECK(bloomPcs(e) == (1u << 5) && e.harmony().current().n == 1 && e.harmony().current().root == 65);
+    // With chords, the new chord's notes in common with the latched one carry on untouched.
+    Engine c(sines());
+    Patch q = bloomOnly();
+    q.hold = true;
+    q.harmony.voicing = af::VO_CLOSE;
+    q.bloom.swellS = 0.05f;
+    c.setPatch(q);
+    c.noteOn(60, 100);   // C E G
+    c.noteOff(60);
+    render(c, 0.5);
+    const af::Chord was = af::buildChord(q.harmony, 60), next = af::leadFrom(q.harmony, was, af::buildChord(q.harmony, 65));
+    c.noteOn(65, 100);   // F A C: C carries on
+    bool ok = true;
+    for (int k = 0; k < was.n; ++k) {
+        const int st = stageOf(c, was.notes[k]);
+        ok = ok && (inChord(next, was.notes[k]) ? st == af::Bloom::ST_SUSTAIN : st == af::Bloom::ST_RELEASE);
+    }
+    CHECK(ok && inChord(next, 60));
+
+    // Hold turned off with the pedal down: the latched key goes to the pedal.
+    Engine d(sines());
+    Patch r = bloomOnly();
+    r.hold = true;
+    r.bloom.swellS = 0.05f;
+    d.setPatch(r);
+    d.sustain(true);
+    d.noteOn(60, 100);
+    d.noteOff(60);
+    r.hold = false;
+    d.setPatch(r);
+    render(d, 0.2);
+    CHECK(bloomPcs(d) == af::buildChord(r.harmony, 60).pcs && d.harmony().held() == 1);
+    d.sustain(false);
+    CHECK(bloomPcs(d) == 0 && d.harmony().held() == 0);
+
+    // A full harmony lets the oldest latched key go: a finger on 70, fifteen keys joining and latched.
+    Engine f(sines());
+    Patch s2 = dry();
+    s2.hold = true;
+    s2.harmony.input = af::IN_AS_PLAYED;
+    f.setPatch(s2);
+    f.noteOn(70, 100);
+    for (int k = 41; k < 56; ++k) {
+        f.noteOn(k, 100);
+        f.noteOff(k);
+    }
+    CHECK(f.harmony().held() == af::Harmony::kHeldMax && f.harmony().lowestHeld() == 41);
+    f.noteOn(56, 100);
+    CHECK(f.harmony().held() == af::Harmony::kHeldMax && f.harmony().lowestHeld() == 42 &&
+          f.info().harmonyRoot == af::buildChord(s2.harmony, 56).root);
+}
+
+// The pans, the return and the volume glide 10 ms, a step a sample from the control step that finds
+// them changed, whatever cuts the pieces: hard left to hard right with the next piece one sample
+// long steps no more than the signal does itself.
+void testGlides() {
+    std::printf("== engine: the pans and the return glide\n");
+    Engine e(sines());
+    Patch p = bloomSine();
+    p.bloomPan = -1.0f;
+    e.setPatch(p);
+    e.noteOn(69, 127);
+    const Out steady = render(e, 0.5);
+    const float own = maxStep(steady.L, steady.L.size() / 2);
+    p.bloomPan = 1.0f;
+    e.setPatch(p);
+    Out o{Buf(4096), Buf(4096)};
+    e.render(&o.L[0], &o.R[0], 1);   // an event one sample in
+    for (size_t b = 1; b < o.L.size(); b += 128) {
+        const int m = static_cast<int>(std::min<size_t>(128, o.L.size() - b));
+        e.render(&o.L[b], &o.R[b], m);
+    }
+    const float worst = std::max(maxStep(o.L), maxStep(o.R));
+    std::printf("  hard left to hard right: largest step %.4f, the sine's own %.4f\n", worst, own);
+    CHECK(worst < 2.0f * own);
+    // The glide starts at the next control step (within 32 samples) and takes 441: under way 5 ms
+    // in, done by 11 ms.
+    CHECK(peak(o.L, 200, 221) > 0.0f && peak(o.L, 485, o.L.size()) == 0.0f && peak(o.R, 485, o.R.size()) > 0.05f);
+
+    // The return: a ringing tail (Ground and Bloom muted, the reverb on) taken away over 10 ms.
+    Engine r(sines());
+    Patch q;
+    q.volumeDb = 0.0f;
+    q.ground.mute = true;
+    r.setPatch(q);
+    r.noteOn(60, 127);
+    render(r, 2.0);
+    q.bloom.mute = true;
+    r.setPatch(q);
+    render(r, 0.3);
+    q.spaceReturn = 0.0f;
+    r.setPatch(q);
+    const Out t = render(r, 0.05);
+    CHECK(std::max(peak(t.L, 200, 221), peak(t.R, 200, 221)) > 0.0f &&
+          std::max(peak(t.L, 485, t.L.size()), peak(t.R, 485, t.R.size())) == 0.0f);
+}
+
+// On Stop changed while a fade is under way: Keep turns it round, Cut resets; the transport
+// starting turns it round too.
+void testStopChanges() {
+    std::printf("== engine: On Stop changed mid-fade, the transport starting again\n");
+    Engine e(sines());
+    Patch p;
+    e.setPatch(p);
+    Clock t;
+    t.playing = true;
+    e.noteOn(60, 100);
+    render(e, 1.0, &t);
+    t.playing = false;
+    render(e, 1.0, &t);
+    CHECK(e.info().fading);
+    p.onStop = af::OS_KEEP;
+    e.setPatch(p);
+    CHECK(!e.info().fading);
+    render(e, 1.0, &t);
+    CHECK(e.info().fadeDb == 0.0f && e.info().awake);
+    p.onStop = af::OS_FADE;
+    e.setPatch(p);
+    t.playing = true;
+    render(e, 0.5, &t);
+    t.playing = false;
+    render(e, 1.0, &t);
+    CHECK(e.info().fading);
+    t.playing = true;   // playing again
+    render(e, 128.0 / af::kRate, &t);
+    CHECK(!e.info().fading);
+    render(e, 1.0, &t);
+    CHECK(e.info().fadeDb == 0.0f && e.info().awake);
+    t.playing = false;
+    render(e, 1.0, &t);
+    CHECK(e.info().fading);
+    p.onStop = af::OS_CUT;
+    e.setPatch(p);
+    CHECK(!e.info().awake && peakOf(render(e, 128.0 / af::kRate, &t)) == 0.0f);
+}
+
+// Check 11: the worst case renders faster than real time under ASan, with room to spare.
 void testCost() {
     std::printf("== engine: cost of the worst case\n");
     Engine e(saws());
@@ -899,6 +1108,10 @@ void engineTests() {
     testLimiter();
     testLimiterRelease();
     testManyKeys();
+    testFreezeTail();
+    testHoldJoins();
+    testGlides();
+    testStopChanges();
     testCost();
 }
 

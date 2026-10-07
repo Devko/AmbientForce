@@ -17,32 +17,44 @@
 // at the first note-on and stays awake through note-offs, until Stop or reset() put it to sleep.
 //
 // Keys, the pedal and Hold. A key up while the pedal (CC 64) is down is held by the pedal until
-// it comes up; with Hold on it is latched instead, and the next note-on lets it go, after the
-// new chord has started (Bloom's play() before release(), so the notes the two chords share carry
-// on). A key held either way still counts as held for the harmony: the memory's bars count from
-// when the chord is let go, not from when the fingers left it, and Ground in Notes mode stays on
-// the chord the pedal or Hold keeps sounding. (Under Chord Off, where the harmony's chord is the
-// notes held, the latched keys leave the harmony before the new one goes down, or they would stay
-// in its chord.) The harmony keeps 16 keys: full, a new key lets the oldest one the pedal or Hold
-// keeps go first (a pedal down through a long phrase), while 16 fingers keep theirs and the new
-// key isn't heard there. Hold turned off lets the latched keys go (to the pedal, if it is down).
-// CC 123 lets every key go, held by a finger, the pedal or Hold, but the engine stays awake: what
-// the harmony remembers goes on sounding.
+// it comes up; with Hold on it is latched instead. The first note-on after every finger has left
+// the keys starts a new chord and lets the latched keys go, after the new chord has started
+// (Bloom's play() before release(), so the notes the two chords share carry on); a key pressed
+// while a finger is still down joins the chord. A key held either way still counts as held for the
+// harmony: the memory's bars count from when the chord is let go, not from when the fingers left
+// it, and Ground in Notes mode stays on the chord the pedal or Hold keeps sounding. (Under Chord
+// Off, where the harmony's chord is the notes held, a new chord's latched keys leave the harmony
+// before its first key goes down, or they would stay in its chord.) The harmony keeps 16 keys:
+// full, a new key lets the oldest one the pedal or Hold keeps go first (a pedal down through a
+// long phrase), while 16 fingers keep theirs and the new key isn't heard there. Hold turned off
+// lets the latched keys go (to the pedal, if it is down). CC 123 lets every key go, held by a
+// finger, the pedal or Hold, but the engine stays awake: what the harmony remembers goes on
+// sounding.
+//
+// Listen changed while sounding: Ground is given its new target at once (gliding by Gravity, or
+// fading when the new mode has none). Bloom moved to Harmony or Free moves to that chord at once,
+// the notes in common carrying on; moved back to Notes, the keys held (by a finger, the pedal or
+// Hold) play their chords again, oldest first, before the harmony's or the tonic's chord lets go,
+// so Bloom and Ground agree.
 //
 // Stop (CONCEPT.md 7.4): the transport stopping (playing to stopped, from setTransport) or a
 // suspend that resumes within kStopWindowS applies On Stop: Keep does nothing; Fade fades the
 // output to silence over kFadeS (linear in dB down to -60 dB), then resets and sleeps; Cut resets
 // at once. A note-on or the transport starting during a fade turns it round: the output comes
-// back up at kRecoverDbPerS. A longer suspend resets. CC 120 and reset() silence everything at
-// once, forget the harmony and the keys, and sleep.
+// back up at kRecoverDbPerS. On Stop changed during a fade applies at once: Keep turns it round,
+// Cut resets. A longer suspend resets. CC 120 and reset() silence everything at once, forget the
+// harmony and the keys, and sleep.
 //
 // The mix: Ground and Bloom each render their dry (panned by groundPan / bloomPan, equal power,
 // unity in the middle) into the dry bus and add their sends into the Space bus (Ground at
 // groundSpace, Bloom at bloomSpace). Bloom's send is 0 whenever Space can't carry a tail (the
-// return or Bloom's send at 0): it then releases as Tail Voice. Ground's is 0 with the return at
-// 0 too, so a Space nobody hears isn't run. With Bloom's Tail on Space, the reverb's decay is held
-// at Bloom's Release or longer (not in Abyss, which rings four times the Decay anyway), so the
-// tail a voice hands off carries on.
+// return or Bloom's send at 0, or Freeze on: a frozen reverb takes no input): it then releases as
+// Tail Voice. Ground's is 0 with the return at 0 too, so a Space nobody hears isn't run. With
+// Bloom's Tail on Space, the reverb's decay is held at Bloom's Release or longer (in Abyss, which
+// rings four times its Decay, at a quarter of it), so the tail a voice hands off carries on. The
+// volume, the return and the pans glide in a straight line over 10 ms from where the next control
+// step finds them changed, a step a sample carried from one piece to the next, so a MIDI event
+// that cuts a piece short never makes one jump.
 //
 // The output: dry + spaceReturn x wet -> tilt -> volume -> the non-finite guard -> limiter ->
 // Stop's fade.
@@ -149,10 +161,10 @@ public:
     // What the tests (and nothing else) look at.
     struct Info {
         bool awake = false;           // a note-on has woken it, and no Stop or reset put it to sleep
-        bool idle = false;            // the last render() ran no DSP
+        bool idle = false;            // the last piece (a control step, or what an event left of it) ran no DSP
         bool fading = false;          // On Stop's Fade under way
         float fadeDb = 0.0f;          // where it is (0: none)
-        bool suspended = false;       // suspend() without resume() yet
+        bool suspended = false;       // suspend() without its resume() (the plugin calls both at once; the tests apart)
         int groundTarget = -1;        // the note Ground was last given (-1: none)
         bool groundAudible = false;
         int bloomActive = 0;
@@ -202,16 +214,28 @@ public:
 private:
     enum KeyState : uint8_t { K_UP, K_DOWN, K_PEDAL, K_HOLD };
 
-    // A gain that moves in a straight line across a piece (at most kChunk samples) to its target.
+    // A gain gliding to its target in a straight line: aim() (at a control step) sets the step a
+    // sample when the target has changed; next() and apply() take it a sample at a time, across
+    // pieces, and land on it exactly.
     struct Glide {
-        float now = 1.0f, target = 1.0f;
+        float now = 1.0f, target = 1.0f, to = 1.0f, step = 0.0f;
+        void aim(int samples);               // to the target over `samples`, if it changed
+        float next();
+        void apply(float* L, float* R, int n);
+        void land();                         // at the target now
+        bool still() const { return step == 0.0f; }
     };
 
+    void changed(const Patch& was);          // what a patch change does to what sounds: Hold, Listen, On Stop
+    void playKey(int key, bool again);       // Bloom (Notes) plays the key's chord
+    void releaseLatched(int except);         // the keys Hold latched go
+    void makeRoom(bool latchedOut);          // a full harmony lets the oldest pedal or Hold key go
     void letGo(int key);                     // the key's notes released, the key gone from the harmony
     void stop();                             // On Stop
     void route();                            // Ground's target and Bloom's chord from the harmony
     void control();                          // a control step
     void clearDsp();                         // every DSP state, silent (reset() and the guard)
+    void settle();                           // the output where it settles: glides landed, filters empty
     bool piece(float* outL, float* outR, int n);   // n <= kChunk samples; false: not finite
     bool output(float* L, float* R, int n);   // false: a sample isn't finite
     void tiltFor(float t);                   // the tilt's coefficients for t
@@ -225,9 +249,11 @@ private:
     Space::Params spaceParams_;              // what Space is given: the patch's, the tail's hold applied
     Transport transport_;
 
-    // Keys: down, held by the pedal or latched by Hold (the harmony keeps each one's mapped note),
-    // and the chord Bloom played for each (Notes).
+    // Keys: down, held by the pedal or latched by Hold; the note Input mapped each to, its
+    // velocity, and the chord Bloom played for it (Notes).
     KeyState key_[128] = {};
+    int mapped_[128] = {};
+    float keyVel_[128] = {};
     uint64_t keyAge_[128] = {};              // the note-on that put each key down: the oldest goes first
     uint64_t keysPressed_ = 0;
     Chord keyChord_[128];
@@ -255,7 +281,7 @@ private:
     float groundSend_ = 0.0f, bloomSend_ = 0.0f;
     Glide ret_;                              // the Space return
     Glide gPanL_, gPanR_, bPanL_, bPanR_;    // the strata's pans
-    float volume_ = 0.0f, volumeNow_ = 0.0f; // the volume as a gain, and where it glides
+    Glide volume_;                           // the volume as a gain
     float tilt_ = 0.0f;                      // where the tilt glides, from tiltNow_
     float tiltNow_ = 0.0f;
     float tiltG_ = 0.0f, tiltLow_ = 1.0f, tiltHigh_ = 1.0f;   // the one-pole's G, the shelf's gains

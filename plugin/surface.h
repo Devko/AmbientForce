@@ -75,6 +75,7 @@ public:
     // Milliseconds for telling gestures apart (null: the steady clock). Tests set one that only
     // moves when they say, so stepping doesn't depend on how fast the machine is.
     static long long (*clock)();
+    static long long nowMs();   // clock(), or the steady clock when none is set (the plugin's suspends read it too)
 
 private:
     struct Category {
