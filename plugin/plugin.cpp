@@ -75,10 +75,14 @@ private:
     uint32_t saved_ = 0;
 };
 
+// The seconds go through 32 bits (a thread's CPU time won't reach 136 years): on ARM a 64-bit
+// time_t becomes a double in libgcc, which returns early for 0, so the meter cost a few dozen
+// instructions less a block while the audio thread's CPU time was under a second. That made make
+// arm-icount's count depend on how fast the machine ran; a 32-bit one is a single instruction.
 double threadCpuUs() {
     timespec ts;
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
-    return static_cast<double>(ts.tv_sec) * 1e6 + static_cast<double>(ts.tv_nsec) * 1e-3;
+    return static_cast<double>(static_cast<uint32_t>(ts.tv_sec)) * 1e6 + static_cast<double>(ts.tv_nsec) * 1e-3;
 }
 
 struct RawMidi {

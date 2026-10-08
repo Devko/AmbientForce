@@ -82,24 +82,48 @@ a little over the shipped build's), µs per block:
 - **Profile-guided**: the shipped `.so` is built with a profile from `tools/pgo_train.cpp`, which
   plays an ambient phrase through every Space mode, Couple mode, Listen pair, tuning, chord type and
   voicing, Hold and the pedal, Stop and a suspend, then every factory preset, under `qemu-arm`.
-- **Instruction counts**, between device runs: ARM instructions per 128-sample block, counted under
-  a plugin-enabled `qemu-arm` for code built with the device's flags. They are exact and
-  repeatable, so every review measured its change with them ([below](#instruction-counts)).
+- **Instruction counts**, between device runs: **`make arm-icount`** prints each bench case's ARM
+  instructions per 128-sample block, for the plugin built with the device's flags but no profile
+  (the profile was trained on the code before the change), counted by qemu's `insn` plugin under a
+  `qemu-arm` built with TCG plugins. Each case plays twice, 256 and 768 blocks after its 2 s, and
+  the difference over 512 is its figure; only the thread that plays is counted, and everything
+  whose cost depends on the machine (loading the plugin, the wait for the tables, setting the case
+  up) runs on another. So the figures are exact and the same on every run with the same qemu, cross
+  compiler and ARM libraries, and every change is measured with them ([below](#instruction-counts);
+  [Building](BUILDING.md#instruction-counts) has the details and how to build that qemu).
 
 `make bench` on x86 only proves the bench works; the Force is far slower per sample.
 
 ## Instruction counts
 
-ARM instructions per block, the whole plugin through `VSTPluginMain` (the bench's cases), and each
-stratum on its own (from the headers in `dsp/`, which give the figures):
+ARM instructions per block, the whole plugin through `VSTPluginMain` (the bench's cases, from
+`make arm-icount`: the plain build of 0.0.2 by Ubuntu 24.04's `arm-linux-gnueabihf-g++` 13.3.0, run
+with its glibc 2.39 and libstdc++, counted by qemu 8.2.2's `insn` plugin; counts compare only with
+counts from the same qemu, compiler, libraries and bench, [Building](BUILDING.md#instruction-counts)
+says why), and each stratum on its own (from the headers in `dsp/`, which give the figures):
 
 | Case | ARM instructions per block | By ~1 ns an instruction | On the device (avg) |
 |---|---|---|---|
 | idle | 1.1k | 0.04% | 0.11% |
-| init chord | 210k | 7.2% | 4.20% |
-| drone | 175k | 6.0% | 3.42% |
-| bloom 6x2 | 355k | 12.2% | 6.68% |
-| worst (its re-strike blocks) | 423k (433k) | 14.6% (14.9%) | 8.95% |
+| init chord | 198.0k | 6.8% | 4.20% |
+| drone | 163.0k | 5.6% | 3.42% |
+| bloom 6x2 | 314.3k | 10.8% | 6.68% |
+| worst (its re-strike's block) | 396.1k (413.3k) | 13.6% (14.2%) | 8.95% |
+
+The worst case's figure is the 512 blocks' average, one re-strike among them. The re-strike's own
+block (the twelve keys' events, six voices taken from their release) counts 413.3k, the 64 blocks
+before it 399.5k a block. Both come from the same main-thread counts, run by hand: the re-strike's
+keys go in before block 689 after the 2 s (counting from 0), so `afbench <so> --icount worst 690`
+less `689` is that block alone, and `689` less `625`, over 64, the blocks before it. The
+profile-guided build, which the device runs, counts 1–3% either side of these: 195.3k, 158.0k,
+318.0k and 399.9k.
+
+These figures replace the ones this table had through M1 (init chord 210k, drone 175k, bloom 6x2
+355k, worst 423k, 433k where it re-strikes), which came from another qemu build and ran 7–14% over
+`arm-icount`'s for the same code: the commit they were taken at (`9183bd8`) counts 196.7k, 161.7k,
+312.5k and 392.3k here. Today's code counts under 1% over that, for the synced breath and sways.
+The strata's figures below and the oscillator's were counted before `arm-icount` too: compare them
+with each other, not with the table above.
 
 | Stratum on its own | ARM instructions per block |
 |---|---|
@@ -116,11 +140,12 @@ instructions a sample: A's read 74, the breath, SVF, pan and gains 36, the contr
 bus the rest.
 
 **The calibration.** Before the device run the percentages took PolyForce's figure, about 1 ns an
-instruction on the Force, and put the worst case at 14.6–14.9%, inside the gate with little room
-for the device's jitter. The device ran AmbientForce's code at **about 0.55–0.6 ns an instruction**
-on average (init chord 0.58, drone 0.57, bloom 6x2 0.55, worst 0.61), with p99 1.2–1.3 times the
-average: the counts over-predicted by two thirds. They stay the measure of a change between device
-runs; for the budget, the device's figures count.
+instruction on the Force, and put the worst case at 14.6–14.9% (with the earlier counts), inside the
+gate with little room for the device's jitter. Against `arm-icount`'s counts the device ran
+AmbientForce's code at **about 0.61–0.66 ns an instruction** on average (init chord 0.62, drone 0.61,
+bloom 6x2 0.62, worst 0.66), with p99 1.2–1.3 times the average: 1 ns an instruction over-predicts
+by 50–65%. The counts stay the measure of a change between device runs; for the budget, the
+device's figures count.
 
 ## Memory and load time
 
