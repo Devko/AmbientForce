@@ -27,14 +27,17 @@ namespace af {
 // A Weather source: stereo, 16 bit, at three rates (EffectForce's levels: a grain pitched up reads a
 // decimated copy, so what it would shift past 22 kHz was filtered out first). Interleaved L R. Each
 // level loops: GrainSource::kGuard frames after its end repeat its start, so a call's reads never wrap.
+// Ready only with all three levels and frames a multiple of 4: Weather has no fallback, since level
+// 0 read at up to 4 frames a sample would alias and outrun the copies it takes at a source change.
+// buildSource() makes all three, and Memory records all three.
 struct GrainSource {
     static constexpr int kLevels = 3;
     static constexpr int kGuard = 256;
     int frames = 0;            // level 0's frames, a multiple of 4; level k holds frames >> k (then the guard)
     int origin = 0;            // level 0's frame where the source starts (Memory's oldest); 0 for a file
     float gain = 1.0f / 32768.0f;          // a sample's value as a float
-    const int16_t* level[kLevels] = {};    // nullptr: empty
-    bool ready() const { return frames > 0 && level[0]; }
+    const int16_t* level[kLevels] = {};    // nullptr: empty (not ready)
+    bool ready() const { return frames > 0 && frames % 4 == 0 && level[0] && level[1] && level[2]; }
 };
 
 // A source that owns its samples (a field or a WAV, built at load time, never on the audio thread).
@@ -54,9 +57,14 @@ struct SourceBuffer {
 //
 // - The loop: its first `fade` frames are the start fading in (sin) under the frames past the loop's
 //   end fading out (cos), so the last frame runs on into the first as the signal itself ran on.
+//   Equal power (the plan's choice) suits material that differs at the two ends: a DC, or a
+//   signal alike at both, swells by up to 3 dB across the fade (sin + cos reaches sqrt 2 half
+//   way), and a tone in antiphase at the two ends dips there.
 //   The loop is frames - fade long, rounded down to a multiple of 4 (the decimators halve twice),
-//   the up to 3 frames over joining the fade. A signal under 0.5 s fades over half of itself; one
-//   under 8 frames is one loop of 4 padded with silence, unfaded.
+//   the up to 3 frames over joining the fade. A signal under 0.5 s fades over about half of itself,
+//   at most the loop less a frame (7 frames: a loop of 4 faded over 3). If that leaves under 4
+//   frames to loop (a signal of 1 to 6 frames), the loop is its first 4 frames, unfaded, padded
+//   with silence when it has fewer.
 // - The level: one gain for both channels, the loop's RMS (both channels together) at
 //   kSourceRmsDb unless its peak would pass 0 dBFS (then the peak at full scale). Silence stays
 //   silence. A sample that isn't finite counts as 0.
