@@ -722,6 +722,7 @@ int main() {
     echoTests();
     weatherTests();
     fieldsTests();
+    sourcesTests();
     testBasics();
     testGetters();
     testPlay();

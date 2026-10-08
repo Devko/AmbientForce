@@ -106,18 +106,21 @@ $(BUILD)/arm/plugin_test: $(TESTS) $(wildcard test/*.h tools/*.h) $(SRC) $(HDR) 
 
 # One dsp suite on its own, quicker to iterate on (EffectForce's): make test-module M=reverb builds
 # test/reverb_test.cpp with every dsp/*.cpp under ASan/UBSan; test-module-arm the same for the
-# device's CPU under qemu-arm. Suites that drive the plugin (engine, preset) need make test.
+# device's CPU under qemu-arm. Suites that drive the plugin (engine, preset) need make test. The
+# sources suite tests the loader, the WAV reader and the source library, which are plugin files: it
+# gets those (MOD_PLUGIN_<suite>) besides the dsp ones.
 M ?=
-MOD_SRC = test/module_main.cpp test/$(M)_test.cpp $(wildcard dsp/*.cpp)
+MOD_PLUGIN_sources = plugin/paths.cpp plugin/loader.cpp plugin/wav.cpp plugin/sources.cpp
+MOD_SRC = test/module_main.cpp test/$(M)_test.cpp $(wildcard dsp/*.cpp) $(MOD_PLUGIN_$(M))
 test-module: | $(BUILD)
 	@[ -n "$(M)" ] || { echo "usage: make test-module M=<suite>"; exit 1; }
-	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra \
+	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra -pthread \
 		-DMODULE_TESTS=$(M)Tests $(INC) $(MOD_SRC) -o $(BUILD)/$(M)_test
 	$(BUILD)/$(M)_test
 test-module-arm:
 	@[ -n "$(M)" ] || { echo "usage: make test-module-arm M=<suite>"; exit 1; }
 	mkdir -p $(BUILD)/arm
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -DMODULE_TESTS=$(M)Tests $(INC) $(MOD_SRC) -o $(BUILD)/arm/$(M)_test
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread -DMODULE_TESTS=$(M)Tests $(INC) $(MOD_SRC) -o $(BUILD)/arm/$(M)_test
 	$(ARM_RUN) $(BUILD)/arm/$(M)_test
 
 # x86 numbers say nothing about the Force; this only checks the bench and the .so paths work

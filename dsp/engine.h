@@ -276,7 +276,8 @@ public:
         uint64_t samples = 0;         // rendered so far
         float limiterGain = 1.0f;
         bool limiting = false;        // the last piece ran the limiter's gain computer
-        bool gliding = false;         // the volume, a return, a pan or an Echo send is still on its way
+        bool gliding = false;         // a glide of the engine's own on its way: the volume, Space's or Echo's return,
+                                      // Echo's Space send, Ground's or Bloom's pan or Echo send (Air's, Weather's not)
         float spaceDecayS = 0.0f;     // the decay Space was given (the tail's hold applied)
         int airActive = 0;            // Air's voices ringing
         uint64_t airStrikes = 0;      // notes Air has struck (generated, replayed and played)

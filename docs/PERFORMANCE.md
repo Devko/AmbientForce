@@ -132,7 +132,7 @@ M2's own cases play the engine itself, linked into the bench, until the plugin m
 
 | Case (M2's engine) | ARM instructions per block | Its spike, counted by hand |
 |---|---|---|
-| init chord / drone / bloom 6x2 | 202.0k / 167.0k / 317.7k | |
+| init chord / drone / bloom 6x2 | 202.0k / 167.0k / 317.8k | |
 | worst | 399.3k | its re-strike's block 417.2k |
 | air | 146.6k | |
 | weather | 180.9k | |
@@ -154,7 +154,12 @@ Task 8's review moved Air and Weather's pans and Echo sends into their own outpu
 straight from the bus and gave Air its clock only when it renders: from the counts first made with
 Task 6 merged (`61642fe`: init chord 203.0k, worst 400.4k, air 149.0k, weather 181.5k, worst m2
 532.0k in Cloud) about 1k came off every case and 4.5k off M2's worst (Cloud for Cloud; Air's part
-38.4k to 35.9k, Weather's 60.5k to 59.7k).
+38.4k to 35.9k, Weather's 60.5k to 59.7k). Its re-review sealed Memory's ring at a sleep
+(`Memory::seal()`): 12 instructions a block on every case (write()'s test for a fade-in, 3 a call
+in the engine's pieces of 32; bloom 6x2 317.7k to 317.8k, the rest unchanged at this rounding), and
+on the block a sleep that keeps the ring comes in 12.5k at most for the seal itself, nothing
+staged, with 0.5k more for its fade-in over the writes after (7.4k in all with 127 frames staged);
+once a sleep, in a block that goes silent from there.
 
 The strata's figures below and the oscillator's were counted before `arm-icount` too: compare them
 with each other, not with the table above.
