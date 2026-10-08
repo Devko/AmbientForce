@@ -56,8 +56,9 @@ void AirGen::set(const AirGenPatch& p, const HarmonyPatch& h) {
     const int key = pitchClass(h.key), scale = clampi(h.scale, 0, SC_COUNT - 1);
 
     const bool harmony = key != key_ || scale != scale_;
-    const bool candidates = harmony || q.registerOct != p_.registerOct || q.rangeOct != p_.rangeOct ||
-                            q.gravity != p_.gravity;
+    const bool allowedMoved = harmony || q.gravity != p_.gravity;   // which notes are allowed
+    const int shift = 12 * (q.registerOct - p_.registerOct);
+    const bool candidates = allowedMoved || shift != 0 || q.rangeOct != p_.rangeOct;
     if (q.loop && !p_.loop) startLoop_ = true;   // the first pass starts at the next step
     if (!q.loop) {
         loop_ = LS_OFF;
@@ -70,7 +71,7 @@ void AirGen::set(const AirGenPatch& p, const HarmonyPatch& h) {
     if (harmony) ++harmony_;
     if (candidates) {
         rebuildCandidates();
-        snapMotifs();
+        moveMotifs(shift, allowedMoved);
     }
 }
 
@@ -82,7 +83,7 @@ void AirGen::setChord(const Chord& c, bool generate) {
     pcs_ = c.pcs;
     ++harmony_;
     rebuildCandidates();
-    snapMotifs();
+    moveMotifs(0, true);
 }
 
 void AirGen::played(int note, float vel, int offset) {
@@ -117,7 +118,6 @@ void AirGen::reset() {
     recStart_ = 0.0;
     repPass_ = 0;
     repIdx_ = 0;
-    repMove_ = repVel_ = 0.0;
     nHeardNow_ = 0;
 }
 
@@ -210,21 +210,28 @@ int AirGen::choose(double uPick, double uMut, double uWhich, double uDir) {
         return pick(all, nCand_, ex, 2, uPick);
     }
     if (p_.pattern == AP_RISE || p_.pattern == AP_FALL) {
-        // The next candidate above (below) the last note, round from the top (bottom); before any
-        // note, from the bottom (top).
+        // The walk is over the allowed candidates (Gravity 1: the chord tones); over all of them
+        // when fewer than two are allowed, or a lone chord tone would repeat itself.
+        int walk[kCandMax], n = 0;
+        for (int i = 0; i < nCand_; ++i)
+            if (allowed(i)) walk[n++] = i;
+        if (n < 2)
+            for (n = 0; n < nCand_; ++n) walk[n] = n;
+        // The next above (below) the last note, round from the top (bottom); before any note, from
+        // the bottom (top).
         int j;
         if (p_.pattern == AP_RISE) {
             j = 0;
-            while (j < nCand_ && cand_[j] <= last_) ++j;
-            if (j == nCand_) j = 0;
+            while (j < n && cand_[walk[j]] <= last_) ++j;
+            if (j == n) j = 0;
         } else {
-            j = nCand_ - 1;
-            while (j >= 0 && last_ >= 0 && cand_[j] >= last_) --j;
-            if (j < 0) j = nCand_ - 1;
+            j = n - 1;
+            while (j >= 0 && last_ >= 0 && cand_[walk[j]] >= last_) --j;
+            if (j < 0) j = n - 1;
         }
-        const int next = p_.pattern == AP_RISE ? (j + 1) % nCand_ : (j - 1 + nCand_) % nCand_;
-        const int two[2] = {j, next};
-        return pick(two, nCand_ > 1 ? 2 : 1, ex, 2, uPick);
+        const int next = p_.pattern == AP_RISE ? (j + 1) % n : (j - 1 + n) % n;
+        const int two[2] = {walk[j], walk[next]};
+        return pick(two, n > 1 ? 2 : 1, ex, 2, uPick);
     }
     // Constellation and Echo: a motif, one note per event, mutated where a pass ends.
     bool mutated = false;
@@ -341,22 +348,34 @@ void AirGen::mutate(int* m, int len, double uMut, double uWhich, double uDir) {
     }
 }
 
-// The candidates changed: every motif note no longer allowed moves to the nearest allowed one that
-// keeps the rule against the notes within two of it (those drawn so far).
-void AirGen::snapMotifs() {
+// The candidates changed. Both motifs (the notes drawn so far) move by `shift` semitones (Register's
+// octaves), whole, keeping their shape; a note still outside the range folds in by octaves. Then a
+// note that found no octave in the range, that repeats one within two of it, or (`snap`: what is
+// allowed changed) that isn't allowed, moves to the nearest allowed note that keeps the rule
+// against those within two of it (none does: the nearest).
+void AirGen::moveMotifs(int shift, bool snap) {
     for (int which = 0; which < 2; ++which) {
         int* m = which ? echo_ : con_;
         const int n = which ? echoLen_ : conN_, len = which ? echoLen_ : conLen_;
+        bool lost[kMotifMax] = {};
         for (int i = 0; i < n; ++i) {
-            const int at = indexOf(m[i]);
-            if (at >= 0 && allowed(at)) continue;
+            int note = m[i] + shift;
+            while (note < lo_) note += 12;
+            while (note > hi_) note -= 12;
+            lost[i] = note < lo_;   // a range under an octave without this pitch class
+            m[i] = note;
+        }
+        for (int i = 0; i < n; ++i) {
             int keep[4], nk = 0;
             for (int d = 1; d <= 2; ++d) {
                 const int a = (i + d) % len, b = (i - d + len) % len;
                 if (a < n && a != i) keep[nk++] = m[a];
                 if (b < n && b != i) keep[nk++] = m[b];
             }
-            m[i] = nearestAllowed(m[i], keep, nk);
+            bool repeats = false;
+            for (int k = 0; k < nk; ++k) repeats = repeats || keep[k] == m[i];
+            const int at = indexOf(m[i]);
+            if (lost[i] || repeats || (snap && !(at >= 0 && allowed(at)))) m[i] = nearestAllowed(m[i], keep, nk);
         }
     }
 }
@@ -404,8 +423,20 @@ void AirGen::seekReplay(int64_t pass, double place) {
         ++repPass_;
     }
     for (int i = 0; i < nRec_; ++i) rec_[i].from = kAlways;
-    repMove_ = draw();
-    repVel_ = draw();
+}
+
+// A replayed event's random numbers (0: its move, 1: its velocity), uniform 0..1: a hash of the
+// seed, the pass and the event's index (SplitMix64's finalizer), so the replay never draws from the
+// clock's xorshift and a loop never shifts the generator's sequence.
+double AirGen::replayNumber(int which) const {
+    uint64_t x = static_cast<uint64_t>(seed_) * 0x9E3779B97F4A7C15ull ^ static_cast<uint64_t>(repPass_) * 0xBF58476D1CE4E5B9ull ^
+                 static_cast<uint64_t>(2 * repIdx_ + which + 1) * 0x94D049BB133111EBull;
+    x ^= x >> 30;
+    x *= 0xBF58476D1CE4E5B9ull;
+    x ^= x >> 27;
+    x *= 0x94D049BB133111EBull;
+    x ^= x >> 31;
+    return (static_cast<double>(x >> 11) + 0.5) * (1.0 / 9007199254740992.0);   // 53 bits, never 0 or 1
 }
 
 // Where the next replayed event is due, in passes: its place, moved by up to Rubato x 0.1 x the
@@ -418,7 +449,7 @@ double AirGen::replayAt() const {
         const double next = repIdx_ + 1 < nRec_ ? rec_[repIdx_ + 1].place - e.place : rec_[0].place + 1.0 - e.place;
         gap = prev < next ? prev : next;
     }
-    return static_cast<double>(repPass_) + e.place + static_cast<double>(p_.rubato) * 0.1 * gap * (2.0 * repMove_ - 1.0);
+    return static_cast<double>(repPass_) + e.place + static_cast<double>(p_.rubato) * 0.1 * gap * (2.0 * replayNumber(0) - 1.0);
 }
 
 void AirGen::nextReplay() {
@@ -426,23 +457,34 @@ void AirGen::nextReplay() {
         repIdx_ = 0;
         ++repPass_;
     }
-    repMove_ = draw();
-    repVel_ = draw();
 }
 
 // A recorded note as it replays: as recorded, or (recorded in another harmony) the nearest allowed,
 // the lower on a tie: a generated one an allowed candidate (in the range), a played one the nearest
 // note whose pitch class is allowed, wherever it is.
+// Then into kChordLowest..kChordHighest (Air's voices' range) by octaves: the player's notes can be
+// anywhere.
 int AirGen::replayNote(const Recorded& e) const {
-    if (e.harmony == harmony_) return e.note;
-    if (!e.played) return nearestAllowed(e.note, nullptr, 0);
-    for (int d = 0; d < 12; ++d)
-        for (int n : {e.note - d, e.note + d}) {
-            if (n < 0 || n > 127) continue;
-            const int pc = pitchClass(n);
-            if ((scalePcs_ >> pc & 1u) && (p_.gravity < 1.0f || noneAllowed_ || (pcs_ >> pc & 1u))) return n;
+    int note = e.note;
+    if (e.harmony != harmony_) {
+        if (!e.played) {
+            note = nearestAllowed(e.note, nullptr, 0);
+        } else {
+            bool found = false;
+            for (int d = 0; d < 12 && !found; ++d)
+                for (int n : {e.note - d, e.note + d}) {
+                    const int pc = pitchClass(n);
+                    if (!found && n >= 0 && n <= 127 && (scalePcs_ >> pc & 1u) &&
+                        (p_.gravity < 1.0f || noneAllowed_ || (pcs_ >> pc & 1u))) {
+                        note = n;
+                        found = true;
+                    }
+                }
         }
-    return e.note;
+    }
+    while (note < kChordLowest) note += 12;
+    while (note > kChordHighest) note -= 12;
+    return note;
 }
 
 // --- the step ---------------------------------------------------------------------------------------
@@ -533,8 +575,10 @@ int AirGen::step(int n, AirEvent* out, int max) {
             if (repPass_ < e.from) {   // an overdub in its own pass: passed over
                 nextReplay();
             } else if (count < max) {
-                const float vel = e.played ? e.vel : 0.7f * (1.0f - 0.5f * p_.rubato * static_cast<float>(repVel_));
-                out[count++] = {off, replayNote(e), vel};
+                const float vel = e.played ? e.vel : 0.7f * (1.0f - 0.5f * p_.rubato * static_cast<float>(replayNumber(1)));
+                const int note = replayNote(e);
+                out[count++] = {off, note, vel, e.played};
+                remember(note);   // among the last two notes: the generator, once the loop is off, won't repeat it
                 nextReplay();
             } else {
                 replayWaits = true;   // no room: it plays at the next step's start
@@ -548,7 +592,7 @@ int AirGen::step(int n, AirEvent* out, int max) {
         const int note = choose(uPick, uMut, uWhich, uDir);
         remember(note);
         const float vel = 0.7f * (1.0f - 0.5f * p_.rubato * static_cast<float>(uVel));
-        out[count++] = {off, note, vel};
+        out[count++] = {off, note, vel, false};
         if (loop_ == LS_ARMED) beginRecording(pos);
         if (loop_ == LS_RECORDING) record(pos, note, vel, false, kAlways);
     }

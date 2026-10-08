@@ -30,6 +30,7 @@ struct Ev {
     int64_t at;   // samples since the run began
     int note;
     float vel;
+    bool played;  // a replay of the player's note
 };
 
 // A generator and the events it gave, stepped as Air steps it: 128 samples at a time; when `synced`,
@@ -49,7 +50,7 @@ struct Run {
         AirEvent out[16];
         const int k = g.step(n, out, room);
         for (int i = 0; i < k; ++i) {
-            ev.push_back({now + out[i].offset, out[i].note, out[i].vel});
+            ev.push_back({now + out[i].offset, out[i].note, out[i].vel, out[i].played});
             evBeats.push_back(beats + out[i].offset * bpm / 60.0 / kSr);
         }
         now += n;
@@ -294,6 +295,40 @@ void testGravity() {
         for (const Ev& e : r.ev) chord = chord && (e.note % 12 == 0 || e.note % 12 == 4 || e.note % 12 == 7);
         CHECK(chord);
         std::printf("  Gravity 1: %zu Random events, all chord tones: %s\n", r.ev.size(), chord ? "yes" : "no");
+    }
+    // Every pattern at Gravity 1 (Echo before the player gives a note): only chord tones. Rise and
+    // Fall walk the chord tones of the range (72 76 79 84 88 91 96), one or two at a time.
+    {
+        const int tones[7] = {72, 76, 79, 84, 88, 91, 96};
+        auto toneIndex = [&tones](int note) {
+            for (int i = 0; i < 7; ++i)
+                if (tones[i] == note) return i;
+            return -1;
+        };
+        bool chord = true, walk = true;
+        int off = 0;
+        for (int pat = 0; pat < af::AP_COUNT; ++pat) {
+            Run r;
+            AirGenPatch p = patchOf(pat);
+            p.gravity = 1.0f;
+            start(r, p, 7);
+            r.events(600);
+            for (size_t i = 0; i < r.ev.size(); ++i) {
+                const int a = i > 0 ? toneIndex(r.ev[i - 1].note) : -1, b = toneIndex(r.ev[i].note);
+                chord = chord && b >= 0;
+                off += b < 0;
+                if (i > 0 && (pat == af::AP_RISE || pat == af::AP_FALL)) {
+                    const int up = ((pat == af::AP_RISE ? b - a : a - b) + 7) % 7;
+                    walk = walk && a >= 0 && b >= 0 && (up == 1 || up == 2);
+                }
+            }
+            chord = chord && r.ev.size() >= 600;
+        }
+        CHECK(chord);
+        CHECK(walk);
+        std::printf("  Gravity 1, every pattern, 600 events each: %d off the chord; Rise and Fall a chord tone or two at "
+                    "a time: %s\n",
+                    off, walk ? "yes" : "no");
     }
     // Range 23/12: C5..B6, 14 scale tones of which 6 are the triad's, the scale's share (3/7) exactly.
     for (float g : {0.0f, 0.6f}) {
@@ -613,6 +648,26 @@ void testConstellation() {
         CHECK(std::abs(changed - 90) <= 30);
         std::printf("  Mutate 0.3: %d of 300 passes changed\n", changed);
     }
+    // A Register change moves the whole motif by its octaves, keeping its shape: Register 4 (60..72)
+    // to 6 (84..96), each note 24 up, in the same place in the pass.
+    {
+        Run r;
+        AirGenPatch p = patchOf(af::AP_CONSTELLATION);
+        p.mutate = 0.0f;
+        p.registerOct = 4;
+        p.rangeOct = 1.0f;
+        start(r, p, 73);
+        r.events(52);
+        p.registerOct = 6;
+        r.g.set(p, HarmonyPatch{});
+        const size_t from = r.ev.size();
+        r.events(from + 15);
+        bool shape = from >= 52;
+        for (size_t i = from; shape && i < r.ev.size(); ++i)
+            shape = r.ev[i].note == r.ev[i - 5].note + (i - 5 < from ? 24 : 0);
+        CHECK(shape);
+        std::printf("  Register 4 -> 6: the motif 24 up, its shape and place kept: %s\n", shape ? "yes" : "no");
+    }
     // A chord change at Gravity 1 moves the motif onto the new chord's tones, still without repeats;
     // a key change at Gravity 0.6 into the new key.
     {
@@ -704,6 +759,28 @@ void testEcho() {
         const bool ok = echoes(r.ev, c.want);
         CHECK(ok);
         std::printf("  %s: %s\n", c.what, ok ? "yes" : "no");
+    }
+    // A Register change moves the echo by octaves and keeps the player's notes: 62 64 67 at Register
+    // 4, then Register 5: 74 76 79, from the next note on.
+    {
+        Run r;
+        AirGenPatch p = patchOf(af::AP_ECHO);
+        p.mutate = 0.0f;
+        p.registerOct = 4;
+        start(r, p, 2);
+        r.events(7);
+        int off = 0;
+        for (int n : {62, 64, 67}) r.g.played(n, 0.8f, off++);
+        r.events(7 + 6 + 3 * 8);
+        const bool before = echoes(r.ev, {62, 64, 67});
+        p.registerOct = 5;
+        r.g.set(p, HarmonyPatch{});
+        const size_t from = r.ev.size();
+        r.events(from + 3 * 4);
+        bool after = echoes(r.ev, {74, 76, 79});
+        for (size_t i = from; i < r.ev.size(); ++i) after = after && (r.ev[i].note == 74 || r.ev[i].note == 76 || r.ev[i].note == 79);
+        CHECK(before && after);
+        std::printf("  62 64 67 at Register 4, then Register 5: 74 76 79 from the next note: %s\n", after ? "yes" : "no");
     }
     // Two notes can't make a motif without repeats: still the Constellation, event for event.
     {
@@ -799,6 +876,10 @@ void testLoop() {
                     "their gap; Rubato 0.2 allows 0.02), new velocities: %s\n",
                     rec.size(), good, worst, newVel ? "yes" : "no");
 
+        bool flags = true;   // replays of generated notes aren't the player's
+        for (const Ev& e : r.ev) flags = flags && !e.played;
+        CHECK(flags);
+
         // Off: the recording is forgotten and generation goes on.
         p.loop = false;
         r.g.set(p, HarmonyPatch{});
@@ -806,6 +887,62 @@ void testLoop() {
         r.seconds(60);
         CHECK(r.ev.size() > was + 15);
         std::printf("  off: %zu events generated in the next minute\n", r.ev.size() - was);
+    }
+    // A loop doesn't shift the sequence: its replays draw nothing from the clock's numbers. A run with
+    // Loop on from 60 s to 120 s plays, from 130 s on, at the very samples and velocities of a run
+    // without it (the notes may differ: the last two notes and the motif's place aren't the same).
+    {
+        Run a, b;
+        AirGenPatch p = patchOf(af::AP_CONSTELLATION, 30.0f);
+        p.loopS = 8.0f;
+        start(a, p, 9);
+        start(b, p, 9);
+        a.seconds(300);
+        b.seconds(60);
+        p.loop = true;
+        b.g.set(p, HarmonyPatch{});
+        b.seconds(60);
+        p.loop = false;
+        b.g.set(p, HarmonyPatch{});
+        b.seconds(180);
+        const int64_t from = static_cast<int64_t>(130 * kSr);
+        std::vector<Ev> ea, eb;
+        for (const Ev& e : a.ev)
+            if (e.at >= from) ea.push_back(e);
+        for (const Ev& e : b.ev)
+            if (e.at >= from) eb.push_back(e);
+        bool same = ea.size() == eb.size() && ea.size() > 50;
+        for (size_t i = 0; same && i < ea.size(); ++i) same = ea[i].at == eb[i].at && ea[i].vel == eb[i].vel;
+        CHECK(same);
+        std::printf("  Loop on from 60 s to 120 s: from 130 s the same %zu events as without it (samples, velocities): %s\n",
+                    ea.size(), same ? "yes" : "no");
+    }
+    // Turning the loop off, the next generated note repeats neither of the last two replayed: the
+    // replays count among the last two notes. Random over 4 candidates (Range 0.5), a 4 s loop on
+    // for 10 s and off for 3 s, 40 times.
+    {
+        Run r;
+        AirGenPatch p = patchOf(af::AP_RANDOM, 60.0f);
+        p.rangeOct = 0.5f;
+        p.loopS = 4.0f;
+        start(r, p, 71);
+        int turns = 0, repeats = 0;
+        for (int k = 0; k < 40; ++k) {
+            p.loop = true;
+            r.g.set(p, HarmonyPatch{});
+            r.seconds(10);
+            const size_t last = r.ev.size();
+            p.loop = false;
+            r.g.set(p, HarmonyPatch{});
+            r.seconds(3);
+            if (last >= 2 && r.ev.size() > last) {
+                ++turns;
+                repeats += r.ev[last].note == r.ev[last - 1].note || r.ev[last].note == r.ev[last - 2].note;
+            }
+        }
+        CHECK(turns >= 35 && repeats == 0);
+        std::printf("  Loop turned off %d times: the first note after it repeated one of the last two %d times\n", turns,
+                    repeats);
     }
     // Rubato 1: the times move, by less than a tenth of their gap, never out of order.
     {
@@ -974,8 +1111,57 @@ void testLoop() {
         if (!dubs)
             for (const Ev& e : o.ev) std::printf("  %d at %+.4f passes\n", e.note, static_cast<double>(e.at - a) / pass);
         CHECK(dubs);
+        bool flags = !o.ev.empty();   // all the player's: played, at their own velocities
+        for (const Ev& e : o.ev) flags = flags && e.played && e.vel == (e.note == 64 ? 0.9f : e.note == 71 ? 0.6f : 0.4f);
+        CHECK(flags);
         std::printf("  overdubs: from the pass after their own, one on a replayed note's sample with it: %s\n",
                     dubs ? "yes" : "no");
+
+        // The recording keeps 64 events: 70 given in the first pass, the first 64 come back, each pass;
+        // an overdub into the full loop isn't kept. The player's notes outside 24..108 come back moved
+        // by octaves into it (117 as 105, 10 as 34).
+        {
+            Run f;
+            start(f, p, 67, HarmonyPatch{}, triadC(), false);
+            const int64_t f0 = static_cast<int64_t>(kSr);
+            for (int k = 0; k < 70; ++k) {
+                const int note = k == 0 ? 117 : k == 1 ? 10 : 40 + k;
+                f.playAt(f0 + k * 4410, note, 0.5f);
+            }
+            f.playAt(f0 + pass + pass / 2, 50, 0.5f);   // the loop is full
+            while (f.now < f0 + 4 * pass - 1000) f.step();   // three replays, the last 6.3 s long
+            bool cap = f.ev.size() == 3 * 64;
+            for (size_t k = 0; cap && k < f.ev.size(); ++k) {
+                const int i = static_cast<int>(k % 64);
+                const int want = i == 0 ? 105 : i == 1 ? 34 : 40 + i;
+                cap = f.ev[k].note == want && f.ev[k].played && std::llabs(f.ev[k].at - (f0 + i * 4410 + pass * static_cast<int64_t>(k / 64 + 1))) <= 1;
+            }
+            CHECK(cap);
+            std::printf("  70 notes in the first pass: the first 64 back each pass, 117 as 105 and 10 as 34, an overdub "
+                        "into the full loop left out: %s\n",
+                        cap ? "yes" : "no");
+        }
+        // Off forgets the recording: on again, it records afresh (here the player's next note only).
+        {
+            Run g;
+            start(g, p, 69, HarmonyPatch{}, triadC(), false);
+            const int64_t g0 = static_cast<int64_t>(kSr);
+            g.playAt(g0, 64, 0.5f);
+            while (g.now < g0 + pass + pass / 2) g.step();   // 64 back once
+            p.loop = false;
+            g.g.set(p, HarmonyPatch{});
+            g.seconds(1);
+            p.loop = true;
+            g.g.set(p, HarmonyPatch{});
+            const int64_t g1 = g.now + 1000;
+            g.playAt(g1, 67, 0.5f);
+            while (g.now < g1 + 2 * pass + pass / 2) g.step();
+            const bool afresh = g.ev.size() == 3 && g.ev[0].note == 64 && g.ev[1].note == 67 && g.ev[2].note == 67 &&
+                                std::llabs(g.ev[1].at - g1 - pass) <= 1 && std::llabs(g.ev[2].at - g1 - 2 * pass) <= 1;
+            CHECK(afresh);
+            std::printf("  Loop off and on again: the old recording gone, the new note alone comes back: %s\n",
+                        afresh ? "yes" : "no");
+        }
 
         // The end of a pass: a note 50 samples before it, Rubato 1. It moves by at most a tenth of its
         // 50-sample gap to the next pass's first note, so it comes back just before that one, every
@@ -1115,8 +1301,8 @@ void testOdd() {
             AirEvent out[4];
             ok = ok && r.g.step(0, out, 4) == 0 && r.g.step(64, out, 0) == 0 && r.g.step(-5, out, 4) == 0;
         }
-        for (const Ev& e : r.ev) {   // (the player's notes, up to 127, replay as they were given)
-            const bool sane = e.note >= 0 && e.note <= 127 && e.vel >= 0.0f && e.vel <= 1.0f && std::isfinite(e.vel);
+        for (const Ev& e : r.ev) {   // (the player's notes replay moved by octaves into 24..108)
+            const bool sane = e.note >= 24 && e.note <= 108 && e.vel >= 0.0f && e.vel <= 1.0f && std::isfinite(e.vel);
             if (!sane && ok) std::printf("  case %d: note %d, vel %g at %lld\n", k, e.note, e.vel, static_cast<long long>(e.at));
             ok = ok && sane;
         }
