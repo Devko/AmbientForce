@@ -17,7 +17,6 @@ constexpr int kStealSamples = 88;                 // 2 ms: a taken voice's fade
 constexpr int kRiseSamples = 66;                  // 1.5 ms: the modes' raised-cosine rise
 constexpr int kAgeMost = 1 << 30;                 // a note's age stops here (6.8 hours)
 constexpr double kMaxModeHz = 18000.0;            // a mode above this is left out
-constexpr int kBurst = 88;                        // 2 ms: the pluck's burst, or a period if that is longer
 constexpr double kMaxRingS = 60.0;                // the pluck's loop never rings longer than this
 constexpr int kFeltRise = 220;                    // 5 ms: Felt's attack
 constexpr int kFeltMove = 512;                    // 11.6 ms: Felt's Age moves to another frame at most this often
@@ -198,7 +197,7 @@ void mixOut(const f2* bus, float* outL, float* outR, float* sendL, float* sendR,
 
 // A mono read into the bus at gains P + dP (i + 1). On NEON two samples a pass, their four gains in
 // one vector: 6 ARM instructions a sample, where a sample a pass took 8.
-void mixMono(const float* x, f2 P, f2 dP, f2* bus, int m) {
+AF_INLINE void mixMono(const float* x, f2 P, f2 dP, f2* bus, int m) {
     int i = 0;
 #if AF_NEON
     float* const b = reinterpret_cast<float*>(bus);
@@ -335,6 +334,7 @@ void AirVoices::begin(Voice& v, const Strike& s) {
     const f2 pan = panGains(s.pan);
     v.panMax = std::max(pan[0], pan[1]);
     v.pan = pan * splat2(v.vel);
+    v.firstPass = 0;
     const double hz = hzOf(s.pitch);
     if (s.sound == AS_KALIMBA) beginPluck(v, s, hz);
     else if (s.sound == AS_FELT) beginFelt(v, s, hz);
@@ -421,31 +421,101 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
     v.lp = 0.0f;
     v.loopG = static_cast<float>(g);
     v.holdLog2 = static_cast<float>(std::log2(g * lpGain) / period);
+    // The loop's DC mode: its real pole p, just under 1, where g AP(p) LP(p) p^-whole = 1. A burst
+    // excites it by B(p) = sum b_n p^-n, so the burst's mean is taken out with the same weights, which
+    // leaves it nothing to ring. (A plain mean leaves B(1) at 0 instead, and B(p) as much as 25 dB
+    // under the fundamental at Decay 0.5 and note 24, falling no faster than the note.) Newton from
+    // p = g^(1 / the loop's delay at DC); twice is plenty.
+    double p = std::pow(g, 1.0 / (whole + (1.0 - eta) / (1.0 + eta) + b / (1.0 - b)));
+    for (int it = 0; it < 2; ++it) {
+        const double f = std::log(g * (eta * p + 1.0) / (p + eta) * a * p / (p - b)) - whole * std::log(p);
+        const double df = eta / (eta * p + 1.0) - 1.0 / (p + eta) + 1.0 / p - 1.0 / (p - b) - whole / p;
+        p -= f / df;
+    }
+    const float dcTurn = static_cast<float>(1.0 / p);   // p^-1: the weights' step a sample
 
     // The burst: white noise through two one-poles at Tone (12 dB an octave, as the modes' Tone),
     // 2 ms or a period if that is longer (a shorter burst would leave the loop silent between its
-    // passes, a pulse train), under a Hann window, its mean taken out (the loop's DC would ring as
-    // long as the note).
-    //
-    // Its level: what rings is the burst folded onto one period (over note 84 a 2 ms burst makes
-    // more than two passes, and gathers in the loop as it goes in), so the raw windowed noise folded
-    // so is what sets it: the burst goes in at the sound's scale over that fold's RMS. Every strike
-    // then rings about as loud at every pitch, where the noise's own luck put up to 8 dB between
-    // two strikes at the top of the keyboard; a darker Tone takes its share away, as it does the
-    // modes'. The line holds the fold meanwhile (the loop writes it over before reading it).
-    //
-    // The window, sin^2 (pi (i + 1/2) / len) = (1 - cos) / 2, comes from a phasor turned a step a
-    // sample, the noise's state a local: a strike at note 24 builds a burst of 1349 samples.
+    // passes, a pulse train), under a Hann window, its mean taken out with the DC mode's weights
+    // (above). The window, sin^2 (pi (i + 1/2) / len) = (1 - cos) / 2, comes from a phasor turned a
+    // step a sample.
     const int len = std::min(std::max(kBurst, static_cast<int>(std::ceil(period))), kBurstMax);
     const int fold = std::min(std::max(static_cast<int>(std::lround(period)), 1), len);
     v.burstLen = len;
-    std::fill(v.line, v.line + fold, 0.0f);
+    v.w = 0;
+    v.P = v.pan;
     const float tone = static_cast<float>(1.0 - std::exp(-kTwoPi * s.toneHz / kRateD));
     const double turnBy = kTwoPi / len;
     const float tc = static_cast<float>(std::cos(turnBy)), ts = static_cast<float>(std::sin(turnBy));
     const float c0 = static_cast<float>(std::cos(0.5 * turnBy)), s0 = static_cast<float>(std::sin(0.5 * turnBy));
+
+    if (len > kBurst) {
+        // A long burst (a period over 2 ms: note 71 and under) is built as it plays (pluckBurst()).
+        // Its mean is needed from its first sample, so the strike draws the whole noise once for it
+        // (the statistics alone, nothing stored), and the samples are drawn again, the same, as they
+        // go in. Built whole at the strike, the 1349 samples of note 24 took 72k instructions in its
+        // block, 52 a sample; this pass takes 25 a sample, and building them as they play 14.
+        //
+        // Its level doesn't wait for the noise's fold: the burst goes in at the sound's scale over the
+        // RMS the windowed noise has on average when folded onto a period, not the one it turns out to
+        // have. The noise's square averages 1/3 and the window's fourth power 3/8, and a burst a
+        // period long barely folds over (len and fold are equal or one apart), so that RMS is
+        // sqrt(len / (8 fold)). The noise's own luck, which the measured RMS took away, now moves a
+        // strike's level by about 5.4 / sqrt(len) dB (one standard deviation): 0.15 dB at note 24,
+        // 0.3 at 48, 0.55 at 71, on top of the spread the filtered noise has anyway (0.1 to 0.9 dB
+        // at Tone 16000, more at a darker Tone). Accepted to keep the strike's pass lean: the measured
+        // RMS needs the noise folded onto a period, a load and a store a sample and a pass more.
+        Noise& z = v.noise;
+        z.rng = rng_;
+        uint32_t rng = rng_;
+        float lp1 = 0.0f, lp2 = 0.0f, sum = 0.0f, wsum = 0.0f, pc = c0, ps = s0, q = 1.0f;
+        for (int i = 0; i < len; ++i) {
+            const float x = randBipolar(rng);
+            lp1 += tone * (x - lp1);
+            lp2 += tone * (lp1 - lp2);
+            const float win = 0.5f - 0.5f * pc, nc = pc * tc - ps * ts;
+            ps = pc * ts + ps * tc;
+            pc = nc;
+            const float wq = win * q;
+            sum += lp2 * wq;
+            wsum += wq;
+            q *= dcTurn;
+        }
+        rng_ = rng;
+        z.lp1 = 0.0f;
+        z.lp2 = 0.0f;
+        z.c = c0;
+        z.s = s0;
+        z.tc = tc;
+        z.ts = ts;
+        z.tone = tone;
+        z.mean = sum / wsum;
+        z.scale = static_cast<float>(kScale[AS_KALIMBA] * std::sqrt(8.0 * fold / len));
+        z.peak = 0.0f;
+        z.made = 0;
+        v.firstPass = whole;   // under len: whole <= period - 0.5
+        // Until the burst has all gone in, its level is the most it can play (the noise and its
+        // one-poles are within +-1, the window within 0..1), so a note still being struck isn't the
+        // quietest. Then it is the burst's peak held from the strike, as a short burst's is.
+        v.most = (1.0f + std::fabs(z.mean)) * z.scale;
+        v.env = 0.0f;
+        v.level = v.most * v.vel;
+        return;
+    }
+
+    // A short burst (2 ms, note 72 and up) is built at the strike: kBurst samples, the strike 4.6k to
+    // 7k instructions with the tuning. Its level: what rings is the burst folded onto one period (over
+    // note 84 it makes more than two passes, and gathers in the loop as it goes in), so the raw
+    // windowed noise folded so is what sets it: the burst goes in at the sound's scale over that
+    // fold's RMS. Every strike then rings about as loud at every pitch, where the noise's own luck
+    // put up to 8 dB between two strikes at the top of the keyboard; a darker Tone takes its share
+    // away, as it does the modes'. The line holds the fold meanwhile (the loop writes it over before
+    // reading it).
+    v.firstPass = 0;
+    v.noise.made = len;
+    std::fill(v.line, v.line + fold, 0.0f);
     uint32_t rng = rng_;
-    float lp1 = 0.0f, lp2 = 0.0f, sum = 0.0f, wsum = 0.0f, pc = c0, ps = s0;
+    float lp1 = 0.0f, lp2 = 0.0f, sum = 0.0f, wsum = 0.0f, pc = c0, ps = s0, q = 1.0f;
     for (int i = 0, j = 0; i < len; ++i) {
         const float x = randBipolar(rng);
         lp1 += tone * (x - lp1);
@@ -454,8 +524,9 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
         ps = pc * ts + ps * tc;
         pc = nc;
         v.burst[i] = lp2 * win;
-        sum += v.burst[i];
-        wsum += win;
+        sum += v.burst[i] * q;
+        wsum += win * q;
+        q *= dcTurn;
         v.line[j] += x * win;
         j = j + 1 == fold ? 0 : j + 1;
     }
@@ -476,11 +547,37 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
     }
     std::fill(v.burst + len, v.burst + len + kChunk, 0.0f);   // a step running past the end reads zeros
     // The line: only what the loop reads before writing it needs clearing.
-    v.w = 0;
     for (int k = kLine - whole; k < kLine; ++k) v.line[k] = 0.0f;
     v.env = pk;
-    v.P = v.pan;
     v.level = v.env * v.vel;
+}
+
+// m samples of a long burst into out, as the strike's statistics pass drew them, the mean out and at
+// its scale. Returns the sum of their squares; the noise's peak so far in z.peak.
+float AirVoices::drawBurst(Noise& z, float* out, int m) {
+    uint32_t rng = z.rng;
+    const float tone = z.tone, tc = z.tc, ts = z.ts, mean = z.mean, scale = z.scale;
+    float lp1 = z.lp1, lp2 = z.lp2, pc = z.c, ps = z.s, pk = z.peak, e = 0.0f;
+    for (int i = 0; i < m; ++i) {
+        const float x = randBipolar(rng);
+        lp1 += tone * (x - lp1);
+        lp2 += tone * (lp1 - lp2);
+        const float win = 0.5f - 0.5f * pc, nc = pc * tc - ps * ts;
+        ps = pc * ts + ps * tc;
+        pc = nc;
+        const float y = (lp2 * win - mean * win) * scale;
+        out[i] = y;
+        e += y * y;
+        pk = std::max(pk, std::fabs(y));
+    }
+    z.rng = rng;
+    z.lp1 = lp1;
+    z.lp2 = lp2;
+    z.c = pc;
+    z.s = ps;
+    z.peak = pk;
+    z.made += m;
+    return e;
 }
 
 void AirVoices::beginFelt(Voice& v, const Strike& s, double hz) {
@@ -521,6 +618,7 @@ void AirVoices::renderBlock(const TableSet& tables, float* outL, float* outR, fl
         for (int o = 0; o < n && v.stage != VS_FREE;) {
             int m = std::min(kChunk, n - o);
             if (v.stage == VS_STEAL) m = std::min(m, v.stealLeft);
+            if (v.age < v.firstPass) m = std::min(m, v.firstPass - v.age);   // a long burst's first pass ends a step
             voiceStep(v, felt, o, m);
             o += m;
         }
@@ -531,6 +629,7 @@ void AirVoices::renderBlock(const TableSet& tables, float* outL, float* outR, fl
 
 void AirVoices::voiceStep(Voice& v, const Wavetable& felt, int o, int m) {
     const int end = v.age + m;   // v.age <= kAgeMost, m <= kChunk: no overflow
+    const float before = v.level;   // as the step starts: with its end's, the most the step played
     // The gain at the step's end: a steal's fade; Felt's envelope (its 5 ms raised-cosine attack,
     // and the fall to -60 dB at decayS). The modes and the pluck carry their own decay.
     float gain = v.stage == VS_STEAL ? static_cast<float>(v.stealLeft - m) * (1.0f / kStealSamples) : 1.0f;
@@ -549,17 +648,20 @@ void AirVoices::voiceStep(Voice& v, const Wavetable& felt, int o, int m) {
     f2* bus = bus_ + o;
     const int sound = v.now.sound;
     if (sound == AS_KALIMBA) {
-        Pluck k{v.line, v.w, v.delay, kLineMask, v.eta, v.ap, v.lpA, v.lp, v.loopG};
-        const float e = v.age < v.burstLen ? pluckLoop<true>(k, v.burst + v.age, v.P, dP, bus, m)
-                                           : pluckLoop<false>(k, nullptr, v.P, dP, bus, m);
-        v.w = k.w;
-        v.ap = k.ap;
-        v.lp = k.lp;
-        // The level held at the slowest the loop can fall, and pushed up by what this step played
-        // (its RMS as a sine's peak).
-        v.env = std::max(v.env * exp2Fast(v.holdLog2 * static_cast<float>(m)),
-                         std::sqrt(2.0f * e / static_cast<float>(m)));
-        v.level = v.env * v.vel;
+        if (v.age < v.burstLen) {
+            pluckBurst(v, dP, bus, m);
+        } else {
+            Pluck k{v.line, v.w, v.delay, kLineMask, v.eta, v.ap, v.lpA, v.lp, v.loopG};
+            const float e = pluckLoop<false>(k, nullptr, v.P, dP, bus, m);
+            v.w = k.w;
+            v.ap = k.ap;
+            v.lp = k.lp;
+            // The level held at the slowest the loop can fall, and pushed up by what this step played
+            // (its RMS as a sine's peak).
+            v.env = std::max(v.env * exp2Fast(v.holdLog2 * static_cast<float>(m)),
+                             std::sqrt(2.0f * e / static_cast<float>(m)));
+            v.level = v.env * v.vel;
+        }
     } else if (sound == AS_FELT) {
         if (!v.table) v.table = &felt;
         const Wavetable& t = *v.table;
@@ -599,13 +701,59 @@ void AirVoices::voiceStep(Voice& v, const Wavetable& felt, int o, int m) {
         if (v.stealLeft <= 0) begin(v, v.next);
         return;
     }
-    v.quiet = v.level * v.panMax < kFloor ? v.quiet + m : 0;
+    // Quiet only if the whole step was: a level falls across a step (at Decay 0.1 a fundamental by
+    // 0.4 dB, Bar's top mode by 4 dB), so the step's end alone let a voice go free having played up
+    // to -89.6 dBFS.
+    v.quiet = std::max(before, v.level) * v.panMax < kFloor ? v.quiet + m : 0;
     if (v.quiet >= kQuietSamples) {
         v.stage = VS_FREE;
         v.P = splat2(0.0f);
         v.level = 0.0f;
         v.table = nullptr;
     }
+}
+
+// A step of the pluck while its burst goes in (after, voiceStep() runs the loop alone).
+void AirVoices::pluckBurst(Voice& v, f2 dP, f2* bus, int m) {
+    float e;
+    if (v.age < v.firstPass) {
+        // A long burst's first pass: the loop has nothing to read back yet, so what goes in is all it
+        // plays, and it goes straight into the line, where it starts (renderBlock() ends a step where
+        // the first pass does; no wrap, the first pass being under a period).
+        float* const y = v.line + v.w;
+        e = drawBurst(v.noise, y, m);
+        mixMono(y, v.P, dP, bus, m);
+        v.w += m;
+    } else {
+        // The burst's samples from here: a short one's from its start, built at the strike; a long
+        // one's drawn now, then zeros past its end.
+        const float* burst = v.burst;
+        if (v.firstPass > 0) {
+            const int left = std::min(v.burstLen - v.age, m);
+            drawBurst(v.noise, v.burst, left);
+            std::fill(v.burst + left, v.burst + m, 0.0f);
+        } else {
+            burst += v.age;   // under kBurst
+        }
+        Pluck k{v.line, v.w, v.delay, kLineMask, v.eta, v.ap, v.lpA, v.lp, v.loopG};
+        e = pluckLoop<true>(k, burst, v.P, dP, bus, m);
+        v.w = k.w;
+        v.ap = k.ap;
+        v.lp = k.lp;
+    }
+    // The level as voiceStep() holds it. A short burst's peak is held from the strike; a long one's
+    // from the step it has all gone in, at what it would be had it been held from the strike. Until
+    // then its level is the most it can play.
+    const int end = v.age + m;
+    v.env = std::max(v.env * exp2Fast(v.holdLog2 * static_cast<float>(m)), std::sqrt(2.0f * e / static_cast<float>(m)));
+    if (v.firstPass > 0) {
+        if (end < v.burstLen) {
+            v.level = std::max(v.env, v.most) * v.vel;
+            return;
+        }
+        v.env = std::max(v.env, v.noise.peak * exp2Fast(v.holdLog2 * static_cast<float>(end)));
+    }
+    v.level = v.env * v.vel;
 }
 
 int AirVoices::active() const {
@@ -624,6 +772,10 @@ AirVoices::VoiceView AirVoices::voice(int i) const {
     w.next = v.stage == VS_STEAL ? v.next.note : -1;
     w.sound = v.now.sound;
     w.level = v.level;
+    if (v.now.sound == AS_KALIMBA) {
+        w.burst = v.noise.made;
+        w.burstLen = v.burstLen;
+    }
     return w;
 }
 
