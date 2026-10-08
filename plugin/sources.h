@@ -16,8 +16,10 @@
 // listing and no file is opened; reading a WAV and making it a source (loadSource) is the loader
 // thread's work, as is Keep's write.
 //
-// The cache: a source is kept in SourceCache (loader.h) by its key, shared by every instance. A file
-// changed on the disk under its key isn't noticed until the cache lets the old one go.
+// The cache: a source is kept in SourceCache (loader.h) by its key, shared by every instance, and a
+// file's with the size and time it had (one stat at each loadSource): a file replaced under its key
+// is read again, and a file that has gone is Missing, cached or not. A slot that has the key loaded
+// takes the new file at the next explicit pick of that key (Loader::want with now), not before.
 #include "loader.h"
 
 #include "../dsp/grainsrc.h"
@@ -43,7 +45,8 @@ std::string sourceName(const std::string& key);  // what the stepper shows: "Rai
 
 // The key's source, from the cache or made: a field rendered, a WAV read (kMaxWavSeconds of it) and
 // made a source by buildSource. nullptr with *err for memory:, a key that names no source, a file
-// that is missing or not a WAV we read. Worker thread (it allocates and reads the disk).
+// that is missing or not a WAV we read, or too little memory to make it (never throws). Worker thread
+// (it allocates and reads the disk).
 std::shared_ptr<const SourceBuffer> loadSource(const std::string& key, std::string* err = nullptr);
 
 // The loader's slot for Weather's source (worker thread): loadSource() per key, `info` the source's
@@ -57,23 +60,30 @@ inline const GrainSource* sourceOf(const void* live) {
     return live ? &static_cast<const SourceBuffer*>(live)->src : nullptr;
 }
 
-// Keep: the remembered Memory written as the next free ssd:AmbientForce/Memories/Memory NNN.wav (001
-// up: the lowest number not taken, so a deleted file's is used again), 16-bit stereo at 44.1 kHz, from the oldest frame on,
-// at the level the instrument played it (the ring holds it 6 dB down for headroom; the file has that
-// back, clamped). Its key, or "" with *err: nothing remembered, no SSD (its root must exist: the
-// folders under it are made), a folder or file that can't be written. Call it from the loader's
-// thread (Loader::post): it reads and writes the disk. The ring is pinned for the whole of it, so a
-// Remember in the meantime is refused, and unpinned however it ends. Keeps are one at a time across
-// instances (the name is chosen under a lock). The new file is listed at once.
+// Keep: the remembered Memory written as ssd:AmbientForce/Memories/Memory NNN.wav, 16-bit stereo at
+// 44.1 kHz, from the oldest frame on, at the level the instrument played it (the ring holds it 6 dB
+// down for headroom; the file has that back, clamped). NNN is one past the highest number ever used
+// (001 the first): never a deleted file's, as the user presets do, so a project or preset that
+// named one shows MISSING rather than playing another recording; the folder's hidden .last keeps
+// the highest, and the name is claimed by creating it exclusively. Its key, or "" with *err:
+// nothing remembered, no SSD (its root must exist: the folders under it are made), a folder or
+// file that can't be written. Call it from the loader's thread (Loader::post): it reads and writes
+// the disk. The ring is pinned while it is copied and let go before the write (the SSD's, which can
+// take a second): a Remember is refused only for that copy, and the file is the ring as it was
+// then. Keeps are one at a time across instances (the number is chosen under a lock). The new file
+// is listed at once.
 std::string keepMemory(Memory& memory, std::string* err);
 
 // For tests: how many sources loadSource() has made (a WAV read, a field rendered) rather than found
 // in the cache.
 int sourcesMade();
 
-// For tests: called with the ring pinned, after the check that something is remembered and before
-// anything is read or written.
-using KeepHook = void (*)(void* ctx);
+// For tests: called by keepMemory at KS_COPY with the ring pinned, after the check that something
+// is remembered and before it is read; at KS_NUMBERED when the number is chosen and before the file
+// is claimed; and at KS_WRITE after the ring is let go, with the file claimed, just before it is
+// written.
+enum KeepStage : int { KS_COPY, KS_NUMBERED, KS_WRITE };
+using KeepHook = void (*)(void* ctx, int stage);
 void setKeepHook(KeepHook hook, void* ctx);
 
 } // namespace af

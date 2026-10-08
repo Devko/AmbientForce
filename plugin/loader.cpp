@@ -12,25 +12,39 @@ SourceCache& SourceCache::get() {
     return c;
 }
 
-std::shared_ptr<const SourceBuffer> SourceCache::find(const std::string& key) {
+std::shared_ptr<const SourceBuffer> SourceCache::find(const std::string& key, const FileStamp* stamp) {
     std::lock_guard<std::mutex> lk(mtx_);
     const auto it = items_.find(key);
     if (it == items_.end()) return nullptr;
+    if (stamp && !(it->second.stamp == *stamp && stamp->valid)) {   // the file has changed or gone
+        bytes_ -= it->second.source->bytes();
+        lru_.erase(it->second.lru);
+        items_.erase(it);
+        return nullptr;
+    }
     lru_.splice(lru_.begin(), lru_, it->second.lru);
     return it->second.source;
 }
 
-std::shared_ptr<const SourceBuffer> SourceCache::put(const std::string& key, std::shared_ptr<const SourceBuffer> s) {
+std::shared_ptr<const SourceBuffer> SourceCache::put(const std::string& key, std::shared_ptr<const SourceBuffer> s,
+                                                     const FileStamp& stamp) {
     if (!s) return nullptr;
     std::lock_guard<std::mutex> lk(mtx_);
-    const auto it = items_.find(key);
-    if (it != items_.end()) {
-        lru_.splice(lru_.begin(), lru_, it->second.lru);
-        return it->second.source;
+    // The map first: an allocation that fails in either step leaves the cache as it was (a key in the
+    // list with no item would be found by evict() as the end of the map).
+    const auto in = items_.emplace(key, Item{s, lru_.end(), stamp});
+    if (!in.second) {
+        lru_.splice(lru_.begin(), lru_, in.first->second.lru);
+        return in.first->second.source;
     }
-    lru_.push_front(key);
+    try {
+        lru_.push_front(key);
+    } catch (...) {
+        items_.erase(in.first);
+        throw;
+    }
+    in.first->second.lru = lru_.begin();
     bytes_ += s->bytes();
-    items_.emplace(key, Item{s, lru_.begin()});
     evict();
     return s;
 }
@@ -111,13 +125,17 @@ void Loader::want(int slot, const std::string& key, bool now) {
         std::lock_guard<std::mutex> lk(mtx_);
         Slot& s = slots_[static_cast<size_t>(slot)];
         const std::string k = key.empty() ? s.type.fallbackKey : key;
-        // Already wanted: nothing to do. A failed key is retried only on an explicit pick
-        // (now), never by a scroll passing over it.
-        if (s.want == k && (!s.missing || !now)) return;
-        s.want = k;
+        // Already wanted: nothing to do, but a pick (now) of what is loaded looks at it again, and a
+        // pick of a failed key retries it; a scroll (not now) does neither.
+        if (s.want == k && (!s.missing || !now)) {
+            if (!now || s.want != s.loadedKey) return;
+            s.reload = true;
+        } else {
+            s.want = k;
+            s.missing = false;
+        }
         s.wantAt = std::chrono::steady_clock::now();
         s.now = now;
-        s.missing = false;
         kick_ = true;
     }
     cv_.notify_all();
@@ -157,14 +175,27 @@ bool Loader::busy() const {
     return false;
 }
 
-void Loader::publish(Slot& s, std::shared_ptr<const void> obj, const std::string& loadedKey) {
+void Loader::publish(Slot& s, std::shared_ptr<const void> obj, const std::string& loadedKey, Dead& dead) {
+    // Everything that can throw, before the slot is touched: an object moved out of the slot and then
+    // lost to an exception would be freed while live() still names it.
+    graveyard_.reserve(graveyard_.size() + 1);
+    dead.reserve(dead.size() + 1);
+    std::string key = loadedKey;
+    // From here nothing throws.
+    const uint64_t s0 = started_.load(std::memory_order_seq_cst);
+    const uint64_t e0 = ended_.load(std::memory_order_seq_cst);
     std::shared_ptr<const void> old = std::move(s.owned);
+    const Seen oldSeen = s.seen;
     s.owned = std::move(obj);
-    s.loadedKey = loadedKey;
+    s.loadedKey.swap(key);
     s.live.store(s.owned.get(), std::memory_order_seq_cst);
     // The count of blocks started is read AFTER the swap: every block that can have loaded the old
     // pointer is in it (loader.h).
-    if (old) graveyard_.push_back({std::move(old), started_.load(std::memory_order_seq_cst)});
+    const uint64_t nIn = started_.load(std::memory_order_seq_cst);
+    s.seen = {s0, e0};
+    if (!old) return;
+    if (graveNeverSeen(oldSeen.s0, oldSeen.e0, nIn)) dead.push_back(std::move(old));
+    else graveyard_.push_back({std::move(old), nIn});
 }
 
 void Loader::run() {
@@ -196,11 +227,11 @@ void Loader::run() {
             // nothing. Counts read in this order: started, then ended, then holds.
             const uint64_t started = started_.load(std::memory_order_seq_cst);
             const uint64_t ended = ended_.load(std::memory_order_seq_cst);
-            const bool idle = started == ended && !holds_.load(std::memory_order_seq_cst);
-            std::vector<std::shared_ptr<const void>> dead;
+            const bool holds = holds_.load(std::memory_order_seq_cst);
+            Dead dead;
             graveyard_.erase(std::remove_if(graveyard_.begin(), graveyard_.end(),
                                             [&](Grave& g) {
-                                                if (!idle && ended < g.started + 1) return false;
+                                                if (!graveMayFree(started, ended, holds, g.started)) return false;
                                                 dead.push_back(std::move(g.obj));
                                                 return true;
                                             }),
@@ -209,10 +240,10 @@ void Loader::run() {
             const auto now = std::chrono::steady_clock::now();
             for (size_t i = 0; i < slots_.size(); ++i) {
                 Slot& s = slots_[i];
-                if (s.want == s.loadedKey || s.missing) continue;
+                if (s.missing || (s.want == s.loadedKey && !s.reload)) continue;
                 if (!s.now && now - s.wantAt < std::chrono::milliseconds(kDebounceMs)) continue;
                 const std::string key = s.want;
-                const LoadFn load = s.type.load;
+                LoadFn load = s.type.load;
                 const std::string fallback = s.type.fallbackKey;
                 lk.unlock();
                 dead.clear();   // free outside the lock too
@@ -234,23 +265,34 @@ void Loader::run() {
                         obj = nullptr;
                     }
                 }
+                load = nullptr;   // the copy of the callable goes here, off the lock
                 lk.lock();
                 if (s.want != key) {   // picked something else meanwhile: next round loads that
                     dead.push_back(std::move(obj));   // (freed off the lock, at the next unlock)
                     continue;
                 }
-                publish(s, std::move(obj), ok ? key : fallback);
+                s.reload = false;
+                if (ok && obj == s.owned) {   // looked at again, and the same: nothing to swap
+                    s.info = info;
+                    s.doneAt = std::chrono::steady_clock::now();
+                    loads_.fetch_add(1);
+                    continue;
+                }
+                // What can throw, before the slot changes.
+                Listener l = listener_;
+                std::string errNow = ok ? std::string() : std::move(err);
+                publish(s, std::move(obj), ok ? key : fallback, dead);
                 s.missing = !ok;
-                s.error = ok ? "" : err;
+                s.error.swap(errNow);
                 s.info = info;
                 s.doneAt = std::chrono::steady_clock::now();
                 loads_.fetch_add(1);
-                Listener l = listener_;
                 lk.unlock();
                 try {
                     if (l) l(static_cast<int>(i), key, ok);
                 } catch (...) {
                 }
+                l = nullptr;   // the copy of the listener goes here, off the lock
                 lk.lock();
             }
             lk.unlock();

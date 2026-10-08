@@ -1,11 +1,13 @@
-// WAV files in and out: see wav.h. The RIFF walk and the sample formats are PolyForce's WAV import
-// (dsp/wavetable.cpp, 61543b4).
+// From PolyForce dsp/wavetable.cpp (61543b4), "WAV import", pf -> af: the RIFF walk, the sample formats and
+// EXTENSIBLE's tag. Here the reader streams, resamples and refuses more kinds of bad file, and the
+// writer is new: see wav.h.
 #ifndef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64   // a WAV can pass 2 GB, and off_t is 32 bits on the device unless told
 #endif
 #include "wav.h"
 
 #include "paths.h"
+#include "../dsp/halfband.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,7 +27,8 @@ constexpr int kOutRate = 44100;
 constexpr uint32_t kMinRate = 1000, kMaxRate = 384000;
 constexpr int kMaxChannels = 8;
 constexpr int kMaxChunks = 256;          // chunk headers walked: a file of tiny chunks isn't crawled through
-constexpr size_t kReadFrames = 4096;     // frames decoded at a time
+constexpr size_t kReadFrames = 4096;     // frames decoded at a time (even: the halvings take pairs)
+static_assert(kReadFrames % 4 == 0, "two halvings of a piece leave whole pairs");
 constexpr float kMaxSample = 1.0e6f;     // a float WAV's samples are held within this (+120 dBFS)
 
 uint16_t rd16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | p[1] << 8); }
@@ -66,6 +69,15 @@ struct Format {
     uint32_t rate = 0;
 };
 
+// Whether a chunk header (four printable characters and a size that fits the file) lies at `at`.
+bool looksLikeChunk(FILE* f, uint64_t at, uint64_t size) {
+    uint8_t c[8];
+    if (at + 8 > size || !readAt(f, at, c, 8)) return false;
+    for (int i = 0; i < 4; ++i)
+        if (c[i] < 0x20 || c[i] > 0x7E) return false;
+    return at + 8 + rd32(c + 4) <= size;
+}
+
 // The walk: fmt and data wherever they are. fmt is read; data is found (where it starts and how long
 // it runs).
 bool walk(FILE* f, uint64_t size, Format& fmt, uint64_t& dataAt, uint64_t& dataBytes, std::string* err) {
@@ -98,8 +110,9 @@ bool walk(FILE* f, uint64_t size, Format& fmt, uint64_t& dataAt, uint64_t& dataB
             gotData = true;
             dataAt = body;
             const uint64_t avail = size - body;
-            // 0 and 0xFFFFFFFF are what a writer leaves before it knows the length: to the end.
-            const bool open = sz == 0 || sz == 0xFFFFFFFFu;
+            // 0xFFFFFFFF is what a writer leaves before it knows the length (and 0, in some): the data
+            // runs to the end. A 0 with a chunk after it (LIST, id3) is an empty data chunk.
+            const bool open = sz == 0xFFFFFFFFu || (sz == 0 && !looksLikeChunk(f, body, size));
             dataBytes = open ? avail : sz;
             if (dataBytes > avail) return fail(err, "truncated");
             if (open) break;   // nothing can follow it
@@ -117,8 +130,8 @@ bool checkFormat(const Format& f, std::string* err) {
     if (!pcm && !flt) return fail(err, "unsupported sample format (16, 24, 32-bit PCM or 32-bit float)");
     if (f.channels < 1 || f.channels > kMaxChannels) return fail(err, "unsupported channel count (1 to 8)");
     if (f.rate < kMinRate || f.rate > kMaxRate) return fail(err, "unsupported sample rate");
-    // Frames are packed: a block align under the samples' bytes reads past a frame, and one far over
-    // them is no WAV we know (it also sizes the read buffer).
+    // A block align under the samples' bytes reads past a frame, and one far over them (a container
+    // wider than its samples, at most) is no WAV we know; it also sizes the read buffer.
     if (f.align < f.channels * (f.bits / 8) || f.align > kMaxChannels * 4) return fail(err, "bad fmt chunk");
     return true;
 }
@@ -138,14 +151,16 @@ float oneSample(const Format& f, const uint8_t* p) {
     return static_cast<float>(static_cast<int32_t>(rd32(p))) / 2147483648.0f;
 }
 
-// n frames of the file as L R L R ... (a mono file twice).
+// n frames of the file as L R L R ... (a mono file twice). A channel is a slot of align / channels
+// bytes (the sample's own, unless the container is wider), the second after the first.
 void decode(const Format& f, const uint8_t* src, size_t n, float* lr) {
     const size_t bytes = f.bits / 8;
+    const size_t stride = f.align % f.channels == 0 ? f.align / f.channels : bytes;
     for (size_t i = 0; i < n; ++i) {
         const uint8_t* p = src + i * f.align;
         const float a = oneSample(f, p);
         lr[2 * i] = a;
-        lr[2 * i + 1] = f.channels > 1 ? oneSample(f, p + bytes) : a;
+        lr[2 * i + 1] = f.channels > 1 ? oneSample(f, p + stride) : a;
     }
 }
 
@@ -162,12 +177,13 @@ double besselI0(double x) {
 // 32 input frames around its time (15 before the frame at or before it, 16 after), weighted by a
 // windowed sinc. The 256 phases of the kernel are worked out once; between two phases the taps are
 // interpolated, so a time falling between them is exact to ~1e-5. Only the window of input the next
-// output needs is kept.
+// output needs is kept. `shift` moves the times it reads at later by that many input frames (the
+// halvings' delay below: the stream it is given lags the signal by it).
 class Resampler {
 public:
     static constexpr int kTaps = 32, kBefore = 15, kPhases = 256;
     static constexpr double kBeta = 7.0;   // the Kaiser window's shape
-    explicit Resampler(uint32_t rateIn) : step_(static_cast<double>(rateIn) / kOutRate), table_((kPhases + 1) * kTaps) {
+    Resampler(double rateIn, double shift) : step_(rateIn / kOutRate), shift_(shift), table_((kPhases + 1) * kTaps) {
         // The passband to 0.45 of the lower rate, in cycles per input sample.
         const double fc = 0.45 * std::min<double>(rateIn, kOutRate) / rateIn;
         const double pi = 3.14159265358979323846, i0Beta = besselI0(kBeta);
@@ -195,9 +211,9 @@ public:
         total_ += n;
         run(false, l, r);
     }
-    // The end of the input: the rest of the output, the input past its end silence.
-    void finish(std::vector<float>& l, std::vector<float>& r) {
-        last_ = static_cast<uint64_t>(std::floor(static_cast<double>(total_) / step_ + 0.5));
+    // The end of the input: the rest of the output, `outFrames` in all, the input past its end silence.
+    void finish(uint64_t outFrames, std::vector<float>& l, std::vector<float>& r) {
+        last_ = outFrames;
         run(true, l, r);
     }
 
@@ -205,7 +221,7 @@ private:
     void run(bool end, std::vector<float>& l, std::vector<float>& r) {
         for (;; ++j_) {
             if (end && j_ >= last_) break;
-            const double t = static_cast<double>(j_) * step_;
+            const double t = static_cast<double>(j_) * step_ + shift_;
             const uint64_t i0 = static_cast<uint64_t>(t);
             if (!end && i0 + (kTaps - kBefore) >= total_) break;   // the taps after it aren't in yet
             const double ph = (t - static_cast<double>(i0)) * kPhases;
@@ -227,7 +243,7 @@ private:
         }
         if (end) return;
         // What the next output needs starts 15 frames before its own: the rest can go.
-        const uint64_t next = static_cast<uint64_t>(static_cast<double>(j_) * step_);
+        const uint64_t next = static_cast<uint64_t>(static_cast<double>(j_) * step_ + shift_);
         const uint64_t keep = std::min<uint64_t>(next > kBefore ? next - kBefore : 0, total_);
         if (keep > base_) {
             win_.erase(win_.begin(), win_.begin() + static_cast<std::ptrdiff_t>(2 * (keep - base_)));
@@ -235,10 +251,68 @@ private:
         }
     }
 
-    double step_;                 // input frames per output frame
+    double step_, shift_;         // input frames per output frame, and the delay to make up
     std::vector<float> table_;    // kPhases + 1 phases of kTaps taps
     std::vector<float> win_;      // input frames base_ ..., interleaved
     uint64_t base_ = 0, total_ = 0, j_ = 0, last_ = 0;
+};
+
+// Half the rate: halfband.h's decimator (a polyphase IIR: flat to 0.227 of its input rate, 85 dB down from
+// 0.273), one per channel, over the frames in pairs.
+class Halver {
+public:
+    // n frames (L R L R ...) in, the pairs of them out, appended, as frames. n is even but in the last
+    // call (the reader's pieces are, and each halving's output is half of an even number of frames): an
+    // odd frame at the very end of the stream is dropped.
+    void push(const float* lr, size_t n, std::vector<float>& out) {
+        for (size_t i = 0; i + 1 < n; i += 2) {
+            out.push_back(l_.process(lr[2 * i], lr[2 * i + 2]));
+            out.push_back(r_.process(lr[2 * i + 1], lr[2 * i + 3]));
+        }
+    }
+
+private:
+    Decimator l_, r_;
+};
+
+// A file's frames to 44.1 kHz: above 96 kHz first halved until they are at most that (the 32 taps
+// alone leave what lies past 22 kHz folding into the band at those rates), then the Resampler. The
+// decimator delays low frequencies by kTau of its input's frames (dsp/weather.cpp has the same
+// number), so output frame m of one halving stands for input time 2 m + 1 - kTau, and of k of them
+// 2^k m + (2^k - 1)(1 - kTau): the Resampler reads that much later in the halved stream.
+class Converter {
+public:
+    static constexpr double kTau = 3.19;
+    static constexpr uint32_t kHalveAbove = 96000;
+    explicit Converter(uint32_t rateIn) : halvers_(halvings(rateIn)), rs_(rateIn / std::pow(2.0, halvers_.size()), shift(halvers_.size())) {}
+    void push(const float* lr, size_t n, std::vector<float>& l, std::vector<float>& r) {
+        const float* in = lr;
+        size_t count = n;
+        for (size_t h = 0; h < halvers_.size(); ++h) {
+            std::vector<float>& out = h % 2 == 0 ? a_ : b_;
+            out.clear();
+            halvers_[h].push(in, count, out);
+            in = out.data();
+            count = out.size() / 2;
+        }
+        rs_.push(in, count, l, r);
+    }
+    // `outFrames` in all, the input past its end silence (the halvings' last few frames with it).
+    void finish(uint64_t outFrames, std::vector<float>& l, std::vector<float>& r) { rs_.finish(outFrames, l, r); }
+
+private:
+    static size_t halvings(uint32_t rate) {
+        size_t k = 0;
+        for (double r = rate; r > kHalveAbove; r /= 2.0) ++k;
+        return k;
+    }
+    static double shift(size_t k) {
+        const double s = std::pow(2.0, static_cast<double>(k));
+        return (s - 1.0) * (kTau - 1.0) / s;
+    }
+    std::vector<Halver> halvers_;
+    Resampler rs_;
+    std::vector<float> a_, b_;
 };
 
 } // namespace
@@ -279,7 +353,7 @@ bool readWav(const std::string& path, WavData& out, float maxSeconds, std::strin
         wav.fileRate = static_cast<int>(fmt.rate);
         wav.l.reserve(static_cast<size_t>(frames) + 1);
         wav.r.reserve(static_cast<size_t>(frames) + 1);
-        std::unique_ptr<Resampler> rs(resample ? new Resampler(fmt.rate) : nullptr);
+        std::unique_ptr<Converter> rs(resample ? new Converter(fmt.rate) : nullptr);
         std::vector<uint8_t> raw(kReadFrames * fmt.align);
         std::vector<float> lr(2 * kReadFrames);
         if (fseeko(file.f, static_cast<off_t>(dataAt), SEEK_SET) != 0) return fail(err, "cannot read");
@@ -297,7 +371,7 @@ bool readWav(const std::string& path, WavData& out, float maxSeconds, std::strin
             }
             done += n;
         }
-        if (rs) rs->finish(wav.l, wav.r);
+        if (rs) rs->finish(frames, wav.l, wav.r);
         out = std::move(wav);
         return true;
     } catch (...) {   // out of memory: a failed load, not the host's end

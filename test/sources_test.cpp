@@ -2,15 +2,17 @@
 // (plugin/loader.h), the keys, the library and Keep (plugin/sources.h). Needs no host: make
 // test-module M=sources builds it with the plugin's loader, wav, sources and paths.
 //
-// What a source sounds like isn't looked at here (the grains' own suite does that): the fields and
-// Memory are used through their interface only, and a stand-in with the same interface passes as well
-// as dsp/fields.cpp and dsp/memory.cpp.
+// What a source sounds like isn't looked at here (the fields' and the grains' own suites do that): the
+// fields and Memory are used through their interface only.
 //
 // The loader's threading is checked as the other suites check theirs: deterministic tests of its state
 // machine (a load held on a gate, `rounds()` to know the worker has made another pass, the audio
-// thread played by the test), and a stress run in which a thread plays the audio thread, keeping the
-// pointer between blocks as Weather does, against a thread swapping sources as fast as it can. Under
-// ASan a read of a freed source is an error, which is what the stress run is for.
+// thread played by the test), a model of the graveyard's rule run over every interleaving of a block
+// of the audio thread (six steps) with the worker's swaps and checks, and a stress run in which a
+// thread plays the audio thread, keeping the pointer between blocks as Weather does and stalling at
+// every step of a block, against a thread swapping sources as fast as it can. Under ASan a read of a
+// freed source is an error, which is what the stress run is for. An operator new that fails on request
+// (below) makes the out-of-memory cases happen.
 #include "check.h"
 #include "signal.h"
 #include "../dsp/fields.h"
@@ -22,6 +24,7 @@
 #include "../plugin/wav.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -35,12 +38,17 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <new>
+#include <sched.h>
 #include <set>
+#include <csignal>
 #include <stdexcept>
 #include <string>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
+#include <unordered_set>
 #include <vector>
 
 #if defined(__SANITIZE_ADDRESS__)
@@ -51,6 +59,28 @@ extern "C" int __sanitizer_install_malloc_and_free_hooks(void (*malloc_hook)(con
 #define SOURCES_COUNTS_ALLOCS 1
 #endif
 
+// An allocation that fails on request, for the out-of-memory cases: once armed (t_skip >= 0) a thread's
+// next allocation of 24 bytes or more, after `t_skip` of them have been let through, throws bad_alloc.
+// This replaces operator new for the whole test binary; unarmed it is malloc.
+namespace sources_oom {
+thread_local int t_skip = -1;
+std::atomic<int> g_thrown{0};
+}
+void* operator new(std::size_t n) {
+    if (sources_oom::t_skip >= 0 && n >= 24) {
+        if (sources_oom::t_skip == 0) {
+            sources_oom::t_skip = -1;
+            ++sources_oom::g_thrown;
+            throw std::bad_alloc();
+        }
+        --sources_oom::t_skip;
+    }
+    if (void* p = std::malloc(n ? n : 1)) return p;
+    throw std::bad_alloc();
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+
 namespace aft {
 namespace {
 
@@ -58,6 +88,7 @@ namespace fs = std::filesystem;
 using Bytes = std::vector<uint8_t>;
 using Clock = std::chrono::steady_clock;
 using af::FD_COUNT;
+using af::FileStamp;
 using af::GrainSource;
 using af::Loader;
 using af::Memory;
@@ -255,6 +286,18 @@ Made makeFormat(int tag, int bits, int channels, int rate, int n, bool extensibl
     return m;
 }
 
+// n samples of 16-bit mono PCM, f(i) each, built in one go.
+template <class F>
+Bytes pcm16(int n, F f) {
+    Bytes b(2 * static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        const uint16_t v = static_cast<uint16_t>(static_cast<int16_t>(f(i)));
+        b[2 * static_cast<size_t>(i)] = static_cast<uint8_t>(v);
+        b[2 * static_cast<size_t>(i) + 1] = static_cast<uint8_t>(v >> 8);
+    }
+    return b;
+}
+
 // A mono float sine at any rate.
 Bytes sineFile(int rate, double hz, double seconds, double amp = 0.5) {
     Bytes data;
@@ -427,16 +470,30 @@ void testFormats() {
         CHECK(!ok && !err.empty());
         if (ok) std::printf("  accepted: %s\n", b.what);
     }
-    // 8-channel at the largest block align is fine; a block align over the frame's samples is
-    // accepted (padding after the channels), the samples read from the start of each frame.
+    // A block align over the frame's samples is accepted: each channel has a slot of align / channels
+    // bytes (here 4 for 2 bytes of sample), the second after the first.
+    {
+        Bytes d;
+        for (int i = 0; i < 100; ++i) {
+            encode(d, 1, 16, 0.25f);
+            put16(d, 0x7FFF);   // padding
+            encode(d, 1, 16, -0.25f);
+            put16(d, 0x7FFF);
+        }
+        CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(1, 2, 44100, 16, 8)), chunk("data", d)})));
+        WavData w;
+        CHECK(readWav(path, w, 60.0f, nullptr) && w.l.size() == 100 && w.l[50] == 0.25f && w.r[50] == -0.25f);
+    }
+    // A block align that does not divide into channels: the samples are packed from the frame's start.
     {
         Bytes d;
         for (int i = 0; i < 100; ++i) {
             encode(d, 1, 16, 0.25f);
             encode(d, 1, 16, -0.25f);
-            put32(d, 0x7FFF7FFF);   // padding
+            put16(d, 0x7F7F);
+            d.push_back(0x7F);   // three bytes of padding at the end: align 7, which two channels don't divide
         }
-        CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(1, 2, 44100, 16, 8)), chunk("data", d)})));
+        CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(1, 2, 44100, 16, 7)), chunk("data", d)})));
         WavData w;
         CHECK(readWav(path, w, 60.0f, nullptr) && w.l.size() == 100 && w.l[50] == 0.25f && w.r[50] == -0.25f);
     }
@@ -485,6 +542,22 @@ void testChunks() {
     CHECK(!readWav(path, w, 60.0f, &err) && err.find("data") != std::string::npos);
     CHECK(writeBytes(path, riff({fmt, chunk("data", Bytes())})) && !readWav(path, w, 60.0f, &err));
     CHECK(writeBytes(path, riff({fmt, chunk("data", Bytes(3, 0))})) && !readWav(path, w, 60.0f, &err));   // under one frame
+    // A data chunk of size 0 with a chunk after it (a LIST, an id3) is empty: the tags are not audio.
+    CHECK(writeBytes(path, riff({fmt, chunk("data", Bytes()), chunk("LIST", Bytes(24, 'x'))})) && !readWav(path, w, 60.0f, &err) &&
+          err == "no audio");
+    CHECK(writeBytes(path, riff({fmt, chunk("data", Bytes()), chunk("id3 ", Bytes(31, 'x'))})) && !readWav(path, w, 60.0f, &err));
+    // ... and one with only audio after it (a stream not yet finalised) runs to the end of the file,
+    // though what it starts with could be the size of a chunk (but not its name: four printable characters).
+    {
+        Bytes f = riff({fmt, chunk("data", data)});
+        f[40] = f[41] = f[42] = f[43] = 0;
+        CHECK(writeBytes(path, f) && readWav(path, w, 60.0f, &err) && w.l == m.l);
+        Bytes odd(4000, 0);
+        odd[4] = 16;   // a "size" that fits, after a "name" of four zeros
+        Bytes g = riff({fmt, chunk("data", odd)});
+        g[40] = g[41] = g[42] = g[43] = 0;
+        CHECK(writeBytes(path, g) && readWav(path, w, 60.0f, &err) && w.l.size() == 1000);
+    }
     Bytes notWave = riff({fmt, chunk("data", data)});
     notWave[8] = 'X';
     CHECK(writeBytes(path, notWave) && !readWav(path, w, 60.0f, &err) && err == "not a WAV file");
@@ -653,22 +726,19 @@ void testLimit() {
     WavData w;
     std::string err;
     {
-        // 90 s of mono at 44.1 kHz.
-        const int n = 90 * 44100;
-        Bytes data;
-        data.reserve(2 * static_cast<size_t>(n));
-        for (int i = 0; i < n; ++i) put16(data, static_cast<uint32_t>(static_cast<int16_t>(i & 0x7FFF)));
-        CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(1, 1, 44100, 16)), chunk("data", data)})));
+        // 6 s of mono at 44.1 kHz, read as 3, 1.5 and all.
+        const int n = 6 * 44100;
+        CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(1, 1, 44100, 16)), chunk("data", pcm16(n, [](int i) { return i & 0x7FFF; }))})));
         {
             Track t;
-            CHECK(readWav(path, w, 60.0f, &err));
-            CHECK(w.l.size() == 60u * 44100u && w.r.size() == w.l.size());
+            CHECK(readWav(path, w, 3.0f, &err));
+            CHECK(w.l.size() == 3u * 44100u && w.r.size() == w.l.size());
             CHECK(w.l[1000] == static_cast<float>(1000) / 32768.0f);
             // Nothing the size of the whole file was made.
-            if (kCountsAllocs) CHECK(t.biggest() <= 60u * 44100u * sizeof(float) + 64);
+            if (kCountsAllocs) CHECK(t.biggest() <= 3u * 44100u * sizeof(float) + 64);
         }
         CHECK(readWav(path, w, 1.5f, &err) && w.l.size() == 66150);
-        CHECK(readWav(path, w, 300.0f, &err) && w.l.size() == 90u * 44100u);
+        CHECK(readWav(path, w, 300.0f, &err) && w.l.size() == static_cast<size_t>(n));
         // A mono file's right side is its left.
         CHECK(w.l == w.r);
     }
@@ -678,15 +748,20 @@ void testLimit() {
         CHECK(readWav(path, w, 2.0f, &err) && w.l.size() == 88200 && w.fileRate == 48000 && w.rate == 44100);
     }
     {
-        // 90 s at 48 kHz, 60 s of it: the resampler holds the input it needs next, not the input so far.
-        const int n = 90 * 48000;
-        Bytes data;
-        data.reserve(2 * static_cast<size_t>(n));
-        for (int i = 0; i < n; ++i) put16(data, static_cast<uint32_t>(static_cast<int16_t>(3000.0 * std::sin(0.1 * i))));
-        CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(1, 1, 48000, 16)), chunk("data", data)})));
+        // 8 s at 48 kHz, 5 s of it: the resampler holds the input it needs next, not the input so far.
+        const int n = 8 * 48000;
+        CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(1, 1, 48000, 16)), chunk("data", pcm16(n, [](int i) { return 3000.0 * std::sin(0.1 * i); }))})));
         Track t;
-        CHECK(readWav(path, w, 60.0f, &err) && w.l.size() == 60u * 44100u && allFinite(w.l));
-        if (kCountsAllocs) CHECK(t.biggest() <= 60u * 44100u * sizeof(float) + 64);
+        CHECK(readWav(path, w, 5.0f, &err) && w.l.size() == 5u * 44100u && allFinite(w.l));
+        if (kCountsAllocs) CHECK(t.biggest() <= 5u * 44100u * sizeof(float) + 64);
+    }
+    {
+        // 8 s at 192 kHz, 4 s of it: the same through the halvings too.
+        const int n = 8 * 192000;
+        CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(1, 1, 192000, 16)), chunk("data", pcm16(n, [](int i) { return 3000.0 * std::sin(0.02 * i); }))})));
+        Track t;
+        CHECK(readWav(path, w, 4.0f, &err) && w.l.size() == 4u * 44100u && allFinite(w.l));
+        if (kCountsAllocs) CHECK(t.biggest() <= 4u * 44100u * sizeof(float) + 64);
     }
 }
 
@@ -767,8 +842,52 @@ void testResample() {
         CHECK(g < -40.0);
     }
     std::printf("\n");
+    // Above 96 kHz the rate is halved first (halfband.h's decimator), so what lies past 22 kHz in the file
+    // does not fold into the band: through the 32 taps alone, a 25 kHz tone from a 192 kHz file came back at
+    // 19.1 kHz at -16 dB, and from 384 kHz at -9.9 dB.
+    std::printf("  tones that fold into the band (their frequency, the file's rate -> where they land, gain in dB):");
+    struct Fold {
+        int rate;
+        double hz, below;
+    };
+    for (const Fold& c : {Fold{96000, 27000, -40}, Fold{96000, 35000, -40}, Fold{192000, 25000, -35}, Fold{192000, 30000, -40},
+                          Fold{192000, 40000, -40}, Fold{192000, 60000, -60}, Fold{192000, 90000, -60}, Fold{384000, 25000, -35},
+                          Fold{384000, 40000, -40}, Fold{384000, 90000, -60}, Fold{384000, 150000, -60}}) {
+        CHECK(writeBytes(path, sineFile(c.rate, c.hz, 0.5)));
+        CHECK(readWav(path, w, 60.0f, &err));
+        double f = std::fmod(c.hz, 44100.0);
+        if (f > 22050.0) f = 44100.0 - f;
+        const double g = db(magnitude(w.l, f, w.l.size() / 4, w.l.size() * 3 / 4) / 0.5);
+        std::printf(" %g kHz@%g -> %.1f kHz %.0f;", c.hz / 1000.0, c.rate / 1000.0, f / 1000.0, g);
+        CHECK(g < c.below);
+    }
+    std::printf("\n");
+    // The response by the file's rate: the halvings and the 32 taps together.
+    std::printf("  gain (dB) at 15, 18, 19.845, 21 kHz from a file at:");
+    for (const int rate : {48000, 88200, 96000, 176400, 192000, 384000}) {
+        std::printf(" %g kHz:", rate / 1000.0);
+        for (const double hz : {15000.0, 18000.0, 19845.0, 21000.0}) {
+            CHECK(writeBytes(path, sineFile(rate, hz, 0.5)));
+            CHECK(readWav(path, w, 60.0f, &err));
+            const double g = db(rms(w.l, 2000, w.l.size() - 2000) * std::sqrt(2.0) / 0.5);
+            std::printf(" %.2f", g);
+            if (hz == 15000.0) CHECK(g > -0.5 && g < 0.2);
+        }
+        std::printf(";");
+    }
+    std::printf("\n");
+    // In time and phase from 192 kHz too: the halvings' delay is made up.
+    {
+        CHECK(writeBytes(path, sineFile(192000, 3000.0, 1.0)));
+        CHECK(readWav(path, w, 60.0f, &err));
+        double worst = 0.0;
+        for (size_t j = 4000; j + 4000 < w.l.size(); ++j)
+            worst = std::max(worst, std::fabs(static_cast<double>(w.l[j]) - 0.5 * std::sin(2.0 * kPi * 3000.0 * static_cast<double>(j) / 44100.0)));
+        std::printf("  a 3 kHz tone from 192 kHz is %.1e off the ideal at the most\n", worst);
+        CHECK(worst < 2e-3);
+    }
     // DC passes at unity, whatever the rate.
-    for (const int rate : {22050, 48000, 96000}) {
+    for (const int rate : {22050, 48000, 96000, 192000, 384000}) {
         Bytes data;
         for (int i = 0; i < rate / 4; ++i) encode(data, 3, 32, 0.5f);
         CHECK(writeBytes(path, riff({chunk("fmt ", fmtBody(3, 1, rate, 32)), chunk("data", data)})));
@@ -841,6 +960,14 @@ void testKeys() {
     if (wavs != expect)
         for (const std::string& k : wavs) std::printf("  listed: %s\n", k.c_str());
     for (size_t i = 0; i < keys.size(); ++i) CHECK(!keys[i].empty());
+    // Roots written with a slash at the end list the same files (the keys never have it).
+    setenv("AF_SOURCE_ROOTS", (plug + "/:" + ssd + "/").c_str(), 1);
+    rescanSources();
+    {
+        const std::vector<std::string> k2 = sourceKeys();
+        CHECK(std::vector<std::string>(k2.begin() + FD_COUNT + 1, k2.end()) == expect);
+    }
+    useRoots(plug, ssd);
 
     // Names: the field, Memory, the file's stem.
     CHECK(sourceName("builtin:Surf") == "Surf" && sourceName("memory:") == "Memory");
@@ -911,6 +1038,7 @@ void testCache() {
     CHECK(each > 0 && b->bytes() == each);
 
     CHECK(c.find("a") == nullptr);
+    CHECK(c.put("none", nullptr) == nullptr && c.entries() == 0);   // nothing is not cached
     CHECK(c.put("a", a) == a);
     CHECK(c.find("a") == a && c.entries() == 1 && c.bytes() == each);
     CHECK(c.put("a", b) == a);               // a second load of one key keeps the first
@@ -964,6 +1092,45 @@ void testCache() {
         }
         c.setCap(1);
         CHECK(c.entries() == 0 && c.bytes() == 0);
+    }
+    // A file's source is kept with the file's size and time: found while they agree, dropped (from the cache; whoever
+    // holds it plays on) when they don't, or when the file has gone.
+    {
+        c.clear();
+        c.setCap(1u << 30);
+        auto x = makeSource(4000, 250), y = makeSource(4000, 350);
+        FileStamp s1{true, 100, 1000}, sSize{true, 101, 1000}, sTime{true, 100, 2000}, gone;
+        c.put("f", x, s1);
+        CHECK(c.find("f", &s1) == x);
+        CHECK(c.find("f") == x);   // no stamp asked: whatever is cached
+        CHECK(c.find("f", &sSize) == nullptr && c.entries() == 0 && c.bytes() == 0);
+        c.put("f", x, s1);
+        CHECK(c.find("f", &sTime) == nullptr && c.entries() == 0);
+        c.put("f", x, s1);
+        CHECK(c.find("f", &gone) == nullptr && c.entries() == 0);
+        c.put("f", y, sSize);
+        CHECK(c.find("f", &sSize) == y && c.entries() == 1);
+        CHECK(x->src.ready());   // the dropped one is whole in whoever has it
+        c.put("g", x);           // kept without a stamp: asked for with the file gone, it goes too
+        CHECK(c.find("g", &gone) == nullptr && c.find("g") == nullptr);
+    }
+    // An allocation that fails inside put() leaves the cache as it was: the map's node first, the list's after.
+    for (int skip = 0; skip < 2; ++skip) {
+        c.clear();
+        c.setCap(1u << 30);
+        auto x = makeSource(4000, 250);
+        bool threw = false;
+        sources_oom::t_skip = skip;
+        try {
+            c.put("oom", x);
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        sources_oom::t_skip = -1;
+        CHECK(threw && c.entries() == 0 && c.bytes() == 0);
+        c.setCap(1);   // an eviction over a list with a stray key would walk off the map
+        CHECK(c.put("fine", x) == x && c.entries() == 1);
+        c.setCap(1u << 30);
     }
     c.clear();
     c.setCap(48u << 20);
@@ -1047,11 +1214,16 @@ void testLoaderStates() {
         const Loader::View v = L.view(0);
         CHECK(v.state == Loader::Ready && v.key == "k10" && v.loadedKey == "k10" && v.info == 0 && v.error.empty());
         CHECK(liveId(L) == 0 && !L.busy() && L.wanted(0) == "k10");
-        // Wanting what is loaded does nothing.
+        // A scroll over what is loaded does nothing; a pick of it looks at it again (this fake makes a new
+        // object each time it is asked, so the slot takes it, and the one it had goes).
         L.want(0, "k10", false);
-        L.want(0, "k10", true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(Loader::kDebounceMs + 100));
         settle(L);
-        CHECK(L.loads() == 1);
+        CHECK(L.loads() == 1 && liveId(L) == 0);
+        L.want(0, "k10", true);
+        CHECK(until([&] { return L.loads() == 2; }));
+        CHECK(liveId(L) == 1 && L.view(0).state == Loader::Ready && L.view(0).loadedKey == "k10");
+        CHECK(until([&] { return f.freed[0].load(); }));
     }
     {
         // `now` skips the debounce: the load starts long before 150 ms (three tries: a stall of the
@@ -1155,23 +1327,62 @@ void testLoaderStates() {
         Loader L({f.type()});
         std::mutex m;
         std::vector<std::string> told;
+        std::atomic<int> asked{0};
         L.setListener([&](int slot, const std::string& key, bool ok) {
-            const std::string w = L.wanted(slot);   // takes the loader's lock: deadlocks if it were held
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));   // the test has moved on by now
+            L.wanted(slot);   // takes the loader's lock: deadlocks if it were held
+            ++asked;
             std::lock_guard<std::mutex> lk(m);
-            told.push_back(key + (ok ? " ok " : " failed ") + w);
+            told.push_back(key + (ok ? " ok" : " failed"));
         });
+        // (The count of loads goes up before the listener is told: each step waits for the telling.)
+        const auto toldCount = [&] {
+            std::lock_guard<std::mutex> lk(m);
+            return told.size();
+        };
         L.want(0, "a", true);
-        CHECK(until([&] { return L.loads() == 1; }));
+        CHECK(until([&] { return L.loads() == 1 && toldCount() == 1; }));
         L.want(0, "bad", true);
-        CHECK(until([&] { return L.loads() == 2; }));
+        CHECK(until([&] { return L.loads() == 2 && toldCount() == 2; }));
         L.want(0, "c", true);
-        CHECK(until([&] { return L.loads() == 3; }));
+        CHECK(until([&] { return L.loads() == 3 && toldCount() == 3; }));
         L.stop();
         L.want(0, "late", true);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         std::lock_guard<std::mutex> lk(m);
-        CHECK(told == (std::vector<std::string>{"a ok a", "bad failed bad", "c ok c"}));
-        CHECK(L.loads() == 3);
+        CHECK(told == (std::vector<std::string>{"a ok", "bad failed", "c ok"}));
+        CHECK(asked.load() == 3 && L.loads() == 3);
+    }
+    {
+        // What a load function and a listener captured is destroyed off the loader's lock: a destructor
+        // that asks the loader something would wait for itself.
+        struct Spy {
+            Loader** loader;
+            std::atomic<int>* destroyed;
+            Spy(Loader** l, std::atomic<int>* d) : loader(l), destroyed(d) {}
+            Spy(const Spy& o) : loader(o.loader), destroyed(o.destroyed) {}
+            ~Spy() {
+                if (*loader) {
+                    (*loader)->wanted(0);
+                    ++*destroyed;
+                }
+            }
+        };
+        Loader* lp = nullptr;
+        std::atomic<int> destroyed{0};
+        Spy spy(&lp, &destroyed);
+        Loader::SlotType t;
+        t.load = [spy](const std::string&, std::string*, int*) -> std::shared_ptr<const void> { return std::make_shared<int>(1); };
+        Loader L({t});
+        lp = &L;
+        L.setListener([spy](int, const std::string&, bool) {});
+        const int before = destroyed.load();
+        L.want(0, "a", true);
+        CHECK(until([&] { return L.loads() == 1; }));
+        settle(L);
+        CHECK(destroyed.load() > before);   // the worker's copies went, and it did not wait for itself
+        L.stop();
+        lp = nullptr;
     }
     {
         // stop() with a load in hand waits for it, then nothing runs: the destructor does the same.
@@ -1285,7 +1496,9 @@ void testGraveyard() {
         CHECK(until([&] { return f.freed[1].load(); }));
     }
     {
-        // Several swaps in a row: each goes by the same rule, and the one the block read last stays.
+        // Several swaps in a row. The first object may have been read by the block that ran before them
+        // (and held it), and stays; the ones put in after that block, and taken out before another starts,
+        // were never read by any, and go as the next goes in.
         Fake f;
         Loader L({f.type()});
         L.want(0, "a", true);
@@ -1296,14 +1509,336 @@ void testGraveyard() {
             L.want(0, "k" + std::to_string(i), true);
             CHECK(until([&] { return L.loads() == 2 + i; }));
         }
+        CHECK(until([&] { return f.freed[1].load() && f.freed[2].load() && f.freed[3].load() && f.freed[4].load(); }));
         settle(L);
-        for (int i = 0; i < 5; ++i) CHECK(!f.freed[i].load());   // none goes while a block may read the first
+        CHECK(!f.freed[0].load());   // a block may have read it
+        CHECK(!f.freed[5].load());   // and this is the one live
         L.blockStart();
         CHECK(liveId(L) == 5);
         L.blockDone(true);
-        CHECK(until([&] { return f.freed[0].load() && f.freed[1].load() && f.freed[2].load() && f.freed[3].load() && f.freed[4].load(); }));
+        CHECK(until([&] { return f.freed[0].load(); }));
         CHECK(!f.freed[5].load());
     }
+    {
+        // Scrolling through sources while the track isn't processed (no block has run since the last said
+        // it holds): each source picked is freed as the next goes in, not kept.
+        Fake f;
+        Loader L({f.type()});
+        L.blockStart();
+        L.blockDone(true);
+        for (int i = 0; i < 8; ++i) {
+            L.want(0, "s" + std::to_string(i), true);
+            CHECK(until([&] { return L.loads() == 1 + i; }));
+        }
+        CHECK(until([&] { return f.freed[0].load() && f.freed[1].load() && f.freed[2].load() && f.freed[3].load() &&
+                                 f.freed[4].load() && f.freed[5].load() && f.freed[6].load(); }));
+        CHECK(!f.freed[7].load());
+    }
+    {
+        // A block running as an object goes in may read it, whether or not another starts: it stays
+        // until a block that began after it is out has ended.
+        Fake f;
+        Loader L({f.type()});
+        L.want(0, "x", true);
+        CHECK(until([&] { return L.loads() == 1; }));
+        L.blockStart();
+        L.want(0, "y", true);   // put in with a block running
+        CHECK(until([&] { return L.loads() == 2; }));
+        L.blockDone(true);
+        L.want(0, "z", true);
+        CHECK(until([&] { return L.loads() == 3; }));
+        settle(L);
+        CHECK(!f.freed[0].load() && !f.freed[1].load());   // x: the block ran as it went out; y: it ran as y went in
+        L.blockStart();
+        L.blockDone(true);
+        CHECK(until([&] { return f.freed[0].load() && f.freed[1].load(); }));
+        CHECK(!f.freed[2].load());
+    }
+    {
+        // A block starting between the store that puts an object in and the one that takes it out may have
+        // read it, with no block running either side.
+        Fake f;
+        Loader L({f.type()});
+        L.blockStart();
+        L.blockDone(true);
+        L.want(0, "x", true);
+        CHECK(until([&] { return L.loads() == 1; }));
+        L.blockStart();
+        CHECK(liveId(L) == 0);
+        L.blockDone(true);
+        L.want(0, "y", true);
+        CHECK(until([&] { return L.loads() == 2; }));
+        settle(L);
+        CHECK(!f.freed[0].load());   // read by that block, which held it
+        L.blockStart();
+        L.blockDone(true);
+        CHECK(until([&] { return f.freed[0].load(); }));
+    }
+}
+
+// --- the rule, over every interleaving ------------------------------------------------------------------
+
+// A model of the audio thread's block (six steps: blockStart, the read of live(), Weather's copy from the
+// pointer kept from the block before, the read of the new one, what it keeps and says it holds, blockDone)
+// and of the worker (swaps: the read of started, then ended, the store, the read of started after it;
+// checks: the reads of started, ended, holds, then the graveyard), run over every order the steps can come
+// in, with the rules of loader.h as the worker's. A bug is a read of an object that has been freed. The
+// same model with a weakened rule finds one: so the test has teeth.
+struct GState {
+    uint8_t apc = 0, blocks = 0, held = 255, p = 255;                  // the audio thread
+    uint8_t live = 0, started = 0, ended = 0, holdsf = 0;              // what is shared
+    uint8_t wpc = 0, swaps = 0, checks = 0, next = 1, old = 255;       // the worker
+    uint8_t pre0 = 0, pre1 = 0, cs = 0, ce = 0, ch = 0;
+    uint8_t ngr = 0, grObj[4] = {0, 0, 0, 0}, grN[4] = {0, 0, 0, 0};   // the graveyard
+    uint8_t freed = 0;                                                 // objects freed, a bit each
+    uint8_t mS0[5] = {0, 0, 0, 0, 0}, mE0[5] = {0, 0, 0, 0, 0}, mNin[5] = {0, 0, 0, 0, 0};   // counts at each object's swap in
+    bool operator==(const GState& o) const { return std::memcmp(this, &o, sizeof *this) == 0; }
+};
+static_assert(sizeof(GState) == 43, "no padding: the state is compared and hashed as bytes");
+
+struct GHash {
+    size_t operator()(const GState& g) const {
+        uint64_t h = 1469598103934665603ull;
+        const uint8_t* b = reinterpret_cast<const uint8_t*>(&g);
+        for (size_t i = 0; i < sizeof g; ++i) h = (h ^ b[i]) * 1099511628211ull;
+        return static_cast<size_t>(h);
+    }
+};
+
+enum GVariant { GV_RULE, GV_HOLDS_IGNORED, GV_NO_PLUS_ONE, GV_SEEN_NO_E0, GV_SEEN_ONLY_AFTER };
+
+bool mayFree(int v, const GState& st, uint8_t n) {
+    if (v == GV_HOLDS_IGNORED) return st.cs == st.ce || st.ce >= n + 1;
+    if (v == GV_NO_PLUS_ONE) return (st.cs == st.ce && !st.ch) || st.ce >= n;
+    return af::graveMayFree(st.cs, st.ce, st.ch != 0, n);
+}
+bool neverSeen(int v, const GState& st, uint8_t o, uint8_t n) {
+    if (v == GV_SEEN_NO_E0) return st.mS0[o] == n;                    // a block running as it went in is forgotten
+    if (v == GV_SEEN_ONLY_AFTER) return st.mNin[o] == n;              // blocks started before the store are forgotten
+    return af::graveNeverSeen(st.mS0[o], st.mE0[o], n);
+}
+
+// True if a bug is found; `states` the number of states visited.
+bool explore(int v, int maxBlocks, int maxSwaps, int maxChecks, size_t* states) {
+    std::unordered_set<GState, GHash> seen;
+    std::vector<GState> stack{GState{}};
+    while (!stack.empty()) {
+        const GState st = stack.back();
+        stack.pop_back();
+        if (!seen.insert(st).second) continue;
+        const auto go = [&](GState n) { stack.push_back(n); };
+        // The audio thread.
+        switch (st.apc) {
+            case 0:
+                if (st.blocks < maxBlocks) {
+                    GState n = st;
+                    n.started++;
+                    n.apc = 1;
+                    go(n);
+                }
+                break;
+            case 1: {
+                GState n = st;
+                n.p = st.live;
+                n.apc = 2;
+                go(n);
+                break;
+            }
+            case 2: {   // Weather's copy from the pointer it kept, when the block gives it another
+                if (st.held != 255 && st.held != st.p && ((st.freed >> st.held) & 1)) {
+                    *states = seen.size();
+                    return true;
+                }
+                GState n = st;
+                n.apc = 3;
+                go(n);
+                break;
+            }
+            case 3: {
+                if (st.p != 255 && ((st.freed >> st.p) & 1)) {
+                    *states = seen.size();
+                    return true;
+                }
+                GState n = st;
+                n.apc = 4;
+                go(n);
+                break;
+            }
+            case 4:   // what it keeps and says: the object and holds, nothing and not, nothing and the default (true)
+                for (int c = 0; c < 3; ++c) {
+                    if (c == 0 && st.p == 255) continue;
+                    GState n = st;
+                    n.apc = 5;
+                    n.held = c == 0 ? st.p : 255;
+                    n.holdsf = c != 1;
+                    go(n);
+                }
+                break;
+            case 5: {
+                GState n = st;
+                n.ended++;
+                n.blocks++;
+                n.apc = 0;
+                go(n);
+                break;
+            }
+        }
+        // The worker.
+        GState n = st;
+        switch (st.wpc) {
+            case 0:
+                if (st.swaps < maxSwaps) {
+                    n.wpc = 20;
+                    go(n);
+                }
+                if (st.checks < maxChecks && st.ngr > 0) {
+                    n = st;
+                    n.wpc = 10;
+                    go(n);
+                }
+                break;
+            case 20: n.pre0 = st.started; n.wpc = 21; go(n); break;
+            case 21: n.pre1 = st.ended; n.wpc = 1; go(n); break;
+            case 1: n.old = st.live; n.live = st.next; n.next++; n.wpc = 2; go(n); break;
+            case 2: {   // the read of started after the store: the new object's, and the old one's N
+                const uint8_t nIn = st.started;
+                n.mS0[st.live] = st.pre0;
+                n.mE0[st.live] = st.pre1;
+                n.mNin[st.live] = nIn;
+                if (st.old != 255) {
+                    if (neverSeen(v, st, st.old, nIn)) {
+                        n.freed |= static_cast<uint8_t>(1u << st.old);
+                    } else {
+                        n.grObj[n.ngr] = st.old;
+                        n.grN[n.ngr] = nIn;
+                        n.ngr++;
+                    }
+                }
+                n.old = 255;
+                n.swaps++;
+                n.wpc = 0;
+                go(n);
+                break;
+            }
+            case 10: n.cs = st.started; n.wpc = 11; go(n); break;
+            case 11: n.ce = st.ended; n.wpc = 12; go(n); break;
+            case 12: n.ch = st.holdsf; n.wpc = 13; go(n); break;
+            case 13: {
+                uint8_t keep = 0;
+                for (int i = 0; i < st.ngr; ++i) {
+                    if (mayFree(v, st, st.grN[i])) {
+                        n.freed |= static_cast<uint8_t>(1u << st.grObj[i]);
+                    } else {
+                        n.grObj[keep] = st.grObj[i];
+                        n.grN[keep] = st.grN[i];
+                        ++keep;
+                    }
+                }
+                for (int i = keep; i < 4; ++i) n.grObj[i] = n.grN[i] = 0;
+                n.ngr = keep;
+                n.checks++;
+                n.cs = n.ce = n.ch = 0;
+                n.wpc = 0;
+                go(n);
+                break;
+            }
+        }
+    }
+    *states = seen.size();
+    return false;
+}
+
+void testGraveModel() {
+    std::printf("== sources: the graveyard's rule over every interleaving\n");
+    size_t states = 0;
+    const auto t0 = Clock::now();
+    const bool bug = explore(GV_RULE, 2, 3, 2, &states);
+    const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    std::printf("  the rule: %zu states, %s (%.0f ms)\n", states, bug ? "A BUG" : "no read of a freed object", ms);
+    CHECK(!bug && states > 50000);
+    // The model finds the bugs of weaker rules: PolyForce's (the audio side holding nothing between blocks,
+    // so it frees when none runs), a count short by one, and a never-seen rule that forgets a block running
+    // as the object went in, or one that started before it.
+    const char* names[] = {"", "holds ignored", "no +1", "never seen, ignoring a block running at the store", "never seen, ignoring blocks before the store"};
+    for (int v = GV_HOLDS_IGNORED; v <= GV_SEEN_ONLY_AFTER; ++v) {
+        size_t n = 0;
+        const bool found = explore(v, 2, 3, 2, &n);
+        std::printf("  %s: %s after %zu states\n", names[v], found ? "a read of a freed object" : "NOT FOUND", n);
+        CHECK(found);
+    }
+}
+
+// An allocation that fails in the middle of a swap leaves the slot as it was. The audio thread has the
+// old pointer from a block still running; when publish() moved the old object out of the slot before
+// the copy of the key that failed, it was freed under that block (ASan: heap-use-after-free).
+void testPublishOom() {
+    std::printf("== sources: out of memory while publishing\n");
+    std::atomic<int> created{0};
+    std::atomic<bool> freed0{false}, retry{false};
+    Loader::SlotType t;
+    t.load = [&](const std::string& key, std::string*, int*) -> std::shared_ptr<const void> {
+        const int n = created.fetch_add(1);
+        while (n >= 2 && !retry) std::this_thread::sleep_for(std::chrono::milliseconds(1));   // the retry waits for the checks
+        auto obj = std::shared_ptr<const int>(new int(n), [&freed0, n](const int* q) {
+            if (n == 0) freed0 = true;
+            delete q;
+        });
+        if (n == 1) sources_oom::t_skip = 0;   // the worker's next allocation fails: in publish(), the key's copy
+        (void)key;
+        return obj;
+    };
+    Loader L({t});
+    const int thrown0 = sources_oom::g_thrown.load();
+    L.want(0, "a", true);
+    CHECK(until([&] { return L.loads() == 1; }));
+    L.blockStart();   // a block running, with the old object
+    const void* p = L.live(0);
+    CHECK(p && *static_cast<const int*>(p) == 0);
+    const std::string longKey(60, 'k');
+    L.want(0, longKey, true);
+    CHECK(until([&] { return sources_oom::g_thrown.load() > thrown0; }));
+    CHECK(!freed0.load());                                 // not freed with the block reading it
+    CHECK(L.live(0) == p && *static_cast<const int*>(p) == 0);
+    CHECK(L.view(0).loadedKey == "a");                     // the slot is as it was
+    retry = true;
+    CHECK(until([&] { return L.loads() == 2; }));          // and the next round does what the failed one could not
+    CHECK(liveId(L) == 2 && L.view(0).loadedKey == longKey && L.view(0).state == Loader::Ready);
+    CHECK(!freed0.load());                                 // still there for the block running
+    L.blockDone(false);
+    CHECK(until([&] { return freed0.load(); }));
+}
+
+// An allocation that fails while a source is being made is a failed load, not an exception out of
+// loadSource (the loader would catch it, but a caller of loadSource need not).
+void testLoadOom() {
+    std::printf("== sources: out of memory while loading a source\n");
+    const std::string plug = dir() + "/oom/plugin", ssd = dir() + "/oom/ssd";
+    fs::create_directories(plug);
+    fs::create_directories(ssd);
+    useRoots(plug, ssd);
+    makeWav(plug + "/Weather/Big.wav", 20000);
+    int failed = 0;
+    for (const char* key : {"builtin:Embers", "plugin:Weather/Big.wav"})
+        for (int skip = 0; skip < 4; ++skip) {   // at several points on the way
+            af::SourceCache::get().clear();
+            std::string err;
+            std::shared_ptr<const SourceBuffer> r;
+            bool escaped = false;
+            sources_oom::t_skip = skip;
+            try {
+                r = loadSource(key, &err);
+            } catch (...) {
+                escaped = true;
+            }
+            sources_oom::t_skip = -1;
+            CHECK(!escaped);
+            if (!r) {
+                ++failed;
+                CHECK(err == "out of memory");
+            }
+        }
+    CHECK(failed >= 4);   // most of those allocations were on the way
+    af::SourceCache::get().clear();
 }
 
 void testPost() {
@@ -1391,6 +1926,14 @@ struct Blob {
     explicit Blob(int n) : v(static_cast<size_t>(n), n) {}
 };
 std::atomic<long long> g_sink{0};   // what the audio thread read (so that reading it is not optimised away)
+// A stall at a step of a block, now and then: none, a yield, or a sleep.
+void jitter(uint32_t& s) {
+    s = s * 1664525u + 1013904223u;
+    const uint32_t r = (s >> 16) % 16;
+    if (r < 6) return;
+    if (r < 13) sched_yield();
+    else std::this_thread::sleep_for(std::chrono::microseconds((s >> 8) % 300));
+}
 void touch(const void* p) {
     if (!p) return;
     long long s = 0;
@@ -1421,20 +1964,26 @@ void testStress() {
             const void* prev = nullptr;
             uint32_t s = 7;
             while (!stop) {
+                jitter(s);   // between blocks (MPC may not call for a while)
                 L.blockStart();
+                jitter(s);   // between the start and the read of live()
+                const void* cur = L.live(0);
+                jitter(s);
                 if (prev) {   // what Weather does on the first render() with a new source
                     touch(prev);
                     ++heldReads;
+                    jitter(s);
+                    touch(prev);
                 }
-                const void* cur = L.live(0);
+                touch(cur);
+                jitter(s);
                 touch(cur);
                 s = s * 1664525u + 1013904223u;
                 const bool holds = cur && ((s >> 16) % 4 != 0);
                 prev = holds ? cur : nullptr;
+                jitter(s);   // before the end
                 L.blockDone(holds);
                 ++blocks;
-                // MPC's blocks are 2.9 ms apart; this is faster, with gaps for the worker to see
-                std::this_thread::sleep_for(std::chrono::microseconds(30 + (s >> 20) % 200));
             }
         });
         const auto end = Clock::now() + std::chrono::milliseconds(1500);
@@ -1512,10 +2061,7 @@ void testSourceSlot() {
     // A WAV of 61 s is read as 60 s: its source is that less the loop's fade.
     {
         const int n = 61 * 44100;
-        Bytes data;
-        data.reserve(2 * static_cast<size_t>(n));
-        for (int i = 0; i < n; ++i) put16(data, static_cast<uint32_t>(static_cast<int16_t>(2000.0 * std::sin(0.05 * i))));
-        CHECK(writeBytes(plug + "/Weather/Long.wav", riff({chunk("fmt ", fmtBody(1, 1, 44100, 16)), chunk("data", data)})));
+        CHECK(writeBytes(plug + "/Weather/Long.wav", riff({chunk("fmt ", fmtBody(1, 1, 44100, 16)), chunk("data", pcm16(n, [](int i) { return 2000.0 * std::sin(0.05 * i); }))})));
         std::string e;
         const auto s = loadSource("plugin:Weather/Long.wav", &e);
         const int fade = static_cast<int>(af::kLoopFadeS * af::kRate);
@@ -1565,12 +2111,14 @@ void testSourceSlot() {
     CHECK(af::sourcesMade() == made0);   // the slot has loaded it: both of these found it
     CHECK(loadSource("builtin:Stream") == loadSource("builtin:Stream"));
     CHECK(af::sourcesMade() == made0 + 1);
-    {   // a file gone from the disk is still a source while it is cached
+    {   // a file gone from the disk is gone, cached or not
         makeWav(plug + "/Weather/Fleeting.wav", 4000);
         auto a = loadSource("plugin:Weather/Fleeting.wav");
         CHECK(a && af::sourcesMade() == made0 + 2);
+        CHECK(loadSource("plugin:Weather/Fleeting.wav") == a && af::sourcesMade() == made0 + 2);   // while it is there
         fs::remove(plug + "/Weather/Fleeting.wav");
-        CHECK(loadSource("plugin:Weather/Fleeting.wav") == a && af::sourcesMade() == made0 + 2);
+        std::string e;
+        CHECK(loadSource("plugin:Weather/Fleeting.wav", &e) == nullptr && e == "cannot open");
     }
     first = second = nullptr;
     // Over the cap, the least recently used one not in use goes. The slot's source is in use.
@@ -1582,6 +2130,90 @@ void testSourceSlot() {
     CHECK(cache.find("builtin:Surf") == nullptr);
     cache.setCap(48u << 20);
     L.stop();
+}
+
+// --- Keep ---------------------------------------------------------------------------------------------
+
+// --- a file replaced or deleted under its key ----------------------------------------------------------
+
+// The first samples of two sources differ.
+bool differ(const SourceBuffer& a, const SourceBuffer& b) {
+    for (int i = 0; i < 2 * 2000; ++i)
+        if (a.src.level[0][i] != b.src.level[0][i]) return true;
+    return false;
+}
+void bumpTime(const std::string& path) { fs::last_write_time(path, fs::last_write_time(path) + std::chrono::seconds(5)); }
+
+void testStale() {
+    std::printf("== sources: a file replaced or deleted under its key\n");
+    const std::string plug = dir() + "/stale/plugin", ssd = dir() + "/stale/ssd";
+    fs::create_directories(plug);
+    fs::create_directories(ssd);
+    useRoots(plug, ssd);
+    af::SourceCache::get().clear();
+    const std::string path = plug + "/Weather/Swap.wav", key = "plugin:Weather/Swap.wav";
+    std::string err;
+
+    // loadSource: the cache serves a file as long as its size and time stand.
+    makeWav(path, 6000, 300.0);
+    const int made0 = af::sourcesMade();
+    auto a = loadSource(key);
+    CHECK(a && af::sourcesMade() == made0 + 1);
+    CHECK(loadSource(key) == a && af::sourcesMade() == made0 + 1);
+    // Another sound of the same size, its time moved on: read again.
+    makeWav(path, 6000, 900.0);
+    bumpTime(path);
+    auto b = loadSource(key);
+    CHECK(b && b != a && af::sourcesMade() == made0 + 2 && differ(*a, *b));
+    CHECK(loadSource(key) == b && af::sourcesMade() == made0 + 2);
+    CHECK(af::SourceCache::get().entries() == 1);   // the old one is not kept
+    CHECK(a->src.ready());                          // and whole in whoever has it
+    // Another size, at the time it had: read again too.
+    {
+        const auto when = fs::last_write_time(path);
+        makeWav(path, 7000, 900.0);
+        fs::last_write_time(path, when);
+        auto c = loadSource(key);
+        CHECK(c && c != b && af::sourcesMade() == made0 + 3);
+    }
+    // Gone: gone, though cached.
+    fs::remove(path);
+    CHECK(loadSource(key, &err) == nullptr && err == "cannot open");
+    CHECK(af::SourceCache::get().entries() == 0);
+
+    // The slot: a pick of the loaded key looks at the file again; a scroll doesn't.
+    makeWav(path, 6000, 300.0);
+    Loader L({sourceSlotType()});
+    std::atomic<int> told{0};
+    L.setListener([&](int, const std::string&, bool) { ++told; });
+    L.want(0, key, true);
+    CHECK(until([&] { return L.loads() == 1 && told.load() == 1; }));
+    const void* first = L.live(0);
+    CHECK(first != nullptr);
+    L.want(0, key, true);   // unchanged: looked at, the same object, nothing swapped or announced
+    CHECK(until([&] { return L.loads() == 2; }));
+    CHECK(L.live(0) == first && L.view(0).state == Loader::Ready);
+    makeWav(path, 6000, 900.0);
+    bumpTime(path);
+    L.want(0, key, false);   // a scroll over it: nothing
+    std::this_thread::sleep_for(std::chrono::milliseconds(Loader::kDebounceMs + 100));
+    settle(L);
+    CHECK(L.loads() == 2 && L.live(0) == first);
+    L.want(0, key, true);    // a pick: the new file
+    CHECK(until([&] { return L.loads() == 3 && told.load() == 2; }));
+    CHECK(L.live(0) != first && L.view(0).state == Loader::Ready && L.view(0).loadedKey == key);
+    CHECK(sourceOf(L.live(0)) && differ(*a, *static_cast<const SourceBuffer*>(L.live(0))));
+    // Deleted: Missing, the key kept; back again: a pick retries it.
+    fs::remove(path);
+    L.want(0, key, true);
+    CHECK(until([&] { return L.loads() == 4; }));
+    CHECK(L.live(0) == nullptr && L.view(0).state == Loader::Missing && L.view(0).key == key && L.view(0).error == "cannot open");
+    makeWav(path, 6000, 300.0);
+    L.want(0, key, true);
+    CHECK(until([&] { return L.loads() == 5; }));
+    CHECK(L.live(0) != nullptr && L.view(0).state == Loader::Ready);
+    L.stop();
+    useRoots(plug, ssd);
 }
 
 // --- Keep ---------------------------------------------------------------------------------------------
@@ -1604,13 +2236,29 @@ std::unique_ptr<Memory> remembered(double seconds, double amp = 0.5, bool ramp =
     return m;
 }
 
-bool keepIsRing(const WavData& w, const GrainSource& src) {
-    if (static_cast<int>(w.l.size()) != src.frames || w.r.size() != w.l.size()) return false;
-    const float k = src.gain * 32768.0f;
-    for (int i = 0; i < src.frames; ++i) {
-        const int from = (src.origin + i) % src.frames;
+// What the ring held when it was remembered (it is recorded over after the next Remember).
+struct RingCopy {
+    std::vector<int16_t> level0;
+    int frames = 0, origin = 0;
+    float gain = 0.0f;
+};
+RingCopy copyOf(const GrainSource& src) {
+    RingCopy r;
+    r.frames = src.frames;
+    r.origin = src.origin;
+    r.gain = src.gain;
+    r.level0.assign(src.level[0], src.level[0] + 2 * static_cast<size_t>(src.frames));
+    return r;
+}
+
+// Keep's file against the ring by the formula: from the oldest frame, the 16-bit ring times two, clamped.
+bool fileIsRing(const WavData& w, const RingCopy& r) {
+    if (static_cast<int>(w.l.size()) != r.frames || w.r.size() != w.l.size()) return false;
+    const float k = r.gain * 32768.0f;
+    for (int i = 0; i < r.frames; ++i) {
+        const int from = (r.origin + i) % r.frames;
         for (int c = 0; c < 2; ++c) {
-            const float v = std::floor(static_cast<float>(src.level[0][2 * from + c]) * k + 0.5f);
+            const float v = std::floor(static_cast<float>(r.level0[2 * static_cast<size_t>(from) + static_cast<size_t>(c)]) * k + 0.5f);
             const float want = std::max(-32768.0f, std::min(v, 32767.0f)) / 32768.0f;
             if ((c == 0 ? w.l : w.r)[static_cast<size_t>(i)] != want) return false;
         }
@@ -1618,12 +2266,38 @@ bool keepIsRing(const WavData& w, const GrainSource& src) {
     return true;
 }
 
+// What the hooks see: at the copy the ring is pinned, so a Remember is refused (with 3 s recorded, so
+// that nothing else would refuse it); before the write it is let go, and the same Remember succeeds.
 struct HookCtx {
     Memory* mem = nullptr;
-    int calls = 0;
-    bool refused = false;
+    int copyCalls = 0, writeCalls = 0;
+    bool refusedAtCopy = false, acceptedAtWrite = false;
     uint32_t generation = 0;
+    std::string folder;
+    bool claimed = false;
 };
+void keepHook(void* p, int stage) {
+    HookCtx& c = *static_cast<HookCtx*>(p);
+    if (stage == af::KS_COPY) {
+        ++c.copyCalls;
+        std::vector<float> x(128, 0.2f);
+        for (int i = 0; i < 3 * 344; ++i) c.mem->write(x.data(), x.data(), 128);   // 3 s more
+        c.refusedAtCopy = !c.mem->remember() && c.mem->generation() == c.generation;
+    } else if (stage == af::KS_WRITE) {
+        ++c.writeCalls;
+        c.acceptedAtWrite = c.mem->remember() && c.mem->generation() == c.generation + 1;
+        // The file is claimed by now: an empty one with the next number.
+        for (const auto& e : fs::directory_iterator(c.folder))
+            if (e.path().extension() == ".wav" && fs::file_size(e.path()) == 0) c.claimed = true;
+    }
+}
+
+int wavFiles(const std::string& folder) {
+    int n = 0;
+    for (const auto& e : fs::directory_iterator(folder))
+        if (e.path().extension() == ".wav") ++n;
+    return n;
+}
 
 void testKeep() {
     std::printf("== sources: Keep\n");
@@ -1632,6 +2306,7 @@ void testKeep() {
     fs::create_directories(ssd);
     useRoots(plug, ssd);
     const std::string folder = ssd + "/AmbientForce/Memories";
+    const std::string prefix = "ssd:AmbientForce/Memories/";
     std::string err;
 
     // Nothing remembered: nothing written.
@@ -1645,43 +2320,85 @@ void testKeep() {
     const GrainSource* src = mem->remembered();
     CHECK(src && src->ready() && std::abs(src->frames - 3 * 44100) <= 4);
     CHECK(src && src->gain == 2.0f / 32768.0f);
+    const RingCopy ring = copyOf(*src);
 
-    // The first, the second, then a hole refilled. The first is listed at once (the list was looked at before).
+    // Numbered one past the highest ever used. The first is listed at once (the list was looked at before).
     sourceKeys();
     err.clear();
     std::string key = keepMemory(*mem, &err);
-    CHECK(key == "ssd:AmbientForce/Memories/Memory 001.wav" && err.empty());
+    CHECK(key == prefix + "Memory 001.wav" && err.empty());
     CHECK(contains(sourceKeys(), key));
     CHECK(fs::exists(folder + "/Memory 001.wav"));
-    CHECK(keepMemory(*mem, &err) == "ssd:AmbientForce/Memories/Memory 002.wav");
-    CHECK(keepMemory(*mem, &err) == "ssd:AmbientForce/Memories/Memory 003.wav");
+    CHECK(keepMemory(*mem, &err) == prefix + "Memory 002.wav");
+    CHECK(keepMemory(*mem, &err) == prefix + "Memory 003.wav");
+    // A deleted number is not used again: a project that named it shows MISSING, it doesn't play another recording.
+    CHECK(loadSource(prefix + "Memory 002.wav", &err) != nullptr);   // cached, as it is by a pick
     fs::remove(folder + "/Memory 001.wav");
-    CHECK(keepMemory(*mem, &err) == "ssd:AmbientForce/Memories/Memory 001.wav");
-    CHECK(keepMemory(*mem, &err) == "ssd:AmbientForce/Memories/Memory 004.wav");
+    fs::remove(folder + "/Memory 002.wav");
+    CHECK(keepMemory(*mem, &err) == prefix + "Memory 004.wav");
+    CHECK(loadSource(prefix + "Memory 001.wav", &err) == nullptr);
+    CHECK(loadSource(prefix + "Memory 002.wav", &err) == nullptr && err == "cannot open");   // though it was cached
+    // ... nor the highest, which the folder's own note remembers.
+    fs::remove(folder + "/Memory 004.wav");
+    CHECK(keepMemory(*mem, &err) == prefix + "Memory 005.wav");
+    {
+        std::string last;
+        CHECK(af::readFile(folder + "/.last", last) && std::atoi(last.c_str()) == 5);
+        CHECK(!contains(sourceKeys(), prefix + ".last"));   // hidden
+    }
+    // A file the user put there counts.
+    makeWav(folder + "/Memory 050.wav", 1000);
+    CHECK(keepMemory(*mem, &err) == prefix + "Memory 051.wav");
+    CHECK(wavFiles(folder) == 4);   // 003, 005, 050, 051
+    // Another writer takes the next number between the listing and the claim: the claim is exclusive, so
+    // that file is left alone and the Keep takes the number after.
+    {
+        struct Plant {
+            std::string path;
+        } plant{folder + "/Memory 052.wav"};
+        setKeepHook([](void* p, int stage) {
+            if (stage == af::KS_NUMBERED) makeWav(static_cast<Plant*>(p)->path, 1234);
+        }, &plant);
+        const std::string taken = keepMemory(*mem, &err);
+        setKeepHook(nullptr, nullptr);
+        CHECK(taken == prefix + "Memory 053.wav");
+        CHECK(fs::file_size(plant.path) == 44u + 4u * 1234u);   // not overwritten
+        CHECK(wavFiles(folder) == 6);                             // 003, 005, 050, 051, 052, 053
+    }
 
     // The file is the ring from its oldest frame on, at the level it was played: the 16-bit ring
     // times two (the headroom back), clamped.
     {
         WavData w;
-        CHECK(readWav(folder + "/Memory 002.wav", w, 60.0f, &err));
-        CHECK(w.rate == 44100 && w.channels == 2 && src && keepIsRing(w, *src));
+        CHECK(readWav(folder + "/Memory 003.wav", w, 60.0f, &err));
+        CHECK(w.rate == 44100 && w.channels == 2 && fileIsRing(w, ring));
         float top = 0.0f;
         for (float x : w.l) top = std::max(top, std::fabs(x));
         CHECK(top > 0.99f && top <= 1.0f);   // clipped at full scale
     }
-    // It leaves no temporary file in the folder, and is listed at once.
+    // It leaves no temporary file in the folder, and is listed at once, and loads as a source.
     {
-        int files = 0;
-        for (const auto& e : fs::directory_iterator(folder)) {
-            ++files;
-            CHECK(e.path().extension() == ".wav");
-        }
-        CHECK(files == 4);
-        CHECK(contains(sourceKeys(), key));
-        CHECK(contains(sourceKeys(), "ssd:AmbientForce/Memories/Memory 004.wav"));
-        // ... and loads as a source: its frames less the loop's fade.
-        const auto s = loadSource(key, &err);
+        int others = 0;
+        for (const auto& e : fs::directory_iterator(folder))
+            if (e.path().extension() != ".wav" && e.path().filename() != ".last") ++others;
+        CHECK(others == 0);
+        CHECK(contains(sourceKeys(), prefix + "Memory 051.wav"));
+        const auto s = loadSource(prefix + "Memory 051.wav", &err);
         CHECK(s && s->src.ready() && s->src.frames <= src->frames);
+    }
+    // The level against the signal that went in, not against the formula: 0.5 in, 0.5 out.
+    {
+        auto quiet = remembered(3.0, 0.5);
+        const std::string qk = keepMemory(*quiet, &err);
+        WavData w;
+        CHECK(!qk.empty() && readWav(ssd + "/" + qk.substr(4), w, 60.0f, &err));
+        float top = 0.0f;
+        for (float x : w.l) top = std::max(top, std::fabs(x));
+        std::printf("  a sine of 0.5 comes back with a peak of %.4f and an RMS of %.4f\n", top, rms(w.l, 2000, w.l.size() - 2000));
+        CHECK(top > 0.49f && top < 0.51f);
+        CHECK(std::fabs(rms(w.l, 2000, w.l.size() - 2000) - 0.5 / std::sqrt(2.0)) < 0.005);
+        CHECK(std::fabs(crossingHz(w.l, 1000, w.l.size() - 1000) - 500.0) < 0.5);
+        CHECK(w.l == w.r);
     }
 
     // A full ring (20 s of a ramp through 16 s): the file starts at the oldest frame and runs in time order.
@@ -1689,11 +2406,12 @@ void testKeep() {
         auto full = remembered(20.0, 0.5, true);
         const GrainSource* fsrc = full->remembered();
         CHECK(fsrc && fsrc->frames == 16 * 44100);
+        const RingCopy fring = copyOf(*fsrc);
         const std::string fkey = keepMemory(*full, &err);
         CHECK(!fkey.empty());
         WavData w;
         CHECK(readWav(ssd + "/" + fkey.substr(4), w, 60.0f, &err));
-        CHECK(fsrc && keepIsRing(w, *fsrc));
+        CHECK(fileIsRing(w, fring));
         // In time order away from the 5 ms fades at the seam: a rising ramp from 4 s on.
         bool rising = true;
         for (size_t i = 1000; i + 1000 < w.l.size(); ++i) rising = rising && w.l[i] >= w.l[i - 1] - 1e-6f;
@@ -1701,30 +2419,25 @@ void testKeep() {
         CHECK(std::fabs(w.l[2000] - (4.0f * 44100.0f + 2000.0f) * 1.0e-6f) < 0.002f);
     }
 
-    // The ring is pinned while Keep reads and writes: a Remember in the middle is refused, and after
-    // it Remember works again (the recorded 3 s are past the gap).
+    // The ring is pinned while it is copied and let go before the file is written. At the copy a
+    // Remember is refused (3 s recorded, nothing else to refuse it); before the write the same
+    // Remember succeeds, and the file is still the ring as it was.
     {
         HookCtx ctx;
         ctx.mem = mem.get();
         ctx.generation = mem->generation();
-        setKeepHook(
-            [](void* p) {
-                HookCtx& c = *static_cast<HookCtx*>(p);
-                ++c.calls;
-                std::vector<float> x(128, 0.2f);
-                for (int i = 0; i < 3 * 344; ++i) c.mem->write(x.data(), x.data(), 128);   // 3 s more
-                c.refused = !c.mem->remember() && c.mem->generation() == c.generation;
-            },
-            &ctx);
-        const GrainSource copy = *mem->remembered();
-        const int16_t first = copy.level[0][0];
+        ctx.folder = folder;
+        setKeepHook(&keepHook, &ctx);
         err.clear();
         key = keepMemory(*mem, &err);
         setKeepHook(nullptr, nullptr);
-        CHECK(ctx.calls == 1 && ctx.refused);
-        CHECK(!key.empty() && mem->remembered() && mem->remembered()->level[0][0] == first && mem->generation() == ctx.generation);
-        CHECK(mem->remember());
+        CHECK(!key.empty() && ctx.copyCalls == 1 && ctx.writeCalls == 1);
+        CHECK(ctx.refusedAtCopy);
+        CHECK(ctx.acceptedAtWrite && ctx.claimed);
         CHECK(mem->generation() == ctx.generation + 1);
+        WavData w;
+        CHECK(readWav(ssd + "/" + key.substr(4), w, 60.0f, &err));
+        CHECK(fileIsRing(w, ring));
     }
 
     // Keeps from four instances at once get four names.
@@ -1785,7 +2498,7 @@ void testKeep() {
         setenv("AF_SOURCE_ROOTS", (plug + ":" + blocked).c_str(), 1);
         CHECK(keepMemory(*m2, &err).empty() && err == "cannot make the Memories folder");
         CHECK(letGo(*m2));
-        // A name that can't be written (the file is a folder): the write fails and nothing is left.
+        // A name that can't be written (the file is a folder): it is taken, the next number is.
         const std::string trap = dir() + "/keep/trap";
         for (int n = 1; n <= 3; ++n) {
             char b[32];
@@ -1794,14 +2507,46 @@ void testKeep() {
         }
         setenv("AF_SOURCE_ROOTS", (plug + ":" + trap).c_str(), 1);
         key = keepMemory(*m2, &err);   // 001..003 exist (as folders): it takes 004
-        CHECK(key == "ssd:AmbientForce/Memories/Memory 004.wav");
+        CHECK(key == prefix + "Memory 004.wav");
+        // The write fails (the file may not grow: RLIMIT_FSIZE, set at the write): the claimed name is
+        // given back, no temporary file is left, and the number isn't recorded.
+        {
+            ::signal(SIGXFSZ, SIG_IGN);
+            const std::string room = dir() + "/keep/room";
+            fs::create_directories(room);
+            setenv("AF_SOURCE_ROOTS", (plug + ":" + room).c_str(), 1);
+            CHECK(!keepMemory(*m2, &err).empty());   // 001, so that there is a folder and a note
+            struct rlimit was {};
+            ::getrlimit(RLIMIT_FSIZE, &was);
+            setKeepHook([](void*, int stage) {
+                if (stage != af::KS_WRITE) return;
+                struct rlimit lim {};
+                ::getrlimit(RLIMIT_FSIZE, &lim);
+                lim.rlim_cur = 1000;
+                ::setrlimit(RLIMIT_FSIZE, &lim);
+            }, nullptr);
+            const std::string failed = keepMemory(*m2, &err);
+            setKeepHook(nullptr, nullptr);
+            ::setrlimit(RLIMIT_FSIZE, &was);
+            if (failed.empty()) {   // (a host that doesn't enforce the limit, qemu perhaps, writes it)
+                CHECK(err == "cannot write");
+                CHECK(wavFiles(room + "/AmbientForce/Memories") == 1);
+                int others = 0;
+                for (const auto& e : fs::directory_iterator(room + "/AmbientForce/Memories"))
+                    if (e.path().extension() != ".wav" && e.path().filename() != ".last") ++others;
+                CHECK(others == 0);
+                std::string last;
+                CHECK(af::readFile(room + "/AmbientForce/Memories/.last", last) && std::atoi(last.c_str()) == 1);
+                CHECK(keepMemory(*m2, &err) == prefix + "Memory 002.wav");
+            }
+        }
         // The Memories folder not writable (a read-only folder; not for root, which writes anywhere).
         if (::geteuid() != 0) {
             const std::string ro = dir() + "/keep/ro";
             fs::create_directories(ro + "/AmbientForce/Memories");
             fs::permissions(ro + "/AmbientForce/Memories", fs::perms::owner_read | fs::perms::owner_exec);
             setenv("AF_SOURCE_ROOTS", (plug + ":" + ro).c_str(), 1);
-            CHECK(keepMemory(*m2, &err).empty() && !err.empty());
+            CHECK(keepMemory(*m2, &err).empty() && err == "cannot write the Memories folder");
             int files = 0;
             for (const auto& e : fs::directory_iterator(ro + "/AmbientForce/Memories")) {
                 (void)e;
@@ -1833,9 +2578,13 @@ void sourcesTests() {
     testCache();
     testLoaderStates();
     testGraveyard();
+    testGraveModel();
+    testPublishOom();
+    testLoadOom();
     testPost();
     testStress();
     testSourceSlot();
+    testStale();
     testKeep();
     if (old) setenv("AF_SOURCE_ROOTS", saved.c_str(), 1);
     else unsetenv("AF_SOURCE_ROOTS");
