@@ -25,21 +25,47 @@
 //   the prime still falls at its rate to within 0.4%, at note 24 and at 108.
 // - Kalimba: a Karplus-Strong pluck. A delay line of the period (whole samples, then a first-order
 //   allpass for the fraction, which loses nothing at any frequency), a one-pole low-pass in the loop
-//   and a loop gain, the line tuned so the whole loop's phase delay at the fundamental is one period
-//   (within 0.001 cents from note 24 to 108). The loop gain makes up what the low-pass takes from
-//   the fundamental each pass, so it falls 60 dB in decayS exactly. The low-pass sits at Tone, but
-//   where Tone would take more from the fundamental than a gain under 1 can make up (a dark Tone, a
-//   high note, a long Decay: at Tone 6000 a note over C6 could ring no longer than half a second)
-//   its pole moves up just far enough; the loop is never louder than 1 anywhere, so it is stable,
-//   and never rings longer than 60 s. It is excited by a burst of noise through two one-poles at
-//   Tone (12 dB an octave, as the modes' Tone), 2 ms long or a period if that is longer (below note
-//   69 a 2 ms burst would leave the loop silent between its passes: a pulse train), under a Hann
-//   window, its mean taken out; the output is what goes into the line, burst and all, so it sounds
-//   at once. Its level: what rings is the burst folded onto one period (over note 84 the 2 ms burst
-//   makes more than two passes and gathers as it goes in), so the burst goes in at the sound's scale
-//   over the RMS of the raw windowed noise so folded: about as loud at every pitch (eight strikes at
-//   note 108 peak at most 2.2 dB over their mean, where the burst's own peak setting it left 3.7),
-//   and a darker Tone takes its share away.
+//   and a loop gain, the line tuned so the whole loop's phase delay at the fundamental's pole is one
+//   period. The pole is inside the unit circle by the fundamental's decay, where the low-pass's slope
+//   would pull a loop tuned on the circle up to 2 cents flat (Tone 200, Decay 0.33). The whole
+//   samples are chosen once and the allpass's coefficient solved for the rest, so nothing iterates:
+//   the fundamental's pole is within 0.04 cents of the note from note 24 to 108 at Decay 0.33 to 20
+//   and Tone 200 to 16000, and within 0.43 at Decay 0.1 (an iteration that swapped the whole samples
+//   back and forth left notes 105 and 108 up to 10 cents off at short Decays). The loop gain makes
+//   up what the low-pass takes from the fundamental each pass, so it falls 60 dB in decayS.
+//   That gain is worked out from the low-pass's response on the unit circle while the tuning is done
+//   at the pole, so a short Decay at a dark Tone falls a little off it: the fall within 4.8% of Decay
+//   at Decay 0.1 and Tone 200 (the plan allows 10), 1.8% at 0.33, 1.3% from 0.5 up (left so). The
+//   low-pass sits at Tone, but where Tone would take more from the fundamental than a gain under 1
+//   can make up (a dark Tone, a high note, a long Decay: at Tone 6000 a note over C6 could ring no
+//   longer than half a second) its pole moves up just far enough; the loop is never louder than 1
+//   anywhere, so it is stable, and never rings longer than 60 s.
+//   It is excited by a burst of noise through two one-poles at Tone (12 dB an octave, as the modes'
+//   Tone), 2 ms long or a period if that is longer (below note 69 a 2 ms burst would leave the loop
+//   silent between its passes: a pulse train), under a Hann window, its mean taken out; the output
+//   is what goes into the line, burst and all, so it sounds at once.
+//   The mean is taken with the weights of the loop's DC mode (its real pole p, just under 1: the
+//   burst's sum of b_n p^-n is 0), so nothing is left to ring as an offset: it is over 93 dB under
+//   the fundamental. Kept for that: a plain mean left the mode as little as 25 dB under the
+//   fundamental (note 24, Decay 0.5), falling no faster than the note, an offset into the send and a
+//   step on a steal's fade. What it costs: where the mode falls fast, the weights lean on the burst's
+//   end and take a little of the fundamental with the mean, so a strike's fundamental moves, against
+//   the plain mean, by up to 2.9 dB at Decay 0.1 (notes 24 to 48; 0.5 at note 60, 0.13 at 70) and 0.86
+//   dB at Decay 0.5 (notes 24 and 36; 0.18 at 48), 0.35 dB lower on average at Decay 0.1 and note 24,
+//   and within 0.12 dB from Decay 4 up.
+//   Its level: what rings is the burst folded onto one period (over note 84 the 2 ms burst makes
+//   more than two passes and gathers as it goes in). A 2 ms burst (note 72 and up) is built whole at
+//   the strike and goes in at the sound's scale over the RMS of its raw windowed noise so folded:
+//   about as loud at every pitch (eight strikes at note 108 peak at most 2.2 dB over their mean,
+//   where the burst's own peak setting it left 3.7), and a darker Tone takes its share away. A
+//   longer one (a period, note 71 and under) is built as it plays, so that its strike costs only a
+//   pass over its noise for the mean (the cost, below). Its scale is therefore the RMS the windowed
+//   noise has on average, sqrt(len / (8 fold)) (the noise's square averages 1/3 and the window's
+//   fourth power 3/8), not the one it turns out to have, and the noise's luck moves its level from
+//   strike to strike by about 5.4 / sqrt(len) dB (one standard deviation): 0.15 dB at note 24, 0.3
+//   at 48, 0.55 at 71, on top of what the filtered noise varies anyway. That was accepted so the
+//   strike's cost is spread over the samples that play it. Against the burst built whole, with the
+//   same noise, the first period's mean level is within 0.1 dB at every Tone and Decay.
 // - Felt: the Felt Piano lifetime table (TB_FELT_PIANO) read by TableOscLinear, Age moving from 0.05
 //   to 0.8 over decayS (the note darkens as it fades), a 5 ms attack (a raised cosine) and a fall to
 //   -60 dB at decayS. Age stands on whole frames, so the read is a single frame's (20 instructions a
@@ -47,14 +73,17 @@
 //   the frames; it moves at most every 11.6 ms (at Decay 4 s it reaches the next frame every 29
 //   steps; at 0.5 s it moves 4 frames every 16 steps). Tone doesn't apply: Felt's brightness is the
 //   table's. A voice takes the table TableSet has at its first render and keeps it to the end (until
-//   the table is built, the sine: plugin/tables.h), so it is never switched mid-note.
+//   the table is built, the sine: plugin/tables.h), so it is never switched mid-note. It keeps the
+//   table's pointer from one render to the next, so the table must outlive it, as plugin/tables.h
+//   promises while an instance lives: an AirVoices still around after releaseTables() must be
+//   reset() before it renders again.
 //
 // Each sound's level is its own constant, set by measuring: a strike at velocity 1 at note 72, Tone
 // 16000, pan 0 peaks at -6 dBFS (the Kalimba's mean over its random bursts). Glass 0.2350, Bowl
 // 0.1760, Bar 0.2610, Bell 0.1740 times the modes' amplitudes; the Kalimba's burst at 0.218 over its
-// fold's RMS; Felt 0.4018 times the table. From note 24 to 108 they peak between -5 and -9.5 dBFS
-// (the modes thin out high up; the pluck is set by its RMS, and its crest is lower where its burst
-// makes several passes).
+// fold's RMS (a long burst's: its expected RMS); Felt 0.4018 times the table. From note 24 to 108
+// they peak between -4.4 and -9.5 dBFS, a strike each (the modes thin out high up; the pluck is set
+// by its RMS, and its crest is lower where its burst makes several passes).
 //
 // The voices:
 // - A strike takes a free voice, else the quietest ringing one (by its level now), which fades out
@@ -67,11 +96,14 @@
 //   Tone, Decay and tuning).
 // - A voice's level, for the quietest and for sleeping, is the most it can play now: the modes'
 //   |z| summed; the pluck's peak, held falling at the fundamental's rate and pushed up by what each
-//   step played; Felt's envelope times a frame's peak. A voice under -90 dBFS (that level times its
-//   louder side) for 32 samples is free and isn't rendered: a strike that rings out sleeps by 1.3 to
-//   1.4 decayS (Bell 1.2 times its hum's ring). With every voice free, render() only looks at them.
+//   step played (while a long burst is still going in, the most that burst can play); Felt's
+//   envelope times a frame's peak. A voice under -90 dBFS (that level times its louder side, at a
+//   step's start and end) for 32 samples is free and isn't rendered: a strike that rings out sleeps
+//   by 1.3 to 1.5 decayS (the Kalimba's counted from its burst's end; Bell 1.2 times its hum's
+//   ring). With every voice free, render() only looks at them.
 // - Control rate: each voice works out its gains once per step of at most kChunk samples (ending
-//   where a steal's fade does) and moves them in a straight line across it, so nothing steps.
+//   where a steal's fade does, and a long burst's first pass) and moves them in a straight line
+//   across it, so nothing steps.
 // - The send is the dry at spaceSend, gliding across a render from the last render's (the first
 //   render after reset() takes it as given).
 //
@@ -80,17 +112,28 @@
 //
 // The cost, as ARM instructions per 128-sample block with six voices ringing (qemu's count, the
 // device's flags), rendered in the engine's 32-sample pieces / in whole blocks: the modal sounds
-// 19.4k / 18.7k (18.5 a voice and sample in the modes' loop), Kalimba 24.2k / 23.4k, Felt 29.5k /
-// 28.8k at Decay 20, 30.0k at Decay 4 and 30.6k at Decay 0.5 struck again every 0.3 s (its moves
+// 19.7k / 18.9k (18.5 a voice and sample in the modes' loop), Kalimba 20.9k / 20.1k, Felt 29.7k /
+// 29.0k at Decay 20, 30.1k at Decay 4 and 30.7k at Decay 0.5 struck again every 0.3 s (its moves
 // between frames). Felt is the dearest, inside Air's 32k (docs/plans/2026-10-07-m2-weather.md, the
-// budget): about 0.75 points of the 15% gate by its 0.0245 points a thousand (device: pending).
-// Asleep, a render looks at the six voices and returns. A strike costs, once, in its block: Felt
-// 0.5k, a modal sound 2.4k (its six coefficients in double), the pluck 9.5k in the middle of the
-// keyboard and about 76k at note 24, where its burst is a period, 1349 samples at 54 instructions a
-// sample (Air's generator plays from C4 up; only played notes go that low).
+// budget; that share is for ringing): about 0.82 points of the 15% gate at the budget's 0.0268
+// points a thousand (device: pending). Asleep, a render looks at the six voices and returns.
 //
-// Real-time rules: everything is fixed-size (the pluck's line and burst, 16 KB a voice). Nothing
-// allocates, locks or throws after the constructor.
+// Strikes are spikes on top of that, and bounded: at most twelve notes begin in a block, six in
+// strike() (into free voices) and six more where a steal's 2 ms fade ends in the next render
+// (voiceStep() begins the waiting note there; a strike while every voice is fading replaces a
+// waiting note rather than adding one). A strike costs, once: Felt 0.24k, a modal sound 1.74k (its
+// six coefficients in double), the pluck 4.1k to 6.5k from note 71 up. Under that the pluck's burst
+// is a period (1349 samples at note 24): the strike draws it once for its mean, 21 instructions a
+// sample (30.6k at note 24, where building it whole took 72k), and it is drawn again as it plays,
+// 15 a sample over the ring, so six plucks struck at note 24 cost 32.6k / 31.8k a block for the ten
+// blocks until their bursts have gone in. The dearest blocks, with their render: note-24 plucks
+// struck in them, one 37.3k, six 216k, twelve 402k: about 1, 5.8 and 10.8 points (device: pending),
+// well under a block's time but over Air's share. Air's generator plays from C4 up (a pluck there
+// costs 5.8k a strike), so only notes played to Air go that low. Task 8's bench should count a low
+// chord's strike.
+//
+// Real-time rules: everything is fixed-size (the pluck's line, 8 KB a voice, and its burst's 120
+// samples). Nothing allocates, locks or throws after the constructor.
 #include "common.h"
 #include "harmony.h"
 #include "lifeosc.h"
@@ -128,6 +171,12 @@ public:
         int next = -1;        // VS_STEAL: the note waiting for the fade to end
         int sound = AS_GLASS; // the sound it was struck with
         float level = 0.0f;   // its level as the last control step ended (velocity in, pan not)
+        int burst = 0;        // the pluck's burst: samples of it drawn so far, of burstLen
+        int burstLen = 0;
+        // The pluck's loop as it runs: the read's whole samples, the allpass's coefficient, the
+        // low-pass's (s += a (y - s)) and the loop gain, so the tests can find its poles.
+        int loopDelay = 0;
+        float loopEta = 0.0f, loopA = 0.0f, loopG = 0.0f;
     };
 
     AirVoices();
@@ -146,7 +195,12 @@ public:
 private:
     static constexpr int kLine = 2048;            // the pluck's delay line: periods down to 21.5 Hz
     static constexpr int kLineMask = kLine - 1;
-    static constexpr int kBurstMax = kLine - 2 * kChunk;   // the longest burst (a period at note 24 is 1349)
+    // The longest read is kLine - 4 samples (the read's whole samples at most kLine - 5), and a burst
+    // is at most a period, so a long burst always outlasts its first pass. Only a bound: a period at
+    // note 24 is 1349 samples.
+    static constexpr int kBurstMax = kLine - 4;
+    // 2 ms: the shortest burst, and the longest built whole at its strike (see above).
+    static constexpr int kBurst = 88;
 
     // A strike as it was given, with the patch as it was then: a note rings as struck.
     struct Strike {
@@ -155,6 +209,20 @@ private:
         float vel = 0.0f, pan = 0.0f, toneHz = 6000.0f, decayS = 4.0f;
         double pitch = 0.0;      // tuned, fractional MIDI
         uint64_t order = 0;      // strikes before it: the oldest waiting note is the one replaced
+    };
+
+    // A long burst's noise, drawn as the burst goes in: where the noise, its two one-poles and the
+    // window's phasor stand, and the mean and scale the strike worked out for it.
+    struct Noise {
+        uint32_t rng = 1;
+        float lp1 = 0.0f, lp2 = 0.0f;   // the one-poles at Tone
+        float c = 1.0f, s = 0.0f;       // the window's phasor at the next sample (cos, sin)
+        float tc = 1.0f, ts = 0.0f;     // its turn a sample
+        float tone = 0.0f;              // the one-poles' coefficient
+        float mean = 0.0f;              // the windowed noise's mean (the DC mode's weights)
+        float scale = 0.0f;             // the burst's gain
+        float peak = 0.0f;              // the largest sample gone in so far
+        int made = 0;                   // samples built (a short burst's at the strike)
     };
 
     struct Voice {
@@ -177,6 +245,11 @@ private:
         // Pluck.
         int w = 0, delay = 1;    // where the next sample goes; the read's whole samples behind it
         int burstLen = 0;        // samples of the burst
+        // A long burst's first pass, its samples written straight into the line: until here (the
+        // read's whole samples) the loop reads nothing back. 0: a short burst, built at the strike.
+        int firstPass = 0;
+        float most = 0.0f;       // a long burst's level until it has all gone in: the most it can play
+        Noise noise;
         float eta = 0.0f, ap = 0.0f;                 // the allpass: its coefficient and its state
         float lpA = 0.0f, lp = 0.0f, loopG = 0.0f;   // the loop's low-pass coefficient and state; its gain
         float env = 0.0f, holdLog2 = 0.0f;           // the held level, and its fall a sample (log2)
@@ -187,13 +260,17 @@ private:
         int frame = -1;                              // the frame Age stands on (-1: none yet)
         float framePos = 0.0f;                       // ... as the read's position, 0..1
         int moved = 0;                               // samples since Age last moved (up to kFeltMove)
-        float burst[kLine] = {};                     // the pluck's excitation, then zeros
+        // The pluck's excitation as the loop adds it, then zeros: a short burst whole; a long one's
+        // samples for a step once its first pass is over.
+        float burst[kBurst + kChunk] = {};
         float line[kLine] = {};                      // the pluck's delay line
     };
 
     void begin(Voice& v, const Strike& s);             // the note starts in v now
     void beginModal(Voice& v, const Strike& s, double hz);
     void beginPluck(Voice& v, const Strike& s, double hz);
+    void pluckBurst(Voice& v, f2 dP, f2* bus, int m);  // a step of the pluck while its burst goes in
+    static float drawBurst(Noise& z, float* out, int m);   // a long burst's next m samples
     void beginFelt(Voice& v, const Strike& s, double hz);
     void renderBlock(const TableSet& tables, float* outL, float* outR, float* sendL, float* sendR,
                      float spaceSend, int n);

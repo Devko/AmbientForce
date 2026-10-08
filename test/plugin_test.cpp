@@ -717,7 +717,7 @@ int main() {
     lifeoscTests();
     groundTests();
     bloomTests();
-    airVoicesTests();
+    airvoicesTests();
     reverbTests();
     echoTests();
     weatherTests();
