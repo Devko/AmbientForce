@@ -204,6 +204,9 @@ void Memory::flush() {
 // fade reaches no further back than the frames this recording holds. Then the next kSeamFade frames
 // staged fade in (write()).
 void Memory::seal() {
+    // Nothing written since the last seal (a long suspend while asleep seals again): its fade is in
+    // place already, and fading it again would only sharpen it.
+    if (rise_ == 0) return;
     const int s = staged_;   // < kBlock < kSeamFade
     for (int d = 0; d < s; ++d) {
         float* const f = x_ + 2 * (s - 1 - d);
