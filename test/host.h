@@ -150,6 +150,7 @@ void groundTests();      // ground_test.cpp: Ground on its own (partials, beat, 
 void bloomTests();       // bloom_test.cpp: Bloom on its own (chords, strum, steal, moves, the tail handoff)
 void airvoicesTests();   // airvoices_test.cpp: Air's voices on their own (pitch, decay, Tone, levels, steal, sleep)
 void weatherTests();     // weather_test.cpp: Weather and its sources on their own (pitch, To Key, Stream, Duck)
+void fieldsTests();      // fields_test.cpp: the procedural fields and Memory on their own (level, seams, Remember)
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
 void paramsTests();      // params_test.cpp: defaults and their text, formats, option lists, the patch map, extremes
 
