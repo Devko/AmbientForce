@@ -6,6 +6,7 @@
 - [Make variables](#make-variables)
 - [Tests](#tests)
 - [Benchmarking on the device](#benchmarking-on-the-device)
+- [Instruction counts](#instruction-counts)
 - [Soak](#soak)
 - [Packaging and installing](#packaging-and-installing)
 - [Release builds](#release-builds)
@@ -27,6 +28,7 @@ AmbientForce builds on Linux or WSL; it is developed on Ubuntu 24.04 under WSL.
 | `gcc` | the skin generator's C renderer |
 | Python 3 with Pillow (`PY=`) | the skin, the page previews and the release package |
 | `qemu-user` (`qemu-arm`) | `test-arm`, `test-arm-pgo` and the profile-guided device build (`qemu-user-static` works too; `ARM_RUN` says how ARM programs run) |
+| A `qemu-arm` built with TCG plugins, and qemu's `insn` plugin | `arm-icount` only; distributions build qemu without plugins, so it is built from qemu's source ([below](#instruction-counts)) |
 | `ssh`, `scp` | `bench-device`, `plugin-install` |
 
 On Ubuntu 24.04, for example:
@@ -72,6 +74,7 @@ changes; it checks the layout and every factory preset before writing anything. 
 | `arm-plugin` | `build/arm/ambientforce.so`; profile-guided when `qemu-arm` is installed |
 | `arm-bench` | `build/arm/afbench`, the CPU bench for the device |
 | `arm-bench-stages` | `build/arm/ambientforce_stages.so`, the profiling build (never shipped) |
+| `arm-icount` | Each bench case's ARM instructions a block, exact and the same on every run, for measuring a change between device runs (see [below](#instruction-counts)); builds `build/arm-plain/ambientforce.so`, the device's flags without the profile |
 | `bench-device` | Run the CPU bench on a device (see [below](#benchmarking-on-the-device)) |
 | `soak HOURS=<n>` | Render hours of playing offline and check it stays sane (see [below](#soak)) |
 | `plugin-package` | `dist/AmbientForce-<version>-mpc-armv7.zip` with the installer |
@@ -121,6 +124,8 @@ the release is 20 and 40 dB down).
 | `ARM_RUN` | How ARM programs run here (default `qemu-arm -L /usr/arm-linux-gnueabihf`); empty on ARM |
 | `PLUGIN_VERSION` | Release version (default `0.0.1`): the zip's name, its `INSTALL.md` and the catalog manifest; CI sets it from the `vX.Y.Z` tag |
 | `BENCH_ARGS` | `afbench` arguments for `bench-device` (default `-s 3`) |
+| `ICOUNT_QEMU` | A `qemu-arm` built with TCG plugins, for `arm-icount` (default `/home/user/qemu-icount/qemu-arm-plugins`, where the machine M2 was planned on keeps one; see [below](#instruction-counts)) |
+| `ICOUNT_PLUGIN` | qemu's `insn` plugin built with it (default `/home/user/qemu-icount/libinsn.so`) |
 | `PRESET_LUFS` | The loudness `preset-levels` matches the factory presets to (default −16) |
 | `M` | The suite for `test-module` and `test-module-arm` |
 | `HOURS`, `SEED` | How long `soak` plays (default 1 hour), and its random sequence (default 1) |
@@ -180,8 +185,10 @@ Copies the plugin, its profiling build and the bench (`afbench`) to `/tmp` on th
 pinned to core 1 while MPC keeps running (MPC's audio workers own cores 2–3), then deletes them.
 The bench `dlopen()`s the `.so` like MPC and times every 128-frame block with the thread's CPU
 clock; the profiling build also reports each block's time in the engine's stages (ground, bloom,
-space, out). It reads no user folders, saves nothing, sets `AF_FIXED_SEED`, and fails if any case
-fails (p99 over 15% or max over 50% of the block; up to 35% / 80% it warns).
+space, out). It reads no user folders, saves nothing (it looks for the [trace](#diagnostics-on-the-device)'s
+flag file in a folder that doesn't exist, so a trace left on stays out of the cases), sets
+`AF_FIXED_SEED`, and fails if any case fails (p99 over 15% or max over 50% of the block; up to
+35% / 80% it warns).
 
 Each case is a fresh instance set up through its parameters by index (real values, made MPC's 0..1
 by `plugin/patch_map.cpp`, which the bench links), played 2 s untimed and then timed:
@@ -199,6 +206,67 @@ published every table (it watches the process's threads in `/proc/self/task`), a
 that took: every case then reads real tables, not the sine fallback, and the builder isn't timed
 with a case. No builder thread, or one still running after 300 s, fails the bench. The results are
 in [Performance](PERFORMANCE.md#device-measurements).
+
+## Instruction counts
+
+```sh
+make arm-icount
+```
+
+Prints each bench case's ARM instructions per 128-frame block, in thousands, exact and the same on
+every run: the measure of a change between device runs. A task that adds DSP states its count from it;
+the figures are in [Performance](PERFORMANCE.md#instruction-counts). It takes about 3 minutes.
+
+- **The plugin** is `build/arm-plain/ambientforce.so`: the device's flags without the profile, which
+  was trained on the code as it was before the change being measured. The shipped `.so` isn't touched.
+- **`afbench <so> --icount <case> <blocks>`** (the bench, built by `arm-bench`) sets the case up as the
+  bench does (a fresh instance, its parameters by index, 2 s played) and plays `<blocks>` more blocks,
+  untimed. It runs under `ICOUNT_QEMU` with `ICOUNT_PLUGIN`, qemu's `insn` plugin, which counts each
+  guest thread's instructions apart and prints them when the program exits (`cpu 0 insns: N`; the
+  main thread is cpu 0).
+- **Each case runs twice**, 256 and 768 blocks after its 2 s, and its line is the difference over 512:
+  what comes before the blocks is the same in both runs and cancels.
+- **Only the main thread is counted, and it only plays.** Some of what comes before the blocks costs
+  what the machine makes it cost: the wait for the tables polls `/proc` with a sleep (as the bench
+  does), and a parameter set looks for the trace's flag file once a second of wall time. So a helper
+  thread loads the plugin, waits for the table builder to go and sets the case up, and the main thread
+  waits for it in one call, however long that takes. Nothing but the main thread runs while the blocks
+  play.
+- **The same stack:** the environment and the arguments are copied onto the main thread's stack and
+  move what lands there (a few instructions a block), so qemu runs with an empty environment
+  (`env -i`) and paths relative to the repository.
+- **What is left** is the plugin's CPU meter, which tells the host when its figures change (it looks
+  every 0.5 s of audio): a few dozen instructions in a run at most, under 0.1 a block, far under the
+  0.1k shown. Its clock's seconds become a double through 32 bits for this: libgcc's conversion of a
+  64-bit one returns early for 0, so every block cost less while the audio thread had run under a
+  second, and how many blocks that was depended on the machine.
+
+The counts belong to the qemu that made them: another build (another version, another default CPU
+and with it other choices in glibc) counts other figures, so compare counts made with the same one.
+The counts [Performance](PERFORMANCE.md#instruction-counts) had before `arm-icount` came from another
+build, and run 6–12% over this one's for the same code.
+
+### Building the counting qemu
+
+Distributions build qemu without TCG plugins, so `arm-icount` needs one built from source. Without
+one, `make arm-icount` stops before building anything and says where it looked. The defaults were
+built from Ubuntu 24.04's qemu source package, `8.2.2+ds-0ubuntu1.18` (qemu 8.2.2 with Ubuntu's
+patches), like this (apt's `deb-src` lines enabled):
+
+```sh
+sudo apt-get install -y dpkg-dev build-essential ninja-build meson flex bison pkg-config libglib2.0-dev python3-venv
+apt-get source qemu
+cd qemu-8.2.2+ds && mkdir build && cd build
+../configure --target-list=arm-linux-user --enable-plugins --disable-system --disable-tools --disable-docs \
+    --disable-werror --without-default-features --enable-tcg --disable-install-blobs
+ninja qemu-arm tests/plugin/libinsn.so
+mkdir -p /home/user/qemu-icount
+cp qemu-arm /home/user/qemu-icount/qemu-arm-plugins && cp tests/plugin/libinsn.so /home/user/qemu-icount/
+```
+
+Elsewhere, set `ICOUNT_QEMU` and `ICOUNT_PLUGIN` (on the command line or in `local.mk`) to where they
+are. Another qemu version works if its `insn` plugin prints a `cpu 0 insns:` line; its figures are
+its own.
 
 ## Soak
 

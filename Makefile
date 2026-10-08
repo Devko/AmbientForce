@@ -50,7 +50,7 @@ ARM_SO   := $(BUILD)/arm/ambientforce.so
 ARM_SO_STAGES := $(BUILD)/arm/ambientforce_stages.so
 ARM_BENCH := $(BUILD)/arm/afbench
 
-.PHONY: all surface skin test test-arm test-arm-pgo test-module test-module-arm bench soak arm-plugin arm-bench arm-bench-stages bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
+.PHONY: all surface skin test test-arm test-arm-pgo test-module test-module-arm bench soak arm-plugin arm-bench arm-bench-stages arm-icount bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
 # A recipe that fails leaves no half-written target behind for the next make to trust.
 .DELETE_ON_ERROR:
 # The stage-timing build too: a -DAF_STAGE_TIMING break shows here, not at bench time.
@@ -134,7 +134,7 @@ $(BUILD)/ambientforce_stages.so: $(SRC) $(HDR) $(GEN) plugin/exports_stages.map 
 
 # The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1.
 $(BUILD)/afbench: tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN) | $(BUILD)
-	$(CXX) -std=c++17 -O2 -Wall -Wextra $(INC) $< plugin/patch_map.cpp -ldl -o $@
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $< plugin/patch_map.cpp -ldl -o $@
 
 # Demo clips for listening without a device: the factory presets playing a phrase, rendered
 # through the plugin's own entry points into build/demos-out/*.wav (tools/demos.cpp).
@@ -240,7 +240,57 @@ $(ARM_SO_STAGES): $(SRC) $(HDR) $(GEN) plugin/exports_stages.map $(ARM_SO_STAMP)
 arm-bench: $(ARM_BENCH)
 $(ARM_BENCH): tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN)
 	mkdir -p $(BUILD)/arm
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi $(INC) $< plugin/patch_map.cpp -ldl -o $@
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC) $< plugin/patch_map.cpp -ldl -o $@
+
+# Instruction counts: each bench case's ARM instructions a block, exact and the same on every run,
+# to measure a change between device runs (docs/PERFORMANCE.md#instruction-counts). ICOUNT_QEMU is a
+# qemu-arm built with TCG plugins, ICOUNT_PLUGIN qemu's insn plugin (tests/plugin/insn.c), which
+# counts each guest thread's instructions on its own. The defaults are where the machine M2 was
+# planned on keeps them, built from Ubuntu 24.04's qemu source package (8.2.2+ds-0ubuntu1.18);
+# docs/BUILDING.md#instruction-counts says how to build them.
+# The plugin is the plain build, the device's flags without the profile: the profile was trained on
+# the code as it was before the change being measured. Every case runs twice, 256 and 768 blocks after
+# its 2 s, counting the main thread only, which does nothing but play (afbench --icount): everything
+# before the blocks is the same in both runs, so the difference is 512 blocks' instructions. env -i:
+# the environment is copied onto the program's stack and would move what lands there with it (a few
+# instructions a block); the arguments too, so their paths are relative to the repository.
+ICOUNT_QEMU   ?= /home/user/qemu-icount/qemu-arm-plugins
+ICOUNT_PLUGIN ?= /home/user/qemu-icount/libinsn.so
+ICOUNT_RUN     = env -i $(ICOUNT_QEMU) -L /usr/arm-linux-gnueabihf -plugin $(ICOUNT_PLUGIN) -d plugin
+ARM_SO_PLAIN  := $(BUILD)/arm-plain/ambientforce.so
+ICOUNT_LOG    := $(BUILD)/arm-plain/icount.log
+
+# Checked before anything is built: without them there is nothing to count with.
+ifneq ($(filter arm-icount,$(MAKECMDGOALS)),)
+ifneq ($(shell [ -x '$(ICOUNT_QEMU)' ] && echo y),y)
+$(error arm-icount: no qemu-arm with TCG plugins at ICOUNT_QEMU=$(ICOUNT_QEMU). Build one from qemu's source with --enable-plugins (docs/BUILDING.md#instruction-counts) or set ICOUNT_QEMU to yours)
+endif
+ifneq ($(shell [ -f '$(ICOUNT_PLUGIN)' ] && echo y),y)
+$(error arm-icount: no insn plugin at ICOUNT_PLUGIN=$(ICOUNT_PLUGIN). Build qemu's tests/plugin/libinsn.so along with that qemu (docs/BUILDING.md#instruction-counts) or set ICOUNT_PLUGIN to yours)
+endif
+endif
+
+$(ARM_SO_PLAIN): $(SRC) $(HDR) $(GEN) plugin/exports.map $(ARM_SO_STAMP)
+	mkdir -p $(dir $@)
+	$(ARM_SO_CMD) $(SRC) -o $@
+
+arm-icount: $(ARM_SO_PLAIN) $(ARM_BENCH)
+	@echo "ARM instructions a block, in thousands: $(ARM_SO_PLAIN) (the device's flags, no profile)"
+	@echo "  counted by $(ICOUNT_PLUGIN), the main thread at 768 blocks less at 256, over 512,"
+	@echo "  under $(ICOUNT_QEMU): $$($(ICOUNT_QEMU) --version | head -1)"
+	@echo "  (the default is built from Ubuntu 24.04's qemu source package 8.2.2+ds-0ubuntu1.18 with TCG plugins:"
+	@echo "  docs/BUILDING.md#instruction-counts)"
+	@$(ICOUNT_QEMU) -L /usr/arm-linux-gnueabihf $(ARM_BENCH) --cases > $(ICOUNT_LOG).cases
+	@while IFS= read -r c; do \
+		for n in 256 768; do \
+			$(ICOUNT_RUN) $(ARM_BENCH) $(ARM_SO_PLAIN) --icount "$$c" $$n > $(ICOUNT_LOG) 2>&1 || \
+				{ cat $(ICOUNT_LOG); echo "arm-icount: the case \"$$c\" failed"; exit 1; }; \
+			k=$$(sed -n 's/^cpu 0 insns: \([0-9]*\)$$/\1/p' $(ICOUNT_LOG)); \
+			[ -n "$$k" ] || { cat $(ICOUNT_LOG); echo "arm-icount: the insn plugin gave no count for the main thread (cpu 0)"; exit 1; }; \
+			if [ $$n = 256 ]; then few=$$k; else many=$$k; fi; \
+		done; \
+		awk -v c="$$c" -v a=$$few -v b=$$many 'BEGIN { printf "  %-12s %7.1fk\n", c, (b - a) / 512 / 1000 }'; \
+	done < $(ICOUNT_LOG).cases
 
 # Bench on the Force: copies the .so, its stage-timing build and the bench to /tmp, runs pinned
 # to core 1 (MPC's audio workers own cores 2-3) while MPC keeps running, then deletes them.
