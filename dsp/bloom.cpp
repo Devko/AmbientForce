@@ -564,7 +564,7 @@ void Bloom::control(int m) {
             v.restLeft = 0;
             v.retrig = false;   // a note waiting to swell again here now starts afresh
         }
-        v.pos = v.scan.step(p_.pos, dt, clock_);
+        v.pos = v.scan.step(p_.pos, m, clock_);
     }
     panDirty_ = false;
 }

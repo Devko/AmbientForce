@@ -225,7 +225,9 @@ private:
     bool fresh_ = true;                  // the drone starts from off: its first step puts the root on its goal
     float fadeDb_ = -60.0f;
     float dip_ = 1.0f;                   // a Register change's gain: 1 none, 0 the bottom
-    PulledCycle breathCycle_;            // the phase it breathes on, and its own at breathHz (Free's target)
+    // The phase it breathes on, and its own at breathHz (Free's target); synced, a quarter cycle on
+    // from the clock's (its top on the downbeat), the division doubled past kMaxSyncBreathHz.
+    PulledCycle breathCycle_{kMaxSyncBreathHz, 0.25};
     BeatClock clock_;                    // the synced cycles' beats (setTransport)
     float gain_ = 0.0f, send_ = 0.0f;    // the output's gain and the send's, as the last step ended
     float wet_ = 0.0f;                   // Body's share (0..1) as the last step ended

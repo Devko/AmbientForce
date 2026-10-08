@@ -13,6 +13,7 @@
 #include <complex>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 namespace aft {
@@ -297,7 +298,7 @@ void testSway() {
     float lo = 1.0f, hi = 0.0f, prev = -1.0f, jump = 0.0f;
     const int steps = static_cast<int>(10.0f / kStepS);
     for (int i = 0; i < steps; ++i) {
-        const float v = s.step(p, kStepS, kClock);
+        const float v = s.step(p, af::kChunk, kClock);
         lo = std::min(lo, v);
         hi = std::max(hi, v);
         if (prev >= 0.0f) jump = std::max(jump, std::fabs(v - prev));
@@ -315,7 +316,7 @@ void testSway() {
     float elo = 1.0f, ehi = 0.0f;
     int atEnd = 0;
     for (int i = 0; i < steps; ++i) {
-        const float v = e.step(q, kStepS, kClock);
+        const float v = e.step(q, af::kChunk, kClock);
         elo = std::min(elo, v);
         ehi = std::max(ehi, v);
         atEnd += v >= 0.999f ? 1 : 0;
@@ -331,7 +332,7 @@ void testSway() {
     float zlo = 1.0f, zhi = 0.0f;
     int atStart = 0;
     for (int i = 0; i < steps; ++i) {
-        const float v = z.step(r, kStepS, kClock);
+        const float v = z.step(r, af::kChunk, kClock);
         zlo = std::min(zlo, v);
         zhi = std::max(zhi, v);
         atStart += v <= 0.001f ? 1 : 0;
@@ -347,10 +348,10 @@ void testSway() {
     a.reset(0.25f);
     b.reset(0.25f);
     bool same = true;
-    for (int i = 0; i < 1000; ++i) same = same && a.step(p, kStepS, kClock) == b.step(p, kStepS, kClock);
+    for (int i = 0; i < 1000; ++i) same = same && a.step(p, af::kChunk, kClock) == b.step(p, af::kChunk, kClock);
     CHECK(same);
     a.reset(0.25f);
-    CHECK(std::fabs(a.step(af::LifePos{0.5f, 1.0f, 0.0f, 0.0f}, 0.0f, kClock) - 0.75f) < 1e-4f);   // a quarter cycle in: the top
+    CHECK(std::fabs(a.step(af::LifePos{0.5f, 1.0f, 0.0f, 0.0f}, 0, kClock) - 0.75f) < 1e-4f);   // a quarter cycle in: the top
 
     // Synced (swayBeats, on a BeatClock that MPC moves on): the sway is pulled onto the clock's phase, one cycle per
     // 4 beats, at Age on the downbeat and rising, and stays there exactly; two scans of other seeds sway together, and
@@ -374,12 +375,12 @@ void testSway() {
             clock.set(120.0, beat);
             clock.advance(32);
             beat += 32.0 * 2.0 / 44100.0;
-            const float wa = a.step(bar, kStepS, clock);
+            const float wa = a.step(bar, af::kChunk, clock);
             jumpStep = std::max(jumpStep, std::fabs(wa - va));
             va = wa;
-            vb = b.step(bar, kStepS, clock);
-            vd = d.step(bar, kStepS, clock);
-            vt = twin.step(unsynced, kStepS, clock);
+            vb = b.step(bar, af::kChunk, clock);
+            vd = d.step(bar, af::kChunk, clock);
+            vt = twin.step(unsynced, af::kChunk, clock);
         }
     };
     const auto onBar = [&]() {
@@ -400,9 +401,9 @@ void testSway() {
     bool landed = false;
     int sameAfter = -1;
     for (int i = 0; i < static_cast<int>(1.5f / kStepS); ++i) {
-        fa = a.step(unsynced, kStepS, clock);
-        fb = b.step(unsynced, kStepS, clock);
-        vt = twin.step(unsynced, kStepS, clock);
+        fa = a.step(unsynced, af::kChunk, clock);
+        fb = b.step(unsynced, af::kChunk, clock);
+        vt = twin.step(unsynced, af::kChunk, clock);
         if (fa == vt && !landed) sameAfter = i;
         landed = fa == vt;
     }
@@ -416,12 +417,12 @@ void testSway() {
     float first = 0.0f;
     for (int i = 0; i < static_cast<int>(1.0f / kStepS); ++i) {   // pulled onto the clock first
         run.advance(32);
-        first = c.step(bar, kStepS, run);
+        first = c.step(bar, af::kChunk, run);
     }
     float back = -1.0f;
     for (int i = 0; i < static_cast<int>(2.0f / kStepS); ++i) {
         run.advance(32);
-        back = c.step(bar, kStepS, run);
+        back = c.step(bar, af::kChunk, run);
     }
     std::printf("  synced to 1 bar: %.4f, and %.4f two seconds on\n", first, back);
     CHECK(std::fabs(back - first) < 2e-3f);
@@ -444,7 +445,7 @@ void testSwayCap() {
         const int steps = static_cast<int>(3.0f / kStepS);
         for (int k = 0; k < steps; ++k) {
             clock.advance(af::kChunk);
-            const float x = s.step(p, kStepS, clock) - 0.5f;   // the sway around Age
+            const float x = s.step(p, af::kChunk, clock) - 0.5f;   // the sway around Age
             if (k > steps / 3 && prev < 0.0f && x >= 0.0f) {   // after a second: an upward crossing
                 const double at = (k - static_cast<double>(x) / (x - prev)) * kStepS;
                 if (first < 0.0) first = at;
@@ -462,19 +463,19 @@ void testSwayCap() {
 
 // PulledCycle (common.h), the cycle under the breath and the sways: a jump of the target by just under half a cycle
 // is mostly made up within 50 ms (the time constant: 1 / e of it left) and landed on exactly (the same double) within
-// about a second, never past it; land() puts the next step on the target at once (from silence); and a free cycle's
-// phase is its own, exactly, every step.
+// about a second, never past it (what is left keeps its sign until it is 0); land() puts the next step on the target
+// at once (from silence); and a free cycle's phase is its own, exactly, every step.
 void testPulledCycle() {
     std::printf("== lifeosc: a pulled cycle's glide and landing\n");
     af::BeatClock clock;
     clock.set(120.0, 0.0);
-    af::PulledCycle c;
+    af::PulledCycle c{af::kMaxSyncSwayHz};
     c.reset(0.3);
     c.land();
     // One step on the clock, synced to a bar; how far from the clock's phase it is then (the short way round).
     const auto step = [&]() {
         clock.advance(af::kChunk);
-        const double ph = c.step(0.001, kStepS, clock, 4.0, af::kMaxSyncSwayHz, 0.0);
+        const double ph = c.step(0.001, af::kChunk, clock, 4.0);
         const af::ClockCycle want = clock.cycle(4.0, af::kMaxSyncSwayHz, kStepS);
         double d = want.phase - ph;
         d -= std::floor(d + 0.5);
@@ -484,18 +485,20 @@ void testPulledCycle() {
     clock.beats += 0.4999 * 4.0;         // a locate, just under half a cycle on
     double after50 = 0.0;
     int steps = 0;
+    bool short_ = true;                  // never past the target: what is left stays ahead of it
     for (double d = 1.0; d != 0.0 && steps < 4000; ++steps) {
         d = step();
+        short_ = short_ && d >= 0.0;
         if (steps == static_cast<int>(0.05f / kStepS) - 1) after50 = std::fabs(d);
     }
-    std::printf("  from 0.4999 of a cycle away: %.3f of it left after 50 ms, landed exactly after %.2f s\n",
-                after50 / 0.4999, steps * kStepS);
-    CHECK(atOnce && after50 / 0.4999 < 0.4 && steps * kStepS > 0.7f && steps * kStepS < 1.1f);
+    std::printf("  from 0.4999 of a cycle away: %.3f of it left after 50 ms, landed exactly after %.2f s%s\n",
+                after50 / 0.4999, steps * kStepS, short_ ? ", never past it" : ", PAST IT");
+    CHECK(atOnce && short_ && after50 / 0.4999 < 0.4 && steps * kStepS > 0.7f && steps * kStepS < 1.1f);
     // Free: the phase is its own, bit for bit, step after step (no pull to make).
-    af::PulledCycle f;
+    af::PulledCycle f{af::kMaxSyncSwayHz};
     f.reset(0.7);
     bool own = true;
-    for (int i = 0; i < 10000; ++i) own = own && f.step(0.000913, kStepS, clock, 0.0, af::kMaxSyncSwayHz, 0.0) == f.own;
+    for (int i = 0; i < 10000; ++i) own = own && f.step(0.000913, af::kChunk, clock, 0.0) == f.own();
     CHECK(own);
 }
 
@@ -509,7 +512,7 @@ void testSmear() {
         af::LifeScan s;
         s.seed(seed);
         std::vector<float> v(static_cast<size_t>(steps));
-        for (float& x : v) x = s.step(p, kStepS, kClock);
+        for (float& x : v) x = s.step(p, af::kChunk, kClock);
         return v;
     };
     const std::vector<float> v = walk(5);
@@ -668,7 +671,7 @@ void testDeterminism() {
         Buf x(44100);
         for (size_t i = 0; i < x.size(); i += af::kChunk) {
             const int n = static_cast<int>(std::min<size_t>(af::kChunk, x.size() - i));
-            o.render(testTable(af::TB_SINE_BLOOM), 196.0f / af::kRate, s.step(p, kStepS, kClock), &x[i], n);
+            o.render(testTable(af::TB_SINE_BLOOM), 196.0f / af::kRate, s.step(p, af::kChunk, kClock), &x[i], n);
         }
         return x;
     };
@@ -739,14 +742,14 @@ void testEdges() {
     for (size_t i = 0; i < e1.size(); ++i) diff = std::max(diff, std::fabs(e1[i] - e2[i]));
     CHECK(diff < 1e-3f);
 
-    // A scan fed a NaN or an infinity (a rate, a time, a position, a phase) gives a position all
-    // the same, and keeps swaying afterwards.
+    // A scan fed a NaN or an infinity (a rate, a position, a phase), or an odd step (none, a negative
+    // one, a day and a half), gives a position all the same, and keeps swaying afterwards.
     const float nan = std::nanf(""), inf = INFINITY;
     const af::LifePos sane{0.5f, 1.0f, 0.5f, 1.0f};
     auto swaysOn = [&](af::LifeScan& s) {
         float lo = 1.0f, hi = 0.0f;
         for (int i = 0; i < 4000; ++i) {
-            const float v = s.step(sane, kStepS, kClock);
+            const float v = s.step(sane, af::kChunk, kClock);
             lo = std::min(lo, v);
             hi = std::max(hi, v);
         }
@@ -755,10 +758,10 @@ void testEdges() {
     for (const af::LifePos& p : {af::LifePos{nan, nan, nan, nan}, af::LifePos{0.5f, 1.0f, nan, 1.0f},
                                  af::LifePos{inf, inf, inf, inf}, af::LifePos{0.5f, 1.0f, -inf, 1.0f},
                                  af::LifePos{0.5f, 1.0f, 0.5f, 1.0f, nan}, af::LifePos{0.5f, 1.0f, 0.5f, 1.0f, inf}})
-        for (float dt : {kStepS, nan, -1.0f, inf, -inf}) {
+        for (int n : {af::kChunk, 0, -1, -af::kChunk, std::numeric_limits<int>::max(), std::numeric_limits<int>::min()}) {
             af::LifeScan s;
             s.seed(9);
-            const float v = s.step(p, dt, kClock);
+            const float v = s.step(p, n, kClock);
             CHECK(v >= 0.0f && v <= 1.0f);
             CHECK(swaysOn(s));
         }

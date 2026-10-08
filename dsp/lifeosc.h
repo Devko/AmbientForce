@@ -101,24 +101,26 @@ public:
         rate_ = 0.0f;
     }
     // Where a synced sway sits against the clock, in cycles (Bloom staggers its voices by it).
-    void setSyncOffset(double cycles) { syncOffset_ = std::isfinite(cycles) ? cycles - std::floor(cycles) : 0.0; }
+    void setSyncOffset(double cycles) { sway_.setOffset(cycles); }
     // The next step starts from silence (a voice's note starting afresh, a drone from nothing): its
     // sway lands on its place at once instead of gliding there (common.h PulledCycle).
     void land() { sway_.land(); }
-    // The position 0..1 for the next control step, `seconds` after the last; `clock` is the
-    // stratum's, moved on to this step's end. The sway keeps a phase of its own, moving on at swayHz
-    // every step, and Free sways on it. Synced (p.swayBeats > 0) it sways on the clock's phase plus
-    // its sync offset (its division doubled past kMaxSyncSwayHz): on the bar while MPC plays, scans
-    // of one offset together. Either way the phase it sways on is pulled to that target (PulledCycle):
-    // a switch or a jump of the clock glides, and back on Free each scan goes its own way again.
-    float step(const LifePos& p, float seconds, const BeatClock& clock) {
-        // A NaN or an infinity would stay in the phase and the walk for good: it counts as nothing.
-        seconds = std::isfinite(seconds) && seconds > 0.0f ? seconds : 0.0f;
+    // The position 0..1 for the next control step, `samples` after the last (a negative count is 0);
+    // `clock` is the stratum's, moved on to this step's end. The sway keeps a phase of its own,
+    // moving on at swayHz every step, and Free sways on it. Synced (p.swayBeats > 0) it sways on the
+    // clock's phase plus its sync offset (its division doubled past kMaxSyncSwayHz): on the bar while
+    // MPC plays, scans of one offset together. Either way the phase it sways on is pulled to that
+    // target (PulledCycle): a switch or a jump of the clock glides, and back on Free each scan goes
+    // its own way again.
+    float step(const LifePos& p, int samples, const BeatClock& clock) {
+        samples = std::max(samples, 0);
+        // The step's length as the strata work theirs out, so a free sway moves bit for bit as it did.
+        const float seconds = static_cast<float>(samples) * (1.0f / kRate);
         const float hz = p.swayHz > 0.0f ? std::min(p.swayHz, 2.0f) : 0.0f;
         // Its own phase moves in double: at 0.002 Hz it moves 1.5e-6 a step, which a float near 1
         // would round by up to 2% (a slower sway in half of each cycle).
-        const double phase = sway_.step(static_cast<double>(hz) * seconds, seconds, clock,
-                                        static_cast<double>(p.swayBeats), kMaxSyncSwayHz, syncOffset_);
+        const double phase =
+            sway_.step(static_cast<double>(hz) * seconds, samples, clock, static_cast<double>(p.swayBeats));
         t_ += seconds * rate_;
         if (t_ >= 1.0f) {
             from_ = to_;
@@ -136,8 +138,9 @@ public:
     }
 
 private:
-    PulledCycle sway_;                  // the phase it sways on, and its own (Free's target), at swayHz
-    double syncOffset_ = 0.0;           // cycles past the clock's phase, synced (setSyncOffset)
+    // The phase it sways on, and its own (Free's target) at swayHz; synced, the clock's plus the
+    // sync offset, the division doubled past kMaxSyncSwayHz.
+    PulledCycle sway_{kMaxSyncSwayHz};
     uint32_t rng_ = 0x6A09E667u;
     float from_ = 0.0f, to_ = 0.0f;     // the smear's leg, -1..1
     float t_ = 1.0f, rate_ = 0.0f;      // how far along it (0..1), and legs per second

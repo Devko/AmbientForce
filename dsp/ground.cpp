@@ -252,8 +252,7 @@ Ground::Step Ground::control(float spaceSend, int n) {
         scan_.land();
     }
     clock_.advance(n);
-    const double phase = breathCycle_.step(static_cast<double>(breathHz_ * dt), dt, clock_,
-                                           static_cast<double>(breathBeats_), kMaxSyncBreathHz, 0.25);
+    const double phase = breathCycle_.step(static_cast<double>(breathHz_ * dt), n, clock_, static_cast<double>(breathBeats_));
     const float b = breath_ > 0.0f ? breath_ * sinCycle(static_cast<float>(phase)) : 0.0f;
     const float cutoff = clampf(cutoff_ * exp2Fast(kBreathOct * b), 20.0f, 0.45f * kRate);
     if (cutoff != toneHz_) {
@@ -268,7 +267,7 @@ Ground::Step Ground::control(float spaceSend, int n) {
         toneUpdate_ = SvfUpdate::of(splat2(g), splat2(kToneK));
     }
 
-    s.pos = scan_.step(pos_, dt, clock_);
+    s.pos = scan_.step(pos_, n, clock_);
 
     // The output's gain and the send's, ramped across the step from where the last one ended (s.g0).
     s.g1 = mute_ || s.ending ? 0.0f : level_ * dbToGain(fadeDb_) * dbToGain(kBreathDb * b) * dip_;
