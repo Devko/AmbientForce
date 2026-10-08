@@ -92,6 +92,11 @@ void Space::process(const float* sendL, const float* sendR, float* outL, float* 
         quietOut_ = tail ? 0 : std::min(quietOut_ + um, kQuietMax);
         if (t_.playing) t_.beats += m / static_cast<double>(kRate) * t_.bpm / 60.0;
     }
+
+    // Silent: the engine may stop running Space now, for minutes, and a longer predelay set
+    // meanwhile would read what went in before the silence: the Reverb forgets that (space.h).
+    // While anything sounds a count is 0 and reachSamples() isn't asked.
+    if (quietIn_ > 0 && quietOut_ > 0 && silent()) reverb_.forgetInput(quietIn_);
 }
 
 bool Space::silent() const {

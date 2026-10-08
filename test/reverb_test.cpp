@@ -4,7 +4,7 @@
 // modulation, shimmer (pitch, bounds, clicks, off bit for bit as before), and robustness
 // (extremes, random jumps, NaN input, block sizes, reset and stale buffers, clicks on changes,
 // tailSamples()). Then AmbientForce's own: Haze and Abyss, no mode growing over a minute, and
-// dsp/space.h (Rise, silent()).
+// dsp/space.h (Rise, silent(), nothing from before a silence after the engine skipped Space).
 #include "signal.h"
 #include "../dsp/reverb.h"
 #include "../dsp/space.h"
@@ -1245,6 +1245,101 @@ void silence() {
     CHECK(s.silent());
 }
 
+// A Space run to silent() on a 0.3 s burst of noise at `level` under `before`, then not run at all
+// while `after` is set (as the engine skips it), then run on a second of silence and on an impulse.
+struct Ghost {
+    double quietS = 0.0;   // how long the send had been quiet when silent() came
+    bool woke = false;     // silent() false after the change: the engine runs Space again, unasked
+    float peak = 0.0f;     // the return's peak over the second of silence
+    size_t first = 0;      // then an impulse: the wet's first sample over -120 dBFS, from the impulse ...
+    float wet = 0.0f;      // ... and the wet's peak (half a second)
+};
+Ghost resumed(const Space::Params& before, const Space::Params& after, float level) {
+    Space s;
+    const size_t burst = 104 * 128;   // 0.3 s, whole blocks
+    const Buf x = whiteNoise(static_cast<int>(burst), level, 97), y = whiteNoise(static_cast<int>(burst), level, 98);
+    const float zero[128] = {};
+    float l[128], r[128];
+    size_t pos = 0;
+    for (; pos < at(5.0); pos += 128) {
+        s.set(before, {});
+        s.process(pos < burst ? &x[pos] : zero, pos < burst ? &y[pos] : zero, l, r, 128);
+        if (pos >= burst && s.silent()) break;
+    }
+    Ghost g;
+    g.quietS = static_cast<double>(pos + 128 - burst) / af::kRate;
+    s.set(after, {});
+    g.woke = !s.silent();
+    const Return o = runSpace(s, after, Buf(at(1.0)), Buf(at(1.0)));
+    g.peak = std::max(peak(o.L), peak(o.R));
+    const Buf imp = impulseAt(secs(0.5), 0);
+    const Return w = runSpace(s, after, imp, imp);
+    g.first = firstAbove(Stereo{w.L, w.R}, 1e-6f);
+    g.wet = std::max(peak(w.L), peak(w.R));
+    return g;
+}
+
+// The resume ghost. Once silent(), the engine stops running Space, for minutes maybe, and the
+// settings may change meanwhile. One that reaches further makes silent() false, so the engine runs
+// Space again with no note played, and nothing from before the silence may come out. A 0.3 s burst
+// (-6 and -26 dBFS noise) into the shortest tails (Room, Plate and Hall at size 0 and decay 0.1 s,
+// no predelay), run until silent(), then not run while one thing changes, or all of them: predelay
+// 250 ms, size 1, modulation 1, Space, Haze, Abyss, shimmer 1. Over the next second the return
+// stays under -120 dBFS. Before Reverb::forgetInput() the predelay's buffer still held the burst's
+// end (silent() comes 0.17 to 0.31 s after it), and 250 ms of predelay replayed it: -21 dBFS after
+// Room's -6 dBFS burst, -39 after its -26 dBFS one, -45 after Plate's (Hall's silence comes too
+// late for 250 ms to reach); the other changes reach nothing from before. Then an impulse: its wet
+// stays under -120 dBFS until the new predelay has passed and comes within 250 ms of it (over
+// -100 dBFS: the quietest, Haze at decay 0.1 s, peaks near -78), so the fresh input goes in as before.
+void resumeGhost() {
+    struct Change {
+        const char* what;
+        void (*apply)(Space::Params&);
+    };
+    const Change changes[] = {
+        {"as it was", [](Space::Params&) {}},
+        {"predelay", [](Space::Params& q) { q.reverb.predelayMs = 250.0f; }},
+        {"size", [](Space::Params& q) { q.reverb.size = 1.0f; }},
+        {"mod", [](Space::Params& q) { q.reverb.mod = 1.0f; }},
+        {"Space", [](Space::Params& q) { q.reverb.mode = Reverb::SPACE; }},
+        {"Haze", [](Space::Params& q) { q.reverb.mode = Reverb::HAZE; }},
+        {"Abyss", [](Space::Params& q) { q.reverb.mode = Reverb::ABYSS; }},
+        {"shimmer", [](Space::Params& q) { q.reverb.shimmer = 1.0f; }},
+        {"all", [](Space::Params& q) {
+             q.reverb.predelayMs = 250.0f;
+             q.reverb.size = 1.0f;
+             q.reverb.mod = 1.0f;
+             q.reverb.mode = Reverb::ABYSS;
+             q.reverb.shimmer = 1.0f;
+         }},
+    };
+    for (int mode : {Reverb::ROOM, Reverb::PLATE, Reverb::HALL})
+        for (float level : {0.5f, 0.05f}) {
+            Space::Params before;
+            before.rise = 0.0f;
+            before.reverb.mode = mode;
+            before.reverb.size = 0.0f;
+            before.reverb.decayS = 0.1f;
+            before.reverb.predelayMs = 0.0f;
+            char line[400];
+            int n = 0;
+            for (const Change& c : changes) {
+                Space::Params after = before;
+                c.apply(after);
+                const Ghost g = resumed(before, after, level);
+                if (n == 0)
+                    n = std::snprintf(line, sizeof line, "  space: %s size 0, decay 0.1 s, a %.0f dBFS burst, silent() %.2f s after it; skipped, then (dBFS):",
+                                      kModeNames[mode], db(level), g.quietS);
+                n += std::snprintf(line + n, sizeof line - static_cast<size_t>(n), " %s %.0f", c.what, db(g.peak));
+                const size_t pre = static_cast<size_t>(after.reverb.predelayMs * af::kRate / 1000.0f + 0.5f);
+                CHECK(g.peak < 1e-6f);
+                CHECK(g.first >= pre && g.first < pre + at(0.25) && g.wet > 1e-5f);
+                if (after.reverb.predelayMs != before.reverb.predelayMs) CHECK(g.woke);
+            }
+            std::printf("%s\n", line);
+        }
+}
+
 } // namespace
 
 void reverbTests() {
@@ -1283,6 +1378,7 @@ void reverbTests() {
     freshIsWet();
     rise();
     silence();
+    resumeGhost();
 }
 
 } // namespace aft

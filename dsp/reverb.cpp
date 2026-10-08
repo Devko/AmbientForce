@@ -386,6 +386,9 @@ int Reverb::reachSamples() const {
     return pre + static_cast<int>(lap) + kTaps + kSegment + shimmer;
 }
 
+// A tap reads only the last `age` samples written (InputPath::tick()): the rest reads as zeros.
+void Reverb::forgetInput(uint32_t quiet) { input_.age = std::min(input_.age, quiet); }
+
 // --- per chunk ---------------------------------------------------------------------------------
 
 // Everything that moves gets its target at the chunk's end, and a straight line there.

@@ -18,6 +18,13 @@
 // gone, so the engine may stop running it. A frozen tail is never silent while it sounds. The
 // counts saturate: an installation running for days never wraps them.
 //
+// Silent doesn't mean empty: the Reverb's predelay still holds what went in before the quiet
+// stretch, and a longer predelay set while the engine skips Space would read it (the reach grows,
+// so silent() turns false and the engine runs Space again, with no note played): a ghost of the
+// last notes, at their level, however long ago they were. So a call that ends silent() has the
+// Reverb forget it (Reverb::forgetInput(): nothing cleared, nothing else changed). Its network
+// holds nothing from before that could come out again (Reverb::reachSamples()).
+//
 // Wet only from the start: a Space that has never been set() plays the Reverb's defaults at mix 1.
 //
 // Real-time rules: the constructor allocates (the Reverb's buffers); reset(), set() and process()
