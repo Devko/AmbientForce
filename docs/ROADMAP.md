@@ -290,7 +290,12 @@ knobs are doing".
 - 2026-10-07 — **The breath and the sways can sync to the bar; Free stays the default.** CONCEPT
   §7.1 plans Free / Sync rates; asked for now, for the breath and both sways: Sync runs one cycle per
   division (1/4 to 64 bars of 4/4) on a beat clock per stratum, locked to MPC's position while it
-  plays (SubForce's synced busses' rule) and running on at the tempo while it is stopped. Free is
+  plays (SubForce's synced busses' rule) and running on at the tempo while it is stopped.
+  (Re-review: each stratum's clock ran on by itself only while it was rendered, so a silent Bloom's
+  stood still while a sounding Ground's ran on: 3 s stopped put a chord 0.17 of the table off the
+  grid the drone breathed on. Now the engine keeps one count, MPC's position while it plays and on
+  at the tempo while it is stopped, on the sample count asleep or awake, and hands it to both
+  strata before every piece: one grid.) Free is
   the default everywhere, because phasing (CONCEPT §7.2) needs cycles that never line up. A synced
   breath tops on each division's downbeat, one pulse. Synced, Bloom's voices are staggered on the
   bar (decided at the review): voice i sways a sixth of a cycle times i after the bar's phase, the
@@ -303,17 +308,29 @@ knobs are doing".
 - 2026-10-07 (review) — **A synced cycle is pulled to the bar, never set.** Setting the phase to the
   clock's stepped the breath's level up to 6 dB when MPC started, located or looped, or on Free ->
   Sync, and collapsed Bloom's voices onto one phase for good. Now every cycle keeps its own free
-  phase, always moving on (per voice in Bloom), and the phase it plays is pulled toward its target
-  (the clock's synced, plus a Bloom voice's stagger; its own free) with a 50 ms time constant, the
-  short way round, landing
-  exactly on it within 1e-9: across those events the gain moves at most 0.10 dB a control step at
-  Breath 100%, a locked cycle is exactly the clock's, Free stays bit for bit what it was, and back on
-  Free Bloom's voices drift apart again. A division faster than 4 Hz (a sway) or 8 Hz (a breath) at
-  the tempo doubles.
+  phase, moving on whenever the cycle is stepped (per voice in Bloom), and the phase it plays is
+  pulled toward its target (the clock's synced, plus a Bloom voice's stagger; its own free) with a
+  50 ms time constant, the short way round, landing exactly on it within 1e-9 (about a second after
+  a jump of half a cycle): across those events the gain moves at most about 0.2 dB a control step at
+  Breath 100% (re-review, measured: a jump of just under half a cycle landing at the breath's
+  steepest point, 0.16 dB at 120 BPM and 0.20 dB at 300; 0.10 dB, said here before, was the
+  measured events', not the worst), a locked cycle is exactly the clock's, Free stays bit for bit
+  what it was, and back on Free Bloom's voices drift apart again. A division faster than 4 Hz (a
+  sway) or 8 Hz (a breath) at the tempo doubles. (Re-review: a cycle nobody steps stood still, a
+  Ground the engine skips or a Bloom voice not in use, and then glided from where it stood: a chord
+  after 1.3 s of silence swayed up to 0.41 of the table off its place at its first step, the breath
+  unmuted 3.1 dB off the beat. Now the first step from silence lands on the target at once, where
+  no jump can be heard. A free cycle pauses with its stratum or voice, as it always did, and goes
+  on from there: it has no other place to start on. One `PulledCycle` in `dsp/common.h` now serves
+  the breath and the sways, each passing its own free advance so Free keeps its arithmetic; a full
+  step's share of the pull is a constant, and a free cycle on its own phase skips the pull, so its
+  step costs about what it did before the pull.)
 - 2026-10-07 (review) — **A macro under 0.5% is 0**, as its knob reads: a knob turned back by hand
   lands within MPC's 1/1000 of the middle, and the preset then plays as saved (no shimmer of 0.0006
-  woken up). Loading a preset sets the macros back to 0 with every other control: a preset is a
-  complete sound.
+  woken up). Loading a preset sets the macros to what it holds with every other control (a preset
+  is a complete sound): 0 unless it was saved with a macro moved; the factory presets keep them at
+  0. (Re-review: the knob's "0%" and the macro's 0 are one constant, `kBipolarZero`, so they can't
+  drift apart.)
 - 2026-10-07 — **The DRONE and BLOOM OSC pages traded repeats for motion**: DRONE's second bank,
   which repeated GROUND's, is the Breath (depth, rate, Sync, Div) and the Sway (the same); BLOOM
   OSC's is the Sway and the voice's Age, Smear, Pan and Width, Blend and Breath moving up to the

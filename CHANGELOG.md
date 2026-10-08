@@ -20,8 +20,9 @@ the bar.
   phrase and no preset drops more than 8.0 LU (Frozen Sky, nearly all reverb, brought near); all
   four at once in their 16 corners on the three hottest presets, no limiting and at most 5.4 LU
   down (`AF_FULL_MACRO_SWEEP=1`). A Bloom Tone on a band-pass or high-pass is left where it is
-  (it picks a band, not a brightness). Saved with the sound; the factory presets keep them at 0, and loading a preset sets them back to 0 with
-  everything else (a preset is a complete sound). What each one moves:
+  (it picks a band, not a brightness). Saved with the sound; loading a preset sets them to what it
+  holds, as every other control (a preset is a complete sound): 0 unless it was saved with a macro
+  moved. The factory presets keep them at 0. What each one moves:
   [User guide](docs/USER_GUIDE.md#the-macros).
 - **The help line:** move any control and for 4 s the status line at the top of every page says
   what it does and what its range means (`BLOOM AGE: where in a note's life you listen, struck to
@@ -43,14 +44,18 @@ the bar.
 - **Free or on the bar:** Ground's Breath has a rate of its own (**Breath Rate**, 0.11 s to
   30.5 min, by default the 14 s it always had), and the Breath and both strata's sways can run
   **Sync**ed: one cycle per **Div** (1/4, 1/2, 1 to 64 bars of 4/4), locked to MPC's position while
-  it plays, at the tempo while it is stopped; a synced breath tops on each division's downbeat, and
-  Bloom's voices sway staggered on the bar, each a sixth of a cycle after the one before, so a chord
-  still shimmers. A cycle never jumps: MPC starting, locating or looping, and Free <-> Sync, glide
-  over about 50 ms; back on Free each voice drifts back to its own phase. A division too fast for
-  the tempo doubles (a sway at most 4 Hz, a breath 8 Hz). **Free** stays the default everywhere
-  (phasing needs free cycles), and a preset that leaves them plays bit for bit as before. On the DRONE page (Breath and
-  Sway cards) and BLOOM OSC (Sway). Motion bends the free rates, Breath Rate among them, and leaves
-  synced ones on their bars. Pulse Drone breathes on every beat.
+  it plays, at the tempo while it is stopped, both strata on one count whether they sound or not; a
+  synced breath tops on each division's downbeat, and Bloom's voices sway staggered on the bar, each
+  a sixth of a cycle after the one before, so a chord still shimmers. A cycle never jumps while it
+  is heard: MPC starting, locating or looping, and Free <-> Sync, glide, most of the way within
+  about 50 ms and exactly onto the bar within about a second (at Breath 100% the level moves at
+  most about 0.2 dB a control step); one starting from silence (a chord after a silence, the drone
+  starting or unmuted) starts on its place. Back on Free each voice drifts back to its own phase. A
+  division too fast for the tempo doubles (a sway at most 4 Hz, a breath 8 Hz). **Free** stays the
+  default everywhere (phasing needs free cycles), and a preset that leaves them plays bit for bit as
+  before. On the DRONE page (Breath and Sway cards) and BLOOM OSC (Sway). Motion bends the free
+  rates, Breath Rate among them, and leaves synced ones on their bars. Pulse Drone breathes on every
+  beat.
 - **The PLAY page** has the macros, Freeze, Hold, Bloom Age and the volume on its first Q-Link bank;
   the levels, Bloom Swell, key, scale, chord and Gravity on the second. The two Tones, Space Decay
   and Shimmer, which Glow and Horizon now bend, left it (they are on their strata's pages).

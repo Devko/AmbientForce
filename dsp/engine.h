@@ -85,9 +85,10 @@
 // take a step. The steps sit on the sample count's multiples of kChunk, so the host's blocks
 // (MPC's 128) never cut one; only a MIDI event does, at its sample. Ground and Bloom are rendered a
 // control step at a time: they read their tables (TableSet::get) and step their own controls at
-// every call. Before each piece they are given MPC's tempo and position at its first sample, for
-// their synced cycles (Ground's Breath, the sways): locked to the bar while the transport plays,
-// running on at the tempo while it is stopped.
+// every call. Before each piece they are given MPC's tempo and the engine's one beat count at its
+// first sample, for their synced cycles (Ground's Breath, the sways): MPC's position while the
+// transport plays, on from where it was at the tempo while it is stopped. The count runs on the
+// sample count, asleep or awake, so the strata keep to one grid whether they sound or not.
 //
 // Idle: asleep, or awake with nothing to hear (Ground !audible(), Bloom with no voice in use) and
 // Space::silent(): render() writes zeros and runs no DSP. Space can stay unsilent for minutes
@@ -246,7 +247,8 @@ private:
     void clearDsp();                         // every DSP state, silent (reset() and the guard)
     void settle();                           // the output where it settles: glides landed, filters empty
     bool piece(float* outL, float* outR, int n);   // n <= kChunk samples; false: not finite
-    void clockStrata(uint64_t at);           // the strata's synced clocks at sample `at` (MPC's position)
+    double beatsAt(uint64_t at) const;       // the strata's beat count at sample `at`
+    void clockStrata(uint64_t at);           // the strata's synced clocks set to it
     bool output(float* L, float* R, int n);   // false: a sample isn't finite
     void tiltFor(float t);                   // the tilt's coefficients for t
 
@@ -258,7 +260,10 @@ private:
     Space space_;
     Space::Params spaceParams_;              // what Space is given: the patch's, the tail's hold applied
     Transport transport_;
-    uint64_t transportAt_ = 0;               // the sample transport_'s position is at
+    // The strata's one beat count (clockStrata): beats_ at sample beatsAt_ (a block's first). MPC's
+    // position while it plays; on from where it was at the tempo while it is stopped.
+    double beats_ = 0.0;
+    uint64_t beatsAt_ = 0;
 
     // Keys: down, held by the pedal or latched by Hold; the note Input mapped each to, its
     // velocity, and the chord Bloom played for it (Notes).
