@@ -133,10 +133,14 @@
 // - a generated note that would repeat either of the last two notes (where the recording comes
 //   round: its last note then its first, or a b c a b replaying a b | a b; or notes brought
 //   together by a change) is moved as above, against the last two and the loop's next two, so that
-//   the next ones don't then repeat it in turn, and so on round the loop. A loop of two keeps out
-//   only the note before: going round, each of its notes is two from itself, and it replays as it
-//   is unless a change brought its two notes together. A loop of one note replays it as it is: a
-//   pass apart, it is the loop's pulse, not a repeat;
+//   the next ones don't then repeat it in turn, and so on round the loop. One set of loops moves
+//   all the way round: at Gravity 1 under a chord with two tones in the range, a loop of an odd
+//   length that alternates them (a b a) can only move a note to the other tone, which the next
+//   note then repeats and moves in turn, so its two tones swap from pass to pass. Gravity comes
+//   first: it still alternates the chord's two tones in its rhythm, never the note before. A loop
+//   of two keeps out only the note before: going round, each of its notes is two from itself, and
+//   it replays as it is unless a change brought its two notes together. A loop of one note
+//   replays it as it is: a pass apart, it is the loop's pulse, not a repeat;
 // - every replayed note is moved by octaves into 24..108 (harmony.h's chord range, Air's voices'):
 //   the player's notes can be anywhere.
 // A pass is Loop s long (2..120), free. Synced (loopBeats > 0: 1..256 quarter notes) it is
