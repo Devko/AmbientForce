@@ -18,9 +18,7 @@ namespace {
 
 std::atomic<uint32_t> g_guardTrips{0}, g_limited{0};   // guardTrips(), limitedSamples()
 
-constexpr float kTiltPivotHz = 800.0f;
-constexpr float kTiltDb = 6.0f;             // the shelf's highs (and, the other way, lows) at tilt 1
-constexpr float kTiltStep = 0.029f;         // a control step's tilt glide: the whole range in 50 ms
+constexpr float kTiltStep = TiltShelf::kStep;   // a control step's tilt glide (svf.h's shelf, Weather's too)
 constexpr float kFloorDb = -60.0f;          // Stop's fade ends here, and resets
 constexpr float kLimitLand = 1e-3f;         // the limiter's release lands on 1 from here (0.009 dB)
 constexpr int kGlideSamples = 441;          // the volume, the return and the pans glide 10 ms
@@ -434,13 +432,12 @@ void Engine::reset() {
 
 // --- rendering ----------------------------------------------------------------------------------
 
+// The shelf's gains and its one-pole for t (svf.h's TiltShelf, which Weather shares).
 void Engine::tiltFor(float t) {
-    tiltHigh_ = exp2Fast(t * kTiltDb * 0.166096404744f);   // log2(10) / 20
-    tiltLow_ = 1.0f / tiltHigh_;
-    // The pole at pivot x sqrt(high / low), the zero at pivot / that: the shelf's middle (0 dB)
-    // on the pivot. A TPT one-pole, so the highs reach tiltHigh_ exactly at Nyquist.
-    const float g = svfG(kTiltPivotHz * tiltHigh_);
-    tiltG_ = g / (1.0f + g);
+    const TiltShelf s = TiltShelf::of(t);
+    tiltHigh_ = s.high;
+    tiltLow_ = s.low;
+    tiltG_ = s.G;
 }
 
 void Engine::control() {

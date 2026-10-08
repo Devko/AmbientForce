@@ -720,6 +720,7 @@ int main() {
     airVoicesTests();
     reverbTests();
     echoTests();
+    weatherTests();
     testBasics();
     testGetters();
     testPlay();
