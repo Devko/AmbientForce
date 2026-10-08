@@ -27,7 +27,18 @@ int64_t passOf(double pos) {
     return static_cast<int64_t>(f > 4.0e15 ? 4.0e15 : f < -4.0e15 ? -4.0e15 : f);
 }
 
+// The range of a (clamped) Register and Range in a key, both ends in: whole semitones (a hair over,
+// so 23/12 octaves is 23 however the float rounds; Range is at least 0.5, so the cast is the floor),
+// never above the top of the chord range: nothing up there is music anyway.
+void rangeOf(int registerOct, float rangeOct, int key, int& lo, int& hi) {
+    lo = 12 * (registerOct + 1) + key;
+    hi = lo + static_cast<int>(12.0f * rangeOct + 1e-3f);
+    if (hi > kChordHighest) hi = kChordHighest;
+}
+
 } // namespace
+
+static_assert(AirGen::kCandMax <= 64, "a bit of chord_ per candidate");
 
 AirGen::AirGen() {
     set(AirGenPatch{}, HarmonyPatch{});
@@ -56,9 +67,15 @@ void AirGen::set(const AirGenPatch& p, const HarmonyPatch& h) {
     const int key = pitchClass(h.key), scale = clampi(h.scale, 0, SC_COUNT - 1);
 
     const bool harmony = key != key_ || scale != scale_;
-    const bool allowedMoved = harmony || q.gravity != p_.gravity;   // which notes are allowed
+    // The candidates are the scale's tones between the range's two ends, whole semitones: a Range
+    // knob turning works them out again only where an end crosses a semitone, not every block.
+    int lo, hi;
+    rangeOf(q.registerOct, q.rangeOct, key, lo, hi);
+    const bool rebuild = harmony || lo != lo_ || hi != hi_;
+    // What is allowed changes with the harmony, and with Gravity only where it crosses 1 (below it
+    // every candidate weighs above 0). Its weights are read as notes are drawn.
+    const bool snap = harmony || (q.gravity < 1.0f) != (p_.gravity < 1.0f);
     const int shift = 12 * (q.registerOct - p_.registerOct);
-    const bool candidates = allowedMoved || shift != 0 || q.rangeOct != p_.rangeOct;
     if (q.loop && !p_.loop) startLoop_ = true;   // the first pass starts at the next step
     if (!q.loop) {
         loop_ = LS_OFF;
@@ -69,10 +86,8 @@ void AirGen::set(const AirGenPatch& p, const HarmonyPatch& h) {
     key_ = key;
     scale_ = scale;
     if (harmony) ++harmony_;
-    if (candidates) {
-        rebuildCandidates();
-        moveMotifs(shift, allowedMoved);
-    }
+    if (rebuild) rebuildCandidates();
+    if (rebuild || snap) moveMotifs(shift, snap);
 }
 
 void AirGen::setChord(const Chord& c, bool generate) {
@@ -126,22 +141,17 @@ double AirGen::draw() { return static_cast<double>(xorshift(rng_)) * (1.0 / 4294
 // --- the candidates -------------------------------------------------------------------------------
 
 void AirGen::rebuildCandidates() {
+    ++rebuilds_;
     scalePcs_ = 0;
     for (int d = 0; d < scaleSize(scale_); ++d)
         scalePcs_ = static_cast<uint16_t>(scalePcs_ | 1u << pitchClass(key_ + scaleStep(scale_, d)));
-    // Whole semitones (a hair over, so 23/12 octaves is 23 however the float rounds), never above
-    // the top of the chord range: nothing up there is music anyway.
-    lo_ = 12 * (p_.registerOct + 1) + key_;
-    hi_ = lo_ + static_cast<int>(std::floor(12.0f * p_.rangeOct + 1e-3f));
-    if (hi_ > kChordHighest) hi_ = kChordHighest;
+    rangeOf(p_.registerOct, p_.rangeOct, key_, lo_, hi_);
     nCand_ = 0;
-    noneAllowed_ = true;
+    chord_ = 0;
     for (int n = lo_; n <= hi_ && nCand_ < kCandMax; ++n) {
         if (!(scalePcs_ >> pitchClass(n) & 1u)) continue;
-        const float w = pcs_ >> pitchClass(n) & 1u ? 1.0f : 1.0f - p_.gravity;
-        cand_[nCand_] = n;
-        w_[nCand_++] = w;
-        noneAllowed_ = noneAllowed_ && !(w > 0.0f);
+        if (pcs_ >> pitchClass(n) & 1u) chord_ |= uint64_t{1} << nCand_;
+        cand_[nCand_++] = n;
     }
 }
 
@@ -151,40 +161,58 @@ int AirGen::indexOf(int note) const {
     return -1;
 }
 
-// The allowed candidate nearest `note`, the lower on a tie, that is none of `keep` (a motif note's
-// neighbours); if every allowed one is, the nearest.
-int AirGen::nearestAllowed(int note, const int* keep, int nKeep) const {
-    int best = -1, bestAny = -1;
-    for (int i = 0; i < nCand_; ++i) {
-        if (!allowed(i)) continue;
-        const int c = cand_[i];
-        // Ascending, so a strictly nearer one replaces it and a tie keeps the lower.
-        if (bestAny < 0 || std::abs(c - note) < std::abs(bestAny - note)) bestAny = c;
-        bool kept = false;
-        for (int k = 0; k < nKeep; ++k) kept = kept || keep[k] == c;
-        if (!kept && (best < 0 || std::abs(c - note) < std::abs(best - note))) best = c;
+// Into the range by octaves, keeping the pitch class; a pitch class with no octave in it (a range
+// under an octave) to the octave nearest the range, below or above it.
+int AirGen::fold(int note) const {
+    while (note < lo_) note += 12;
+    while (note > hi_) note -= 12;
+    if (note < lo_ && lo_ - note > note + 12 - hi_) note += 12;
+    return note;
+}
+
+// The candidate nearest `note`, the lower on a tie, that repeats none of `keep` (keep[0] the note
+// before it, keep[0..nNear) the notes next to it, the rest those two away), giving way a step at a
+// time as a draw does, Gravity before the rule (the header's list for moved notes): allowed, keeping
+// all of them out, then the next ones, then the note before; any candidate, keeping all of them out,
+// then the next ones; then the nearest allowed.
+int AirGen::nearestAllowed(int note, const int* keep, int nNear, int nKeep) const {
+    for (int level = 0; level < 6; ++level) {
+        const bool any = level == 3 || level == 4;
+        // How many of keep kept out.
+        const int out = level == 0 || level == 3 ? nKeep : level == 1 || level == 4 ? nNear : level == 2 ? (nKeep > 0 ? 1 : 0) : 0;
+        int best = -1;
+        for (int i = 0; i < nCand_; ++i) {
+            const int c = cand_[i];
+            // Ascending, so a strictly nearer one replaces it and a tie keeps the lower.
+            if (!(any || allowed(i)) || (best >= 0 && std::abs(c - note) >= std::abs(best - note))) continue;
+            bool kept = false;
+            for (int k = 0; k < out; ++k) kept = kept || keep[k] == c;
+            if (!kept) best = c;
+        }
+        if (best >= 0) return best;
     }
-    return best >= 0 ? best : bestAny;
+    return cand_[0];   // never: the last level keeps nothing out, and something is always allowed
 }
 
 // One draw `u` picks among the candidates idx[0..n): by weight, or evenly, keeping out the notes in
 // `ex` (ex[0]: the note before), giving way one step at a time (the header's list).
 int AirGen::pick(const int* idx, int n, const int* ex, int nEx, double u) const {
+    const bool none = noneAllowed();
     for (int level = 0; level < 5; ++level) {
-        const bool weighted = level < 2;
+        const bool weighted = level < 2 && !none;
         const int out = level == 0 || level == 2 ? nEx : level == 4 ? 0 : 1;   // how many of ex kept out
-        auto weight = [&](int k) {
+        auto share = [&](int k) {
             for (int e = 0; e < out; ++e)
                 if (ex[e] == cand_[idx[k]]) return 0.0;
-            return weighted && !noneAllowed_ ? static_cast<double>(w_[idx[k]]) : 1.0;
+            return weighted ? static_cast<double>(weight(idx[k])) : 1.0;
         };
         double total = 0.0;
-        for (int k = 0; k < n; ++k) total += weight(k);
+        for (int k = 0; k < n; ++k) total += share(k);
         if (!(total > 0.0)) continue;
         double target = u * total;
         int lastOk = -1;
         for (int k = 0; k < n; ++k) {
-            const double w = weight(k);
+            const double w = share(k);
             if (!(w > 0.0)) continue;
             lastOk = cand_[idx[k]];
             if (target < w) return lastOk;
@@ -192,7 +220,7 @@ int AirGen::pick(const int* idx, int n, const int* ex, int nEx, double u) const 
         }
         return lastOk;   // rounding at the top end
     }
-    return cand_[idx[0]];   // never: level 5 keeps nothing out, and the tonic is always a candidate
+    return cand_[idx[0]];   // never: the last level keeps nothing out, and the tonic is always a candidate
 }
 
 void AirGen::remember(int note) {
@@ -252,9 +280,11 @@ int AirGen::choose(double uPick, double uMut, double uWhich, double uDir) {
             m[conN_++] = note;
             mpos_ = conN_;
         } else {
-            // The next note of the pass, passing over one that would repeat one of the last two (only
-            // where the motif changed: a new echo, a snap, a pattern switch). None left in this pass
-            // fits: the pass ends here, and the next one is looked in.
+            // The next note of the pass, passing over one that would repeat one of the last two:
+            // where the last two aren't the motif's own (a new echo, a snap, a pattern switched
+            // midway, a loop gone off), or the motif holds a repeat within two (drawn when the weights
+            // left too little). None left in this pass fits: the pass ends here, and the next one is
+            // looked in.
             int j = -1;
             for (int k = mpos_; k < len && j < 0; ++k)
                 if (m[k] != last_ && m[k] != last2_) j = k;
@@ -266,8 +296,15 @@ int AirGen::choose(double uPick, double uMut, double uWhich, double uDir) {
             }
             for (int k = mpos_; k < len && j < 0; ++k)
                 if (m[k] != last_) j = k;
-            if (j < 0) j = mpos_;
-            note = m[j];
+            if (j >= 0) {
+                note = m[j];
+            } else {
+                // Every note of the motif is the last one: drawn one at a time between another
+                // pattern's notes, which its draws can't see, it can be one note throughout. The
+                // nearest that keeps the rule plays instead; the motif stays as it is.
+                j = mpos_;
+                note = nearestAllowed(m[j], ex, 1, 2);
+            }
             mpos_ = j + 1;
         }
         if (mpos_ >= len) {
@@ -302,14 +339,10 @@ void AirGen::buildEcho() {
     const int take = nHeard_ < p_.motif ? nHeard_ : p_.motif;
     int k = 0;
     for (int i = nHeard_ - take; i < nHeard_; ++i) {
-        int n = heard_[i];
-        while (n < lo_) n += 12;
-        while (n > hi_) n -= 12;
-        if (n < lo_) {
-            // A range under an octave without this pitch class: the nearest allowed note to the
-            // octave nearest the range.
-            n = nearestAllowed(lo_ - n <= n + 12 - hi_ ? n : n + 12, nullptr, 0);
-        }
+        int n = fold(heard_[i]);
+        // A range under an octave without this pitch class: the nearest allowed note to the octave
+        // nearest the range.
+        if (n < lo_ || n > hi_) n = nearestAllowed(n, nullptr, 0, 0);
         if ((k >= 1 && n == echo_[k - 1]) || (k >= 2 && n == echo_[k - 2])) continue;
         echo_[k++] = n;
     }
@@ -348,34 +381,35 @@ void AirGen::mutate(int* m, int len, double uMut, double uWhich, double uDir) {
     }
 }
 
-// The candidates changed. Both motifs (the notes drawn so far) move by `shift` semitones (Register's
-// octaves), whole, keeping their shape; a note still outside the range folds in by octaves. Then a
-// note that found no octave in the range, that repeats one within two of it, or (`snap`: what is
-// allowed changed) that isn't allowed, moves to the nearest allowed note that keeps the rule
-// against those within two of it (none does: the nearest).
+// The candidates, or what is allowed, changed. Both motifs (the notes drawn so far) move by `shift`
+// semitones (Register's octaves), whole, keeping their shape; a note still outside the range folds in
+// by octaves. Then a note that found no octave in the range, that repeats one within two of it, or
+// (`snap`: what is allowed changed) that isn't allowed, moves to the nearest that keeps the rule
+// against those within two of it (nearestAllowed's steps): a chord leaving one allowed tone in the
+// range would otherwise make the whole motif that tone.
 void AirGen::moveMotifs(int shift, bool snap) {
     for (int which = 0; which < 2; ++which) {
         int* m = which ? echo_ : con_;
         const int n = which ? echoLen_ : conN_, len = which ? echoLen_ : conLen_;
         bool lost[kMotifMax] = {};
         for (int i = 0; i < n; ++i) {
-            int note = m[i] + shift;
-            while (note < lo_) note += 12;
-            while (note > hi_) note -= 12;
-            lost[i] = note < lo_;   // a range under an octave without this pitch class
-            m[i] = note;
+            m[i] = fold(m[i] + shift);
+            lost[i] = m[i] < lo_ || m[i] > hi_;   // a range under an octave without this pitch class
         }
         for (int i = 0; i < n; ++i) {
-            int keep[4], nk = 0;
+            // Its neighbours drawn so far: the note before it first, then the next ones, then those
+            // two away.
+            int keep[4], nk = 0, nNear = 0;
             for (int d = 1; d <= 2; ++d) {
                 const int a = (i + d) % len, b = (i - d + len) % len;
-                if (a < n && a != i) keep[nk++] = m[a];
                 if (b < n && b != i) keep[nk++] = m[b];
+                if (a < n && a != i) keep[nk++] = m[a];
+                if (d == 1) nNear = nk;
             }
             bool repeats = false;
             for (int k = 0; k < nk; ++k) repeats = repeats || keep[k] == m[i];
             const int at = indexOf(m[i]);
-            if (lost[i] || repeats || (snap && !(at >= 0 && allowed(at)))) m[i] = nearestAllowed(m[i], keep, nk);
+            if (lost[i] || repeats || (snap && !(at >= 0 && allowed(at)))) m[i] = nearestAllowed(m[i], keep, nNear, nk);
         }
     }
 }
@@ -405,7 +439,7 @@ int AirGen::record(double pos, int note, float vel, bool played, int64_t from) {
         rec_[at] = rec_[at - 1];
         --at;
     }
-    rec_[at] = {place, note, vel, played, harmony_, from};
+    rec_[at] = {place, note, vel, played, harmony_, p_.registerOct, from};
     ++nRec_;
     return at;
 }
@@ -459,28 +493,42 @@ void AirGen::nextReplay() {
     }
 }
 
-// A recorded note as it replays: as recorded, or (recorded in another harmony) the nearest allowed,
-// the lower on a tie: a generated one an allowed candidate (in the range), a played one the nearest
-// note whose pitch class is allowed, wherever it is.
+// A recorded note as the range and the harmony have it now (the header's Loop). A generated one:
+// moved by Register's octaves since it was recorded and folded into the range by octaves, so a loop
+// recorded before a Register or Range change keeps its pitch classes rather than piling up at the
+// range's edge; then, recorded in another harmony or with no octave in the range, the nearest
+// allowed, the lower on a tie. A played one where it was played or, recorded in another harmony, the
+// nearest note whose pitch class is allowed.
+int AirGen::replayBase(const Recorded& e) const {
+    if (!e.played) {
+        const int note = fold(e.note + 12 * (p_.registerOct - e.reg));
+        return e.harmony != harmony_ || note < lo_ || note > hi_ ? nearestAllowed(note, nullptr, 0, 0) : note;
+    }
+    if (e.harmony == harmony_) return e.note;
+    for (int d = 0; d < 12; ++d)
+        for (int n : {e.note - d, e.note + d}) {
+            const int pc = pitchClass(n);
+            if (n >= 0 && n <= 127 && (scalePcs_ >> pc & 1u) && (p_.gravity < 1.0f || noneAllowed() || (pcs_ >> pc & 1u)))
+                return n;
+        }
+    return e.note;
+}
+
+// The recording's event `i` as it replays: replayBase(), except that a generated note that would
+// repeat either of the last two notes (the recording coming round, a b c a b replaying a b | a b; or
+// notes brought together by a change) goes to the nearest that keeps the rule against them and the
+// two recorded after it, the note before and the next first (so the move doesn't make the next ones
+// repeat it in turn). A loop of two keeps only the note before out: going round, each of its notes
+// is two from itself. A loop of one note replays it as it is: a pass apart, it is the loop's pulse.
 // Then into kChordLowest..kChordHighest (Air's voices' range) by octaves: the player's notes can be
 // anywhere.
-int AirGen::replayNote(const Recorded& e) const {
-    int note = e.note;
-    if (e.harmony != harmony_) {
-        if (!e.played) {
-            note = nearestAllowed(e.note, nullptr, 0);
-        } else {
-            bool found = false;
-            for (int d = 0; d < 12 && !found; ++d)
-                for (int n : {e.note - d, e.note + d}) {
-                    const int pc = pitchClass(n);
-                    if (!found && n >= 0 && n <= 127 && (scalePcs_ >> pc & 1u) &&
-                        (p_.gravity < 1.0f || noneAllowed_ || (pcs_ >> pc & 1u))) {
-                        note = n;
-                        found = true;
-                    }
-                }
-        }
+int AirGen::replayNote(int i) const {
+    const Recorded& e = rec_[i];
+    int note = replayBase(e);
+    if (!e.played && ((nRec_ > 1 && note == last_) || (nRec_ > 2 && note == last2_))) {
+        const int next = i + 1 < nRec_ ? i + 1 : 0, next2 = next + 1 < nRec_ ? next + 1 : 0;
+        const int keep[4] = {last_, replayBase(rec_[next]), last2_, replayBase(rec_[next2])};
+        note = nearestAllowed(note, keep, 2, nRec_ > 2 ? 4 : 2);
     }
     while (note < kChordLowest) note += 12;
     while (note > kChordHighest) note -= 12;
@@ -576,7 +624,7 @@ int AirGen::step(int n, AirEvent* out, int max) {
                 nextReplay();
             } else if (count < max) {
                 const float vel = e.played ? e.vel : 0.7f * (1.0f - 0.5f * p_.rubato * static_cast<float>(replayNumber(1)));
-                const int note = replayNote(e);
+                const int note = replayNote(repIdx_);
                 out[count++] = {off, note, vel, e.played};
                 remember(note);   // among the last two notes: the generator, once the loop is off, won't repeat it
                 nextReplay();
