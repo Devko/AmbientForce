@@ -22,7 +22,7 @@
 // stretch, and a longer predelay set while the engine skips Space would read it (the reach grows,
 // so silent() turns false and the engine runs Space again, with no note played): a ghost of the
 // last notes, at their level, however long ago they were. So once a silence begins, the Reverb
-// forgets it (Reverb::forgetInput(): nothing cleared, nothing else changed), once a silence. A
+// forgets it (Reverb::forgetInput(): nothing cleared, nothing else changed), once per silence. A
 // silence begins at the end of a process() call, or at a set(): the reach counts the larger of
 // where the size, the mode and the predelay are and where they are going, and a set() that turns
 // one back while it moves shortens it, so the engine's next look finds Space silent with no

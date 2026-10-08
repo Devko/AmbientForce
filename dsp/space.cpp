@@ -57,7 +57,7 @@ void Space::set(const Params& p, const Transport& t) {
 // now on the engine may skip Space, for minutes, and a longer predelay set meanwhile would read what
 // went in before the quiet stretch. The Reverb forgets that (space.h). Once a silence: after it the
 // predelay's age and the quiet count grow together, until something comes in again. While anything
-// sounds, or once forgotten, the first test fails and reachSamples() isn't asked.
+// sounds a count is 0, and once forgotten held_ is false: either way reachSamples() isn't asked.
 void Space::forgetIfSilent() {
     if (held_ && quietIn_ > 0 && quietOut_ > 0 && silent()) {
         reverb_.forgetInput(quietIn_);
