@@ -274,6 +274,8 @@ void Weather::gate(bool on) {
         gateDb_ = kFloorDb;
         gain_ = gain0_ = 0.0f;
         begin();
+    } else if (!on && !audible()) {   // nothing to hear, so nothing to fade: it closes at once
+        silence();
     }
 }
 
@@ -302,11 +304,14 @@ void Weather::reset() {
     tiltFor_ = hpFor_ = -1.0f;   // worked out afresh at the first step
 }
 
-// Nothing more to hear (the gate closed, the level or the mute glided to 0, a reset): every grain
-// stops and the source is forgotten. The engine may skip Weather from here on, and the loader or a
-// Remember may free the source meanwhile, so nothing may keep a pointer into it: a grain still
-// reading it would be copied from it at the next source change. The next render() with something
-// to hear takes its source afresh (changeSource: the modes from the anchor, a grain at once).
+// Nothing more to hear (the gate at its bottom, the level glided to 0 or muted, set() or the gate
+// turned off leaving nothing to hear, a reset): every grain stops and the source is forgotten. The
+// engine may skip Weather from here on, and the loader or a Remember may free the source
+// meanwhile, so nothing may keep a pointer into it: a grain still reading it would be copied from
+// it at the next source change. The next render() with something to hear takes its source afresh
+// (changeSource: the modes from the anchor, a grain at once). With the gate off it closes at once
+// too: there is nothing left to fade, and a fade left part done while the engine skipped Weather
+// would play out when the level came back.
 void Weather::silence() {
     for (Voice& v : voice_) {
         v.on = false;
@@ -315,6 +320,14 @@ void Weather::silence() {
     tiltS_[0] = tiltS_[1] = hpS_[0] = hpS_[1] = 0.0f;
     src_ = GrainSource{};
     hasSrc_ = false;
+    if (!gateOn_) {
+        closed_ = true;
+        ending_ = false;
+        gateDb_ = kFloorDb;
+        gain_ = gain0_ = 0.0f;
+        levelNow_ = levelTo_ = mute_ ? 0.0f : level_;
+        levelStep_ = 0.0f;
+    }
 }
 
 // Stream and Stretch start from the anchor afresh from here, and the next grain comes at once.
@@ -410,16 +423,9 @@ void Weather::render(const GrainSource* src, float duckPeak, float* outL, float*
         control(m);
         step(m, d0 + dStep * static_cast<float>(o), dStep, outL + o, outR + o, sendL + o, sendR + o);
         now_ += static_cast<uint64_t>(m);
-        if (ending_) {   // the gate's bottom: every grain stops
-            silence();
-            closed_ = true;
-            ending_ = false;
-            gain_ = gain0_ = 0.0f;
-            levelNow_ = levelTo_ = mute_ ? 0.0f : level_;
-            levelStep_ = 0.0f;
-        } else if (!audible()) {   // the level or the mute has glided to 0: the same
-            silence();
-        }
+        // The gate's bottom (the gate off, so silence() closes it), or the level glided to 0 or
+        // muted: nothing more to hear.
+        if (ending_ || !audible()) silence();
     }
 }
 

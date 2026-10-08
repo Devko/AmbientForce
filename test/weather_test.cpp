@@ -717,6 +717,47 @@ void testFreedWhileSilent() {
     }
 }
 
+// The gate turned off while Weather has nothing to hear closes at once: there is nothing to fade,
+// and the engine may be skipping Weather, so a fade left part done would play out when the level
+// came back. Turned off while skipped, and already half way down when the level went to 0.
+void testGateWhileSilent() {
+    std::printf("== weather: the gate off while silent\n");
+    const auto sb = source(whiteNoise(4 * kSec, 0.5f, 97));
+    for (bool half : {false, true}) {
+        Weather w;
+        w.seed(73);
+        af::WeatherPatch p = dense();
+        w.set(p, af::HarmonyPatch{});
+        w.gate(true);
+        play(w, &sb->src, 3 * kSec);
+        if (half) {   // the gate off first: half way down (-30 dB) when the level goes
+            w.gate(false);
+            play(w, &sb->src, kSec);
+            CHECK(w.audible());
+        }
+        p.level = 0.0f;
+        w.set(p, af::HarmonyPatch{});
+        int blocks = 0;
+        while (w.audible() && blocks < kSec / kBlk) {
+            play(w, &sb->src, kBlk);
+            ++blocks;
+        }
+        if (!half) w.gate(false);   // while the engine skips it: no render
+        p.level = 1.0f;
+        w.set(p, af::HarmonyPatch{});
+        const bool shut = !w.audible();
+        const Out o = play(w, &sb->src, 3 * kSec);
+        std::printf("  %s, the level back: %s, peak %.4f\n", half ? "half way down" : "off while skipped",
+                    shut ? "closed" : "still fading", peak(o.L));
+        CHECK(shut);
+        CHECK(peak(o.L) == 0.0f && peak(o.R) == 0.0f && peak(o.sendL) == 0.0f);
+        // Opened again, it fades in as from silence.
+        w.gate(true);
+        const Out back = play(w, &sb->src, 3 * kSec);
+        CHECK(w.audible() && rms(back.L, at(2.5)) > 0.03);
+    }
+}
+
 // A call is cut into control steps of 32 from its start, as Ground's: a block of 128 plays what four calls of
 // 32 do (the engine's pieces). Its steps are what the engine makes them, so the engine's own grid keeps
 // MPC's block size out of the sound.
@@ -884,6 +925,7 @@ void weatherTests() {
     testBackwardsNearTheStart();
     testMute();
     testFreedWhileSilent();
+    testGateWhileSilent();
     testBlocks();
     testDeterminismAndStability();
     testNoAllocation();
