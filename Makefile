@@ -135,9 +135,11 @@ $(BUILD)/ambientforce.so: $(SRC) $(HDR) $(GEN) plugin/exports.map | $(BUILD)
 $(BUILD)/ambientforce_stages.so: $(SRC) $(HDR) $(GEN) plugin/exports_stages.map | $(BUILD)
 	$(X86_SO_CMD) -Wl,--version-script=plugin/exports_stages.map -DAF_STAGE_TIMING $(SRC) -o $@
 
-# The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1.
-$(BUILD)/afbench: tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN) | $(BUILD)
-	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $< plugin/patch_map.cpp -ldl -o $@
+# The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1. M2's
+# cases play the engine itself, linked in (tools/bench.cpp says why).
+BENCH_SRC := tools/bench.cpp plugin/patch_map.cpp $(wildcard dsp/*.cpp)
+$(BUILD)/afbench: $(BENCH_SRC) $(HDR) $(GEN) | $(BUILD)
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(BENCH_SRC) -ldl -o $@
 
 # Demo clips for listening without a device: the factory presets playing a phrase, rendered
 # through the plugin's own entry points into build/demos-out/*.wav (tools/demos.cpp).
@@ -241,9 +243,9 @@ $(ARM_SO_STAGES): $(SRC) $(HDR) $(GEN) plugin/exports_stages.map $(ARM_SO_STAMP)
 	$(ARM_PREFIX)strip --strip-unneeded $@
 
 arm-bench: $(ARM_BENCH)
-$(ARM_BENCH): tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN)
+$(ARM_BENCH): $(BENCH_SRC) $(HDR) $(GEN)
 	mkdir -p $(BUILD)/arm
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC) $< plugin/patch_map.cpp -ldl -o $@
+	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC) $(BENCH_SRC) -ldl -o $@
 
 # Instruction counts: each bench case's ARM instructions a block, exact and the same on every run,
 # to measure a change between device runs (docs/PERFORMANCE.md#instruction-counts). ICOUNT_QEMU is a

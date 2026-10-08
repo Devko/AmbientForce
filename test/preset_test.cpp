@@ -10,8 +10,10 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -345,6 +347,29 @@ struct Played {
 };
 std::vector<Played> g_played;   // testFactory's, for testMacroLevels
 
+// A render's fingerprint (FNV-1a over the samples' bits, L then R, -0 as 0), and a run of them
+// folded into one (FNV-1a over each fingerprint's eight bytes, in order).
+uint64_t fingerprint(const std::vector<float>& L, const std::vector<float>& R) {
+    uint64_t h = 1469598103934665603ull;
+    for (const std::vector<float>* b : {&L, &R})
+        for (float v : *b) {
+            uint32_t bits;
+            const float x = v == 0.0f ? 0.0f : v;
+            std::memcpy(&bits, &x, sizeof bits);
+            for (int k = 0; k < 4; ++k) {
+                h ^= (bits >> (8 * k)) & 0xffu;
+                h *= 1099511628211ull;
+            }
+        }
+    return h;
+}
+void fold(uint64_t& into, uint64_t h) {
+    for (int k = 0; k < 8; ++k) {
+        into ^= (h >> (8 * k)) & 0xffu;
+        into *= 1099511628211ull;
+    }
+}
+
 void testFactory() {
     std::printf("== factory presets: the demo phrase at -16 LUFS\n");
     CHECK(af::kNumFactoryPresets >= 1);
@@ -368,6 +393,7 @@ void testFactory() {
     const std::vector<std::string> only;   // every one
 #endif
     size_t played = 0;
+    uint64_t prints = 1469598103934665603ull;   // every phrase's fingerprint, folded in order
     for (int i = 0; i < af::kNumFactoryPresets; ++i) {
         const std::string name = af::kFactoryPresets[i].name;
         if (!only.empty() && std::find(only.begin(), only.end(), name) == only.end()) continue;
@@ -391,8 +417,23 @@ void testFactory() {
         CHECK(peak <= afl::kPeakCap);
         CHECK(limited <= afl::kMaxLimitedShare);
         g_played.push_back({i, peak});
+        fold(prints, fingerprint(L, R));
     }
     CHECK(played == (only.empty() ? static_cast<size_t>(af::kNumFactoryPresets) : only.size()));   // none renamed away
+    // Off is off (M2's Task 8): Air, Weather and Echo off in every preset of 0.0.2 (their files name
+    // none of them), the phrases play 0.0.2's samples, bit for bit: the fingerprints folded above,
+    // taken from 0.0.2's own build (3e1fb35) of these presets: x86's all 28, the device's (NEON
+    // fuses multiply-adds) the five qemu plays. The plain builds only; against profile-guided objects
+    // (make test-arm-pgo) the profile moves the fusing. A preset added or changed moves it: then it
+    // is taken again.
+    std::printf("  the phrases' fingerprints, folded: %016llx\n", static_cast<unsigned long long>(prints));
+#if AF_PGO_OBJECTS
+    std::printf("  (checked in the plain builds, not against profile-guided objects)\n");
+#elif defined(__arm__)
+    CHECK(prints == 0x85132c48c2712eccull);
+#else
+    CHECK(prints == 0x17654dd27920e4e0ull);
+#endif
 }
 
 // Every macro at both ends, the demo phrase each time: none makes a preset lean on the limiter (it may work on at

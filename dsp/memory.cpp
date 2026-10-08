@@ -155,6 +155,7 @@ void Memory::restart() {
     for (int& w : w_) w = 0;
     down1_.reset();
     down2_.reset();
+    rise_ = kSeamFade;   // a fresh ring joins nothing
 }
 
 void Memory::reset() { restart(); }
@@ -162,7 +163,16 @@ void Memory::reset() { restart(); }
 void Memory::write(const float* L, const float* R, int n) {
     while (n > 0) {
         const int m = std::min(n, kBlock - staged_);
-        stage(L, R, m, x_ + 2 * staged_);
+        float* const x = x_ + 2 * staged_;
+        stage(L, R, m, x);
+        if (rise_ < kSeamFade) {   // after a seal: in from 0 (window1, as a seam's far side)
+            const int k = std::min(m, kSeamFade - rise_);
+            for (int i = 0; i < k; ++i) {
+                x[2 * i] *= fade_[0][rise_ + i];
+                x[2 * i + 1] *= fade_[0][rise_ + i];
+            }
+            rise_ += k;
+        }
         staged_ += m;
         written_ = std::min(written_ + m, kFrames);
         since_ = std::min(since_ + m, kGapFrames);
@@ -185,6 +195,38 @@ void Memory::flush() {
     down2_.process(x_, m2, x_);
     w_[2] = putLevel(r.level[2].data(), kFrames >> 2, w_[2], x_, m2);
     staged_ = 0;
+}
+
+// The recording's end faded to 0 as a seam's near side is, counted back from its newest frame: the
+// staged frames first (level 0, as floats: the decimators take them faded), then the ring's at each
+// level from where they leave off (s >> k frames on at level k; the guard is written at the
+// Remember), and the decimators' state scaled by the gain of the newest frame each has taken. A
+// fade reaches no further back than the frames this recording holds. Then the next kSeamFade frames
+// staged fade in (write()).
+void Memory::seal() {
+    // Nothing written since the last seal (a long suspend while asleep seals again): its fade is in
+    // place already, and fading it again would only sharpen it.
+    if (rise_ == 0) return;
+    const int s = staged_;   // < kBlock < kSeamFade
+    for (int d = 0; d < s; ++d) {
+        float* const f = x_ + 2 * (s - 1 - d);
+        f[0] *= fade_[0][d];
+        f[1] *= fade_[0][d];
+    }
+    Ring& r = ring_[rec_];
+    const bool full = written_ >= kFrames;
+    for (int k = 0; k < GrainSource::kLevels; ++k) {
+        const int len = kFrames >> k, n = kSeamFade >> k, skip = s >> k;
+        const int held = full ? len : (written_ - s) >> k;   // in the ring at level k (flushed whole)
+        int16_t* const b = r.level[k].data();
+        for (int i = 0; skip + i < n && i < held; ++i) {
+            const int at = w_[k] - 1 - i < 0 ? w_[k] - 1 - i + len : w_[k] - 1 - i;
+            scaleFrame(b + 2 * at, fade_[k][skip + i]);
+        }
+    }
+    down1_.scale(fade_[0][s]);       // level 0's newest flushed frame: s back from the end
+    down2_.scale(fade_[1][s >> 1]);  // level 1's: s >> 1 back
+    rise_ = 0;
 }
 
 bool Memory::remember() {

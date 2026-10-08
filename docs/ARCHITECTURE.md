@@ -43,7 +43,8 @@ flowchart LR
 
 | Path | Contents |
 |---|---|
-| `dsp/engine.*` | The engine: Listen routing from the keys and the harmony to Ground and Bloom, the pedal and Hold, Stop, the mix and sends, Space's decay hold, the output (tilt, volume, the guard, the limiter, Stop's fade), idling. Its header is the best single summary of how the instrument behaves |
+| `dsp/engine.*` | The engine: Listen routing from the keys and the harmony to Ground, Bloom, Air and Weather, Split, the pedal and Hold, Stop, the mix and sends, Echo between the strata and Space, Space's decay hold, Memory's tap and Remember, the output (tilt, volume, the guard, the limiter, Stop's fade), idling. Its header is the best single summary of how the instrument behaves |
+| `dsp/air.*` | Air, the stratum: its generator striking its voices at their samples, the generated notes' pans and the played ones' (by pitch, velocity through Vel), the level, mute and send |
 | `dsp/harmony.*` | The harmony brain: scales, Input mapping, diatonic chords, voicings, voice leading, the tunings, and the harmony memory (keys and their mapped notes, the current chord, the memory's timer). Also the `Listen` modes every stratum shares |
 | `dsp/airgen.*` | Air's generator: when Air plays and which note. The Poisson clock, the candidates and Gravity (never the last two notes, and how that gives way), Random, Rise, Fall, Constellation with Mutate, Echo of the player's notes, the Loop (record, replay with Rubato, overdub, free or synced to the bar), Rubato's velocity; one random sequence that no setting shifts |
 | `dsp/ground.*` | Ground, the drone: five partials on one table, beating in Hz, Gravity, the root's octave and Register, the fade, Body, Breath, Tone, Width |
@@ -59,11 +60,11 @@ flowchart LR
 | `dsp/memory.*` | Memory: the last 16 s recorded at the grains' three levels into one of two rings; Remember makes that ring Weather's source (its seam faded, its guard written) and records on in the other; pins for Keep |
 | `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels; `FrameDecimator`, the same filter over a run of frames, for Memory's recording |
 | `dsp/reverb.*`, `pitch.h` | EffectForce's Reverb: predelay, low cut, diffusion, an 8-line feedback delay network with modulation, freeze and shimmer; the Haze and Abyss modes added. The shimmer's pitch shifter |
-| `dsp/echo.*` | Echo: the Delay as a send / return (wet only), ducking under the send, `silent()`, its defaults (`initEcho()`). Not in the signal path until M2's engine task |
+| `dsp/echo.*` | Echo: the Delay as a send / return (wet only), ducking under the send, `silent()`, its defaults (`initEcho()`), `rest()` (the engine's skipped time, for the duck) |
 | `dsp/delay.*` | EffectForce's Delay: two lines read at free or synced times (Tape glides or Fade crossfades), Stereo, Ping-Pong and Mono, the cuts, drive and limiter in the loop, wow and flutter, ducking; Diffuse added (four allpasses a side in the loop, blended in by the amount) |
 | `dsp/svf.h` | Andrew Simper's trapezoidal state-variable filter (Bloom's filter, Ground's Tone and formants) |
 | `dsp/common.h`, `fastmath.h`, `simd.h` | The rate and the control chunk, `Transport`, smoothing; fast exp2, log2, tan, soft clip and random numbers; four-float vectors (NEON on the Force, GCC's generic vectors on x86, so the tests run the same arithmetic) |
-| `dsp/stages.h` | Stage timers for the profiling build (`-DAF_STAGE_TIMING`): ground, bloom, space, out |
+| `dsp/stages.h` | Stage timers for the profiling build (`-DAF_STAGE_TIMING`): ground, bloom, air, weather, echo, space, out |
 | `plugin/plugin.cpp` | VST2 glue for an instrument: MIDI with sample offsets, transport, suspend and resume, chunk state, the denormal flush, the CPU meter |
 | `plugin/surface.*` | The touchscreen side: parameter values, stepping, popups, the preset browser, pushes to MPC |
 | `plugin/patch_map.*` | 0..1 ↔ real values, display text, parameters → `Patch` (the levels' audio taper), then the four macros bending that `Patch` (`applyMacros`); every option list checked against the engine's names as it compiles |
@@ -153,8 +154,19 @@ pans glide in a straight line over 10 ms from the control step that finds them c
 sample carried from one piece to the next, so a MIDI event that cuts a piece short never makes one
 jump.
 
-**The output:** dry + return × wet → tilt → make-up and volume → the non-finite guard → limiter →
-Stop's fade.
+**M2's strata and Echo** (`dsp/engine.h` has the routing): Air and Weather render into the buses by
+their Listen and Split, each taking its own pan and Echo send in the same pass over its output.
+Every stratum's dry (after its level, before its pan) goes into the Echo bus at its Echo send,
+gliding 10 ms; Echo runs while a sounding stratum sends to it or it isn't `silent()`, and its return
+goes into the mix and, at Echo Space, into Space's send. Sends to Echo are 0 where nobody would hear
+it, Air's and Weather's Space sends where Space's return is 0. Memory records its tap (the strata's
+dry, or the dry and the returns before the tilt) straight from the bus, after Weather, and goes on
+recording across Stop and a long suspend, sealed at the sleep (what it cut off fades out over 5 ms
+there, what the wake records fades in: a dip, never a step); the guard and CC 120 start its ring
+afresh. All of it is off in Init, which plays 0.0.2's samples.
+
+**The output:** dry + Echo's and Space's returns → tilt → make-up and volume → the non-finite guard →
+limiter → Stop's fade.
 
 - **Tilt**: one first-order shelf pivoting at 800 Hz, ±6 dB at the ends, 0 dB at the pivot;
   bypassed at 0.
@@ -225,8 +237,9 @@ step and the filters' coefficients glide per sample (the cutoffs evenly in octav
 steps. Bloom also ends a step where a strummed note's start falls, so each note starts on its own
 sample. Space runs the Reverb in its own 32-sample chunks.
 
-**Idle.** Asleep, or awake with nothing to hear (Ground not audible, Bloom with no voice in use)
-and Space `silent()`, `render()` writes zeros and runs no DSP. Space can stay unsilent for minutes
+**Idle.** Asleep, or awake with nothing to hear (Ground not audible, Bloom with no voice in use, Air
+with no voice ringing and its generator not due to strike, Weather not audible), Echo and Space
+`silent()`, `render()` writes zeros and runs no DSP (Memory records nothing then). Space can stay unsilent for minutes
 (Abyss at Decay 30), and a change that lengthens its reach can make it unsilent again with no
 input; it then simply runs that much longer. Once silent, the Reverb's predelay forgets what came
 in before, so a longer predelay plays nothing from before the silence, and nothing the network

@@ -369,6 +369,57 @@ void testSeam() {
     }
 }
 
+// seal() (a sleep that keeps the ring): a 440 Hz sine at 0.8 cut at its peak, sealed, and recorded on
+// from its opposite peak for 1 s, then remembered. At every level the join's largest step is at most
+// the sine's own (its steady parts, both sides), where unsealed it is 1.6 against 0.06 at level 0;
+// level 0 is the unsealed recording's bit for bit but for the kSeamFade frames each side of the join,
+// which dip (none further from 0 than it); and pieces at random record the same bits as whole blocks
+// (the fade-in counts frames, not pieces). With 0, 1, 68 and 127 frames staged at the seal, the ring
+// not yet full and full (its end just behind the join: the fades cross it at every level).
+void testSeal() {
+    std::printf("== memory: a seal joins with a dip\n");
+    const double hz = 440.0, w = 2.0 * kPi * hz / kSec;
+    const float a = 0.8f;
+    for (const bool full : {false, true})
+        for (const int staged : {0, 1, 68, 127}) {
+            // Flushed whole before the seal; full: 5513 blocks, the ring's end 64 frames behind.
+            const int before = (full ? 5513 : 344) * kBlk + staged, after = kSec;
+            const Buf old = sine(hz, before, a, 0.5 * kPi - w * (before - 1)), next = sine(hz, after, a, -0.5 * kPi);
+            std::unique_ptr<Memory> m[3];   // sealed in whole blocks, sealed in pieces at random, unsealed
+            for (int v = 0; v < 3; ++v) {
+                m[v] = std::make_unique<Memory>();
+                feed(*m[v], old, v == 1 ? 0 : kBlk);
+                if (v < 2) m[v]->seal();
+                feed(*m[v], next, v == 1 ? 0 : kBlk);
+                CHECK(m[v]->remember());
+            }
+            const af::GrainSource *s = m[0]->remembered(), *u = m[2]->remembered();
+            if (!s || !u || !m[1]->remembered()) continue;
+            CHECK(sameSource(*s, *m[1]->remembered()));
+            const int join = full ? Memory::kFrames - after : before;   // in the source's order
+            bool ok = true;
+            std::printf("  %-8s %3d staged:", full ? "full," : "not full,", staged);
+            for (int k = 0; k < af::GrainSource::kLevels; ++k) {
+                const Buf x = inOrder(*s, k, 0);
+                const size_t j = static_cast<size_t>(join >> k), reach = static_cast<size_t>(300 >> k);
+                const size_t far = static_cast<size_t>(8000 >> k), near = static_cast<size_t>(1000 >> k);
+                const float at = maxStep(x, j - reach, j + reach);
+                const float own = std::max(maxStep(x, j - far, j - near), maxStep(x, j + near, j + far));
+                std::printf("  %d: %.4f of %.4f", k, at, own);
+                ok = ok && at <= own;
+            }
+            const Buf x = inOrder(*s, 0, 0), y = inOrder(*u, 0, 0);
+            const size_t j = static_cast<size_t>(join), n = Memory::kSeamFade;
+            int outside = 0, louder = 0;
+            for (size_t i = 0; i < x.size(); ++i) {
+                if (i + n < j || i >= j + n) outside += x[i] != y[i];
+                else louder += std::fabs(x[i]) > std::fabs(y[i]);
+            }
+            std::printf("; level 0 apart from unsealed: %d outside the fades, %d louder in them\n", outside, louder);
+            CHECK(ok && outside == 0 && louder == 0);
+        }
+}
+
 // Remember's rules (check 7): under 0.5 s recorded refused (22049 frames no, 22050 yes, a source of
 // 22048: rounded down to a multiple of 4); within 2 s of recording since the last refused (88199
 // no, 88200 yes); pinned refused, then allowed once unpinned; pin() with nothing remembered false
@@ -707,7 +758,7 @@ void testPinThreads() {
     CHECK(m.generation() == 13);
 }
 
-// Nothing in write, remember, reset, remembered, fill, generation, pin or unpin allocates.
+// Nothing in write, seal, remember, reset, remembered, fill, generation, pin or unpin allocates.
 void testNoAllocation() {
     std::printf("== memory: no allocation\n");
 #if AFT_COUNTS_ALLOCS
@@ -720,6 +771,7 @@ void testNoAllocation() {
         m.write(x.data(), x.data() + 1, i % 7 ? kBlk : 1 + i % 300);
         if (m.remember()) ++remembered;
         if (i == 5000) m.reset();
+        if (i % 1500 == 700) m.seal();
         if (i % 1000 == 0 && m.pin()) m.unpin();
         (void)m.remembered();
         (void)m.fill();
@@ -743,6 +795,7 @@ void fieldsTests() {
     testRecords();
     testFullRing();
     testSeam();
+    testSeal();
     testRules();
     testReset();
     testPieces();
