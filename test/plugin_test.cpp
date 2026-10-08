@@ -706,6 +706,7 @@ int main() {
     lifeoscTests();
     groundTests();
     bloomTests();
+    airVoicesTests();
     reverbTests();
     testBasics();
     testGetters();
