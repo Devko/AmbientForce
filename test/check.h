@@ -1,4 +1,4 @@
-// From SubForce test/check.h (8846421), sft -> aft; the allocation counter added.
+// From SubForce test/check.h (8846421), sft -> aft; the allocation counter and the largest allocation added.
 #pragma once
 // The tiny check framework every test file shares (counters live in plugin_test.cpp).
 #include <cstddef>
@@ -19,10 +19,12 @@ extern int g_fail, g_pass;
 extern "C" int __sanitizer_install_malloc_and_free_hooks(void (*malloc_hook)(const volatile void*, size_t),
                                                          void (*free_hook)(const volatile void*));
 namespace aft {
-inline thread_local bool t_countingAllocs = false;
+inline thread_local bool t_countingAllocs = false, t_trackingBiggest = false;
 inline int g_allocs = 0;
-inline void onMallocHook(const volatile void*, size_t) {
+inline size_t g_biggestAlloc = 0;
+inline void onMallocHook(const volatile void*, size_t size) {
     if (t_countingAllocs) ++g_allocs;
+    if (t_trackingBiggest && size > g_biggestAlloc) g_biggestAlloc = size;
 }
 inline void onFreeHook(const volatile void*) {}
 // The hooks, installed the first time any suite asks; false if the runtime refused them.
@@ -39,6 +41,13 @@ inline int allocationsCounted() {
     t_countingAllocs = false;
     return g_allocs;
 }
+// From here the size of the largest single allocation this thread makes (sources_test.cpp: nothing the size
+// of a whole file), until it is let go with stopTrackingBiggest().
+inline void trackBiggestAllocation() {
+    g_biggestAlloc = 0;
+    t_trackingBiggest = true;
+}
+inline void stopTrackingBiggest() { t_trackingBiggest = false; }
 } // namespace aft
 #else
 #define AFT_COUNTS_ALLOCS 0

@@ -156,9 +156,10 @@ $(BUILD)/arm/plugin_test: $(call objs,arm-test,$(SRC) $(TESTS))
 # test/reverb_test.cpp with every dsp/*.cpp under ASan/UBSan, the objects make test built (only
 # module_main.cpp is compiled for the suite: -DMODULE_TESTS names the suite it calls); test-module-arm
 # the same for the device's CPU under qemu-arm. Suites that drive the plugin (engine, preset) need
-# make test. A suite that tests plugin files too lists them in MOD_PLUGIN_<suite>
-# (MOD_PLUGIN_foo = plugin/bar.cpp), linked besides the dsp ones.
+# make test. The sources suite tests the loader, the WAV reader and the source library, which are
+# plugin files: it gets those (MOD_PLUGIN_<suite>) besides the dsp ones.
 M ?=
+MOD_PLUGIN_sources = plugin/paths.cpp plugin/loader.cpp plugin/wav.cpp plugin/sources.cpp
 MOD_SRC = test/$(M)_test.cpp $(wildcard dsp/*.cpp) $(MOD_PLUGIN_$(M))
 ifeq ($(strip $(M)),)
 test-module test-module-arm:
@@ -200,11 +201,13 @@ $(BUILD)/ambientforce.so: $(call objs,x86-so,$(SRC)) plugin/exports.map
 $(BUILD)/ambientforce_stages.so: $(call objs,x86-stages,$(SRC)) plugin/exports_stages.map
 	$(X86_SO_CMD) -Wl,--version-script=plugin/exports_stages.map $(filter %.o,$^) -o $@
 
-# The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1.
+# The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1. M2's
+# cases play the engine itself, linked in (tools/bench.cpp says why).
 # The -O2 objects are the soak's and the demos' too.
+BENCH_SRC := tools/bench.cpp plugin/patch_map.cpp $(wildcard dsp/*.cpp)
 O2_FLAGS = -std=c++17 -O2 -Wall -Wextra -pthread $(INC)
 $(eval $(call objrule,o2,O2_FLAGS,CXX))
-$(BUILD)/afbench: $(call objs,o2,tools/bench.cpp plugin/patch_map.cpp)
+$(BUILD)/afbench: $(call objs,o2,$(BENCH_SRC))
 	$(CXX) $(O2_FLAGS) $^ -ldl -o $@
 
 # Demo clips for listening without a device: the factory presets playing a phrase, rendered
@@ -342,7 +345,7 @@ $(ARM_SO_STAGES): $(call objs,arm-stages,$(SRC)) plugin/exports_stages.map $(ARM
 
 # The bench is built with the suite's flags, from its objects.
 arm-bench: $(ARM_BENCH)
-$(ARM_BENCH): $(call objs,arm-test,tools/bench.cpp plugin/patch_map.cpp)
+$(ARM_BENCH): $(call objs,arm-test,$(BENCH_SRC))
 	mkdir -p $(BUILD)/arm
 	$(ARM_CXX) $(ARM_TEST_FLAGS) $^ -ldl -o $@
 

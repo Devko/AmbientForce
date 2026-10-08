@@ -165,6 +165,14 @@ public:
         for (f4& y : y_) y = splat(0.0f);
     }
 
+    // The state times g, as if what it took so far had come g times as loud (the filters are linear;
+    // Memory's seal(): what it took is faded, g its newest frame's gain). scale(0) is reset().
+    void scale(float g) {
+        const f4 k = splat(g);
+        x0_ = x0_ * k;
+        for (f4& y : y_) y = y * k;
+    }
+
     // `pairs` pairs of frames (L R L R, early first) from `in`, each into one frame (L R) at `out`,
     // which may be `in` (written behind what is read).
     void process(const float* in, int pairs, float* out) {

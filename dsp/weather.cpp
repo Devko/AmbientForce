@@ -212,6 +212,7 @@ float ramp(const V& v, int t) {
 Weather::Weather() : copy_(static_cast<size_t>(2 * kGrains * kCopyStride), 0) {
     set(WeatherPatch{}, HarmonyPatch{});
     reset();
+    setMix(1.0f, 1.0f, 0.0f);   // centred, unsent: Weather's own dry and Space send, as they were
 }
 
 void Weather::seed(uint32_t s) {
@@ -304,6 +305,9 @@ void Weather::reset() {
     tiltNow_ = tilt_;
     hpNow_ = hpHz_;
     tiltFor_ = hpFor_ = -1.0f;   // worked out afresh at the first step
+    panL_.land();
+    panR_.land();
+    echo_.land();
 }
 
 // Nothing more to hear (the gate at its bottom, the level glided to 0 or muted, set() or the gate
@@ -397,8 +401,19 @@ void Weather::changeSource(const GrainSource* src) {
 
 // --- rendering ----------------------------------------------------------------------------------
 
+void Weather::setMix(float panL, float panR, float echoSend) {
+    panL_.aim(panL, static_cast<int>(kLevelGlide));
+    panR_.aim(panR, static_cast<int>(kLevelGlide));
+    echo_.aim(clampParam(echoSend, 0.0f, 1.0f, 0.0f), static_cast<int>(kLevelGlide));
+    if (!audible()) {   // nothing to hear: nothing to glide over
+        panL_.land();
+        panR_.land();
+        echo_.land();
+    }
+}
+
 void Weather::render(const GrainSource* src, float duckPeak, float* outL, float* outR, float* sendL, float* sendR,
-                     float spaceSend, int n) {
+                     float spaceSend, float* echoL, float* echoR, int n) {
     if (n <= 0) return;
     // The source is looked at only with something to hear: silent, Weather holds none (silence()),
     // and no grain starts.
@@ -426,7 +441,8 @@ void Weather::render(const GrainSource* src, float duckPeak, float* outL, float*
     for (int o = 0; o < n && !closed_; o += kChunk) {
         const int m = std::min(kChunk, n - o);
         control(m);
-        step(m, d0 + dStep * static_cast<float>(o), dStep, outL + o, outR + o, sendL + o, sendR + o);
+        step(m, d0 + dStep * static_cast<float>(o), dStep, outL + o, outR + o, sendL + o, sendR + o,
+             echoL ? echoL + o : nullptr, echoR ? echoR + o : nullptr);
         now_ += static_cast<uint64_t>(m);
         // The gate's bottom (the gate off, so silence() closes it), or the level glided to 0 or
         // muted: nothing more to hear.
@@ -438,6 +454,13 @@ void Weather::render(const GrainSource* src, float duckPeak, float* outL, float*
 // the anchor, the tilt's and the high-pass's glides and coefficients.
 void Weather::control(int m) {
     const float n = static_cast<float>(m), dt = n * (1.0f / 44100.0f);
+    // The pan and the Echo send: straight lines over 10 ms, as the level (setMix()).
+    pl0_ = panL_.now;
+    pr0_ = panR_.now;
+    e0_ = echo_.now;
+    panL_.move(m);
+    panR_.move(m);
+    echo_.move(m);
     if (gateOn_) gateDb_ = std::min(0.0f, gateDb_ + kGateDbPerSample * n);
     else gateDb_ -= kGateDbPerSample * n;
     ending_ = !gateOn_ && gateDb_ <= kFloorDb;
@@ -618,7 +641,8 @@ void Weather::spawn(int k, double pos, float semis, bool back, int length, float
 // gains (the step's ramp times Duck's, d0 at the step's start, dStep a sample) into the dry and the
 // send. A step with nothing to hear reads nothing: any grain moves on unread and the filters start
 // afresh (once nothing more can be heard, render() stops every grain: silence()).
-void Weather::step(int m, float d0, float dStep, float* outL, float* outR, float* sendL, float* sendR) {
+void Weather::step(int m, float d0, float dStep, float* outL, float* outR, float* sendL, float* sendR, float* echoL,
+                   float* echoR) {
     startGrains(m);
     const bool heard = gain0_ > 0.0f || gain_ > 0.0f;
     bool any = false;
@@ -665,9 +689,11 @@ void Weather::step(int m, float d0, float dStep, float* outL, float* outR, float
     }
 
     // The gains, ramped across the step, times Duck's across the call; four samples at a time, the
-    // sum taken apart into L and R as it loads.
+    // sum taken apart into L and R as it loads. The dry at the pan's gains; the Space and Echo sends
+    // before the pan (setMix()).
     const float inv = 1.0f / static_cast<float>(m);
     const float dg = (gain_ - gain0_) * inv, ds = (send_ - send0_) * inv;
+    const float dl = (panL_.now - pl0_) * inv, dr = (panR_.now - pr0_) * inv, de = (echo_.now - e0_) * inv;
     int j = 0;
     const f4 lane = f4{1.0f, 2.0f, 3.0f, 4.0f};
     for (; j + 4 <= m; j += 4) {
@@ -681,18 +707,28 @@ void Weather::step(int m, float d0, float dStep, float* outL, float* outR, float
         const f4 l{acc_[2 * j], acc_[2 * j + 2], acc_[2 * j + 4], acc_[2 * j + 6]};
         const f4 r{acc_[2 * j + 1], acc_[2 * j + 3], acc_[2 * j + 5], acc_[2 * j + 7]};
 #endif
-        store4(outL + j, load4(outL + j) + l * g);
-        store4(outR + j, load4(outR + j) + r * g);
+        store4(outL + j, load4(outL + j) + l * (g * (splat(pl0_) + splat(dl) * at)));
+        store4(outR + j, load4(outR + j) + r * (g * (splat(pr0_) + splat(dr) * at)));
         store4(sendL + j, load4(sendL + j) + l * s);
         store4(sendR + j, load4(sendR + j) + r * s);
+        if (echoL) {
+            const f4 e = g * (splat(e0_) + splat(de) * at);
+            store4(echoL + j, load4(echoL + j) + l * e);
+            store4(echoR + j, load4(echoR + j) + r * e);
+        }
     }
     for (; j < m; ++j) {
         const float at = static_cast<float>(j + 1);
         const float g = (gain0_ + dg * at) * (d0 + dStep * at), s = g * (send0_ + ds * at);
-        outL[j] += acc_[2 * j] * g;
-        outR[j] += acc_[2 * j + 1] * g;
+        outL[j] += acc_[2 * j] * (g * (pl0_ + dl * at));
+        outR[j] += acc_[2 * j + 1] * (g * (pr0_ + dr * at));
         sendL[j] += acc_[2 * j] * s;
         sendR[j] += acc_[2 * j + 1] * s;
+        if (echoL) {
+            const float e = g * (e0_ + de * at);
+            echoL[j] += acc_[2 * j] * e;
+            echoR[j] += acc_[2 * j + 1] * e;
+        }
     }
 }
 

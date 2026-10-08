@@ -151,6 +151,7 @@ void bloomTests();       // bloom_test.cpp: Bloom on its own (chords, strum, ste
 void airvoicesTests();   // airvoices_test.cpp: Air's voices on their own (pitch, decay, Tone, levels, steal, sleep)
 void weatherTests();     // weather_test.cpp: Weather and its sources on their own (pitch, To Key, Stream, Duck)
 void fieldsTests();      // fields_test.cpp: the procedural fields and Memory on their own (level, seams, Remember)
+void sourcesTests();     // sources_test.cpp: Weather's sources on the plugin side (WAVs, the loader and its cache, keys, Keep)
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
 void paramsTests();      // params_test.cpp: defaults and their text, formats, option lists, the patch map, extremes
 
