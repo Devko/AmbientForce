@@ -263,7 +263,7 @@ float fadeOrScale(float v, float x, float oct, float hi) {
 // reverb (Frozen Sky) more took it 11 LU down. A Tone moves only on Bloom's low-pass: a band-pass's or
 // high-pass's Tone picks a band, not a brightness (Overtone Choir's whistle), and moving it changes the sound
 // more than the level allows.
-constexpr float kHorizonSendNear = 1.0f;    // both strata's sends: x 2^h near (to -6 dB) ...
+constexpr float kHorizonSendNear = 1.0f;    // the sends (Space and Echo): x 2^h near (to -6 dB) ...
 constexpr float kHorizonSendFar = 0.5f;     // ... x 2^(0.5 h) far (to +3 dB)
 constexpr float kHorizonDryOct = 0.5f;      // toward far only: the dry levels down to x 2^-0.5 (-3 dB)
 constexpr float kHorizonDecayOct = 1.3f;    // Space Decay x 2^(1.3 h): 0.41x..2.46x
@@ -372,6 +372,8 @@ void applyMacros(Patch& p, const Macros& m) {
         b.detuneCents = fadeOrScale(b.detuneCents, x, kDensityDetuneOct, PARAM_SPECS[P_B_DETUNE].hi);
         b.breath = fadeOrScale(b.breath, x, kDensityBreathOct, 1.0f);
         a.gen.density = fadeOrScale(a.gen.density, x, kDensityAirOct, PARAM_SPECS[P_A_DENSITY].hi);
+        // Under the knob's "off" mark is off, as the knob has it: a rate of a few notes an hour would keep Air awake.
+        if (a.gen.density < kAirDensityOff) a.gen.density = 0.0f;
         w.grains = std::clamp(static_cast<int>(std::lround(fadeOrScale(static_cast<float>(w.grains), x, kDensityGrainsOct,
                                                                        PARAM_SPECS[P_W_GRAINS].hi))),
                               static_cast<int>(PARAM_SPECS[P_W_GRAINS].lo), static_cast<int>(PARAM_SPECS[P_W_GRAINS].hi));

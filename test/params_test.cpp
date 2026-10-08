@@ -690,9 +690,12 @@ void testMacros() {
     CHECK(golden == 0x6c3af5238ae84bbaull);
 #endif
 
-    // Air, Weather and Echo are off in every factory preset, and a macro brings none of them in: a level or an Echo send
-    // at 0 is 0 (exactly) under every macro, alone at five positions each and in the 16 corners of all four. With a
-    // send open the same macros do move it (the sweep below, on the presets with the new strata on).
+    // Air, Weather and Echo are off in every factory preset, and a macro brings none of them in: what a preset has at 0 and
+    // a macro scales stays 0 (exactly) under every macro, alone at five positions each and in the 16 corners of all four.
+    // On the factory presets that is Air's and Weather's levels and the four Echo sends. On the three presets with the new
+    // strata on (below) it is Air Space, Wthr Space and Air Density, which those presets are then given at 0. With a
+    // value open the same macros do move it (the sweep below).
+    const std::vector<std::vector<float>> on = strataOn();
     {
         std::vector<af::Macros> tries;
         for (int id : {af::P_M_HORIZON, af::P_M_MOTION, af::P_M_GLOW, af::P_M_DENSITY})
@@ -705,7 +708,7 @@ void testMacros() {
             m.density = corner & 8 ? 1.0f : -1.0f;
             tries.push_back(m);
         }
-        bool stays = true;
+        bool stays = true, staysOn = true;
         for (const auto& norm : presets) {
             const af::Patch knobs = af::patchFromKnobs(norm.data());
             for (const af::Macros& m : tries) {
@@ -715,9 +718,18 @@ void testMacros() {
                         p.bloomEcho == 0.0f && p.airEcho == 0.0f && p.weatherEcho == 0.0f;
             }
         }
-        CHECK(stays);
+        for (std::vector<float> norm : on) {
+            for (int id : {af::P_A_SPACE, af::P_W_SPACE, af::P_A_DENSITY}) norm[static_cast<size_t>(id)] = af::paramNorm(id, 0.0f);
+            const af::Patch knobs = af::patchFromKnobs(norm.data());
+            staysOn = staysOn && knobs.airSpace == 0.0f && knobs.weatherSpace == 0.0f && knobs.air.gen.density == 0.0f;
+            for (const af::Macros& m : tries) {
+                af::Patch p = knobs;
+                af::applyMacros(p, m);
+                staysOn = staysOn && p.airSpace == 0.0f && p.weatherSpace == 0.0f && p.air.gen.density == 0.0f;
+            }
+        }
+        CHECK(stays && staysOn);
     }
-    const std::vector<std::vector<float>> on = strataOn();
     for (const auto& norm : on) presets.push_back(norm);   // after the factory presets: the sweep takes them too
 
     // Each macro swept from -1 to +1 on every factory preset and on the three presets with the new strata on: its own
@@ -806,6 +818,29 @@ void testMacros() {
         const af::Patch dThick = bent(af::P_M_DENSITY, 1.0f), dHalf = bent(af::P_M_DENSITY, -0.5f), dSparse = bent(af::P_M_DENSITY, -1.0f);
         CHECK(near(dThick.air.gen.density, 40.0f) && dThick.weather.grains == 12 && near(dHalf.air.gen.density, 10.0f) &&
               dHalf.weather.grains == 3 && dSparse.air.gen.density == 0.0f && dSparse.weather.grains == 1);
+        // Grains are rounded to the nearest: 6 x 2^0.4 = 7.92 is 8 (a cut-off makes 7), 6 x (1 - 0.3) = 4.2 is 4 (a
+        // ceiling makes 5).
+        CHECK(bent(af::P_M_DENSITY, 0.4f).weather.grains == 8 && bent(af::P_M_DENSITY, -0.3f).weather.grains == 4);
+        // Under the knob's "off" mark Air Density is off, as the knob reads: Init's 12 a minute at -99.8% would be 0.024 a
+        // minute, a note every 40 minutes that keeps Air awake; at -99% it is still 0.12.
+        {
+            std::vector<float> init(af::P_COUNT);
+            for (int i = 0; i < af::P_COUNT; ++i) init[static_cast<size_t>(i)] = af::PARAM_INFO[i].def;
+            af::Patch p = af::patchFromKnobs(init.data());
+            af::applyMacros(p, only(af::P_M_DENSITY, -0.998f));
+            const bool snapped = p.air.gen.density == 0.0f;
+            p = af::patchFromKnobs(init.data());
+            af::applyMacros(p, only(af::P_M_DENSITY, -0.99f));
+            CHECK(snapped && near(p.air.gen.density, 0.12f));
+        }
+        // Motion from nothing: a preset with Rubato, Mutate, Drift and Wow at 0 gets 0.6, 0.5, 0.7 and 0.5 at +100%
+        // (they are depths, not levels, and move up from 0 as the Sways do).
+        {
+            af::Patch p = af::patchFromKnobs(on[2].data());
+            const bool zero = p.air.gen.rubato == 0.0f && p.air.gen.mutate == 0.0f && p.weather.drift == 0.0f && p.echo.delay.wow == 0.0f;
+            af::applyMacros(p, only(af::P_M_MOTION, 1.0f));
+            CHECK(zero && p.air.gen.rubato == 0.6f && p.air.gen.mutate == 0.5f && p.weather.drift == 0.7f && p.echo.delay.wow == 0.5f);
+        }
         // At the top of its range Air Density stays 60 and Grains 16 (thick), and Tone 16 kHz, Weather Tilt 1, High
         // Cut 20 kHz (bright): capped, not wrapped or overshot.
         af::Patch top = af::patchFromKnobs(on[1].data());
@@ -852,16 +887,16 @@ void testMacros() {
         };
 #if defined(__arm__)
         // qemu is slow (a 40 s phrase takes 7.6 s): the five presets testFactory plays there, two mixes.
-        const std::vector<std::string> only = {"Init", "Harbour at 4am", "Fifth Light", "Sine Garden", "Choir in Haze"};
+        const std::vector<std::string> subset = {"Init", "Harbour at 4am", "Fifth Light", "Sine Garden", "Choir in Haze"};
         const std::initializer_list<int> mixes = {15, 0};
 #else
-        const std::vector<std::string> only;   // every one
+        const std::vector<std::string> subset;   // every one
         const std::initializer_list<int> mixes = {15, 0, 5, 10};
 #endif
         int compared = 0, played = 0;
         bool silent = true, control = false;
         for (int i = 0; i < af::kNumFactoryPresets; ++i) {
-            if (!only.empty() && std::find(only.begin(), only.end(), std::string(af::kFactoryPresets[i].name)) == only.end()) continue;
+            if (!subset.empty() && std::find(subset.begin(), subset.end(), std::string(af::kFactoryPresets[i].name)) == subset.end()) continue;
             ++played;
             const af::Patch k = af::patchFromKnobs(presets[static_cast<size_t>(i)].data());
             for (int mix : mixes) {   // Horizon, Motion, Glow, Density: bit set = +1, clear = -1
@@ -890,7 +925,7 @@ void testMacros() {
                 }
             }
         }
-        CHECK(silent && control && played == (only.empty() ? af::kNumFactoryPresets : static_cast<int>(only.size())) &&
+        CHECK(silent && control && played == (subset.empty() ? af::kNumFactoryPresets : static_cast<int>(subset.size())) &&
               compared == played * static_cast<int>(mixes.size()));
     }
 
