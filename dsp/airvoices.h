@@ -25,8 +25,13 @@
 //   the prime still falls at its rate to within 0.4%, at note 24 and at 108.
 // - Kalimba: a Karplus-Strong pluck. A delay line of the period (whole samples, then a first-order
 //   allpass for the fraction, which loses nothing at any frequency), a one-pole low-pass in the loop
-//   and a loop gain, the line tuned so the whole loop's phase delay at the fundamental is one period
-//   (within 0.001 cents from note 24 to 108). The loop gain makes up what the low-pass takes from
+//   and a loop gain, the line tuned so the whole loop's phase delay at the fundamental's pole is one
+//   period. The pole is inside the unit circle by the fundamental's decay, where the low-pass's slope
+//   would pull a loop tuned on the circle up to 2 cents flat (Tone 200, Decay 0.33). The whole
+//   samples are chosen once and the allpass's coefficient solved for the rest, so nothing iterates:
+//   within 0.1 cents from note 24 to 108 at Decay 0.33 to 20 and Tone 200 to 16000 (0.001 at Decay
+//   4 and over), where an iteration that swapped the whole samples back and forth left notes 105 and
+//   108 up to 10 cents off at short Decays. The loop gain makes up what the low-pass takes from
 //   the fundamental each pass, so it falls 60 dB in decayS exactly. The low-pass sits at Tone, but
 //   where Tone would take more from the fundamental than a gain under 1 can make up (a dark Tone, a
 //   high note, a long Decay: at Tone 6000 a note over C6 could ring no longer than half a second)

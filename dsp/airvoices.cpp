@@ -390,24 +390,29 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
     const double c = (1.0 - t2 * cw) / (1.0 - t2);
     const double b = std::min(std::exp(-kTwoPi * s.toneHz / kRateD), c - std::sqrt(c * c - 1.0));
     const double a = 1.0 - b;
-    // Its response at the fundamental, a / (1 - b e^-iw0): the gain a pass, and the phase delay.
+    // Its gain a pass at the fundamental, |a / (1 - b e^-iw0)|.
     const double lpGain = a / std::hypot(1.0 - b * cw, b * sw);
-    const double lpDelay = std::atan2(b * sw, 1.0 - b * cw) / w0;
-    // The read: whole samples, then a first-order allpass for the fraction (no loss at any
-    // frequency, so Decay alone sets the fundamental's ring; Lagrange's cubic took up to 0.03 dB a
-    // pass at the top of the keyboard). Its fraction stays within 0.5..1.5, where its phase delay
-    // is smoothest; that delay at the fundamental, of (eta + e^-iw0) / (1 + eta e^-iw0), isn't quite
-    // the fraction, so the read is moved until the loop's whole phase delay is one period.
-    double d = period - lpDelay, eta = 0.0;
-    int whole = 1;
-    for (int it = 0; it < 4; ++it) {
-        d = std::min(std::max(d, 1.5), static_cast<double>(kLine - 4));
-        whole = static_cast<int>(std::floor(d - 0.5));
-        const double frac = d - whole;
-        eta = (1.0 - frac) / (1.0 + frac);
-        const double apDelay = (std::atan2(sw, eta + cw) - std::atan2(eta * sw, 1.0 + eta * cw)) / w0;
-        d += period - lpDelay - (whole + apDelay);
-    }
+    // The tuning. The fundamental falls 60 dB in decayS, so its pole sits inside the unit circle, at
+    // z0 = e^(-sigma + i w0), e^-sigma its fall a sample. Off the circle a low-pass's slope pulls the
+    // pole's frequency down (a loop tuned on the circle played notes 45 to 47 2 cents flat at Tone
+    // 200 and Decay 0.33), so the phase delays are taken at z0. The low-pass's there is its own with
+    // b e^sigma for b.
+    const double rho = std::exp(kLn1000 / (static_cast<double>(s.decayS) * kRateD)), br = b * rho;
+    const double lpDelay = std::atan2(br * sw, 1.0 - br * cw) / w0;
+    // The read: whole samples, chosen once, then a first-order allpass for the rest, tau, which stays
+    // within 0.5..1.5, where its phase delay is smoothest. The allpass loses nothing at any frequency,
+    // so Decay alone sets the fundamental's ring (Lagrange's cubic took up to 0.03 dB a pass at the
+    // top of the keyboard). Its coefficient is the one whose phase delay at z0 is tau exactly: with
+    // u = 1 / z0, arg((eta + u) / (1 + eta u)) = -w0 tau is A eta^2 + B eta + C = 0, and eta is the
+    // root near (1 - tau) / (1 + tau) (the other is near -1), written so nothing cancels. Nothing is
+    // iterated, so nothing has to settle: an iteration that chose the whole samples afresh each time
+    // could swap them back and forth, and left the top notes up to 10 cents off at short Decays.
+    const double d = std::min(std::max(period - lpDelay, 1.5), static_cast<double>(kLine - 4));
+    const int whole = static_cast<int>(std::floor(d - 0.5));
+    const double tau = d - whole;
+    const double A = rho * std::sin(w0 * (1.0 + tau)), B = (1.0 + rho * rho) * std::sin(w0 * tau);
+    const double C = -rho * std::sin(w0 * (1.0 - tau));
+    const double eta = 2.0 * C / (-B - std::sqrt(std::max(B * B - 4.0 * A * C, 0.0)));
     const double g = std::min(want / lpGain, most);
     v.delay = whole;
     v.eta = static_cast<float>(eta);

@@ -156,6 +156,41 @@ void testPitch() {
     CHECK(worst <= 2.0);
 }
 
+// Check 1 for the Kalimba across its patch: Decay 0.33, 0.5, 4 and 20 s times Tone 200, 6000 and
+// 16000, over the keyboard and closely at its top, within the plan's 2 cents. Decay and Tone move the
+// loop's low-pass, and with it what the read's fraction makes up: when the read's whole samples were
+// chosen by an iteration that could swap them back and forth, notes 105 and 108 were 6 and 9.5 cents
+// off at Decay 0.33 and 0.5, at every Tone; tuned on the unit circle rather than at the decaying
+// pole, notes 45 to 47 were 2.0 to 2.15 cents flat at Decay 0.33 and Tone 200. Each strike is
+// measured over about half its Decay, from 2^13 samples at Decay 0.33 to 2^16 at 4 and 20.
+void testPluckTuning() {
+    std::printf("== airvoices: Kalimba tuning across Decay and Tone\n");
+    const int notes[] = {24, 31, 38, 45, 46, 47, 52, 60, 67, 71, 76, 81, 86, 90, 93, 96, 98, 99, 100, 101, 102,
+                         103, 104, 105, 106, 107, 108};
+    double worst = 0.0;
+    for (float decay : {0.33f, 0.5f, 4.0f, 20.0f})
+        for (float tone : {200.0f, 6000.0f, 16000.0f}) {
+            size_t n = size_t{1} << 13;
+            while (n < (size_t{1} << 16) && static_cast<double>(2 * n) <= 0.6 * decay * af::kRate) n *= 2;
+            double most = 0.0;
+            int mostAt = 0;
+            for (int note : notes) {
+                const Out o = strikeOne(patch(af::AS_KALIMBA, decay, tone), note, samples(0.035) + static_cast<int>(n));
+                const double want = noteHz(note), hz = peakHz(o.L, at(0.035), n, want, std::min(15.0, 0.3 * want));
+                const double c = cents(hz, want);
+                if (std::fabs(c) > most) {
+                    most = std::fabs(c);
+                    mostAt = note;
+                }
+                if (std::fabs(c) > 2.0)
+                    std::printf("    note %d at Decay %.2f s, Tone %.0f: %+.2f cents\n", note, decay, tone, c);
+            }
+            std::printf("  Decay %5.2f s, Tone %5.0f: within %.3f cents (the most at note %d)\n", decay, tone, most, mostAt);
+            worst = std::max(worst, most);
+        }
+    CHECK(worst <= 2.0);
+}
+
 // Check 2: Glass's second mode at 2.32 times the fundamental, within 0.5%; Bar's at 2.756.
 void testInharmonic() {
     std::printf("== airvoices: inharmonic modes\n");
@@ -603,6 +638,7 @@ void testNoAllocation() {
 
 void airVoicesTests() {
     testPitch();
+    testPluckTuning();
     testInharmonic();
     testDecay();
     testTone();
