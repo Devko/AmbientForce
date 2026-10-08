@@ -1,8 +1,10 @@
 // Air's generator on its own (docs/plans/2026-10-07-m2-weather.md, Task 4; CONCEPT §13's `air`
 // test): the same seed gives the same events and no setting shifts them; Gravity; no repeats within
-// two, and the fallbacks when the weights leave too little; Density's rate and the gaps' shape; the
-// range; Rise and Fall; Constellation and Mutate; Echo; the Loop, free and synced; Notes off; odd
-// input. Pure logic, so every expectation is worked out here from the rules in dsp/airgen.h.
+// two, the fallbacks when the weights leave too little, and a chord that leaves one allowed tone;
+// Density's rate and the gaps' shape; the range; Rise and Fall; Constellation and Mutate; Echo; the
+// Loop, free and synced, through Register, Range and chord changes, and where it comes round; Notes
+// off; odd input; a knob turning (the candidates worked out only when they change). Pure logic, so
+// every expectation is worked out here from the rules in dsp/airgen.h.
 #include "check.h"
 #include "../dsp/airgen.h"
 
@@ -56,9 +58,9 @@ struct Run {
         now += n;
         beats += n * bpm / 60.0 / kSr;
     }
-    void seconds(double s) {
+    void seconds(double s, int chunk = kStep) {   // `chunk`: samples a step (any n works)
         const int64_t end = now + static_cast<int64_t>(s * kSr);
-        while (now < end) step();
+        while (now < end) step(chunk);
     }
     void events(size_t k) {   // until k events in all (or 4 hours)
         const int64_t limit = now + static_cast<int64_t>(4 * 3600 * kSr);
@@ -142,6 +144,36 @@ int nearestOf(const std::vector<int>& c, int note) {
     for (int x : c)
         if (std::abs(x - note) < std::abs(best - note)) best = x;
     return best;
+}
+
+// The nearest of `c` to `note` (the lower on a tie) that is none of `ex`; -1: none.
+int nearestBut(const std::vector<int>& c, int note, std::initializer_list<int> ex) {
+    int best = -1;
+    for (int x : c)
+        if (std::find(ex.begin(), ex.end(), x) == ex.end() && (best < 0 || std::abs(x - note) < std::abs(best - note)))
+            best = x;
+    return best;
+}
+
+// A generated note of a loop as the range and the harmony have it now (dsp/airgen.h's Loop), while
+// every candidate is allowed (Gravity under 1): recorded as `q` at Register `then`, moved by
+// Register's octaves since, folded into the range by octaves (a pitch class with no octave there: to
+// the octave nearest the range), then the nearest candidate.
+int loopBase(int q, int then, const AirGenPatch& p, const HarmonyPatch& h) {
+    const int lo = rangeLo(p, h), hi = rangeHi(p, h);
+    int n = q + 12 * (p.registerOct - then);
+    while (n < lo) n += 12;
+    while (n > hi) n -= 12;
+    if (n < lo && lo - n > n + 12 - hi) n += 12;
+    return nearestOf(candidates(p, h), n);
+}
+
+// As it replays after `prev` and `prev2`, before the loop's next note `next` (its loopBase): where it
+// would repeat the one before, the nearest that is none of the three, else neither next to it.
+int loopNote(int base, int prev, int prev2, int next, const std::vector<int>& c) {
+    if (base != prev) return base;
+    const int n = nearestBut(c, base, {prev, next, prev2});
+    return n >= 0 ? n : nearestBut(c, base, {prev, next});
 }
 
 // No note equal to either of the two before it (within = 2), or to the one before (within = 1).
@@ -438,6 +470,65 @@ void testNoRepeats() {
                     corner == 0 ? "one chord tone (4 candidates)" : "3 candidates", one ? "yes" : "NO",
                     corner == 1 ? (two ? "; Random, Rise, Fall within two: yes" : "; within two: NO") : "");
     }
+
+    // A chord that leaves one allowed tone in the range doesn't make the motif that tone throughout.
+    // Gravity 1, Register 4, Range 1 (C major 60..72, eight candidates), a motif on C's tones; then D
+    // alone, so 62 is the only chord tone. The motif's notes go to the nearest that keeps the rule,
+    // chord tone or not (62 for one of them), and no note repeats either of the two before it.
+    // Constellation, and Echo of the player's five.
+    for (int pat : {af::AP_CONSTELLATION, af::AP_ECHO}) {
+        Run r;
+        AirGenPatch p = patchOf(pat);
+        p.gravity = 1.0f;
+        p.registerOct = 4;
+        p.rangeOct = 1.0f;
+        p.mutate = 0.5f;
+        start(r, p, 83);
+        r.events(20);
+        if (pat == af::AP_ECHO)
+            for (int n : {60, 64, 67, 72, 65}) r.g.played(n, 0.7f, 0);
+        r.events(60);
+        r.g.setChord(chordOf({62}), true);
+        const size_t from = r.ev.size();
+        r.events(from + 300);
+        int tone = 0;
+        for (size_t i = from; i < r.ev.size(); ++i) tone += r.ev[i].note == 62;
+        const bool ok = r.ev.size() >= from + 300 && noRepeats(r.ev, 2, from - 2);
+        CHECK(ok);
+        CHECK(tone >= 300 / 8);   // about one note a pass of five
+        std::printf("  %s, then a chord of one allowed tone (62): 300 events, no repeat within two %s, 62 %d times\n",
+                    kPat[pat], ok ? "yes" : "NO", tone);
+    }
+
+    // A motif drawn one note at a time between Random's notes can't see them: in the one-chord-tone
+    // corner (Gravity 1, C alone, Range 0.5: 60 62 64 65, Motif 3) each of its draws keeps out only
+    // the note before, Random's, and takes the chord tone, so the motif is 60 60 60. Replayed, every
+    // note of it is the last one: the nearest that keeps the rule plays instead, so never the note
+    // before (60 every other note, as Random's draws give it).
+    {
+        Run r;
+        AirGenPatch p = patchOf(af::AP_CONSTELLATION);
+        p.gravity = 1.0f;
+        p.registerOct = 4;
+        p.rangeOct = 0.5f;
+        p.motif = 3;
+        p.mutate = 0.0f;
+        start(r, p, 89, HarmonyPatch{}, chordOf({60}));
+        for (int k = 1; k <= 5; ++k) {   // Constellation, Random, Constellation, Random, Constellation
+            p.pattern = k % 2 ? af::AP_CONSTELLATION : af::AP_RANDOM;
+            r.g.set(p, HarmonyPatch{});
+            r.events(static_cast<size_t>(k));
+        }
+        const bool drawn = r.ev.size() == 5 && r.ev[0].note == 60 && r.ev[2].note == 60 && r.ev[4].note == 60;
+        p.pattern = af::AP_CONSTELLATION;
+        r.g.set(p, HarmonyPatch{});
+        r.events(305);
+        const bool ok = r.ev.size() >= 305 && noRepeats(r.ev, 1);
+        CHECK(drawn);
+        CHECK(ok);
+        std::printf("  a motif drawn between Random's notes, 60 60 60: 300 events on, never the note before %s\n",
+                    ok ? "yes" : "NO");
+    }
 }
 
 // --- 4. Density ---------------------------------------------------------------------------------
@@ -449,28 +540,43 @@ void testDensity() {
     // each rate is checked twice: one seed that passes (3) within +-10%, as the plan asks; and the mean
     // over enough other seeds for about 10 000 events, within +-3%, three sigma, so it is the rate that
     // is tested, not one lucky sequence.
+    // The seeds' runs step 4096 samples at a time, 32 times fewer calls than Air's 128 (they were most
+    // of the suite's time). That counts the same events: seed 3 stepped both ways gives each event at
+    // the same sample, or one beside it (an event in a step's last half sample is rounded into that
+    // step), with the same note and velocity. A clock that lost or gained work where a step ends
+    // would drift apart here over the 10 minutes, at 6 a minute most (3400 step ends an event).
     std::vector<double> gaps;
+    bool chunks = true;
     for (float d : {6.0f, 12.0f, 60.0f}) {
-        Run one;
+        Run one, big;
         start(one, patchOf(af::AP_RANDOM, d), 3);
+        start(big, patchOf(af::AP_RANDOM, d), 3);
         one.seconds(600);
+        big.seconds(600, 4096);
         const double want = 10.0 * d, got = static_cast<double>(one.ev.size());
         CHECK(std::fabs(got / want - 1.0) <= 0.10);
+        bool same = big.ev.size() == one.ev.size() && !one.ev.empty();
+        for (size_t i = 0; same && i < one.ev.size(); ++i)
+            same = std::llabs(big.ev[i].at - one.ev[i].at) <= 1 && big.ev[i].note == one.ev[i].note &&
+                   big.ev[i].vel == one.ev[i].vel;
+        chunks = chunks && same;
         const int seeds = static_cast<int>(std::ceil(10000.0 / want));
         double total = 0.0;
         for (int s = 100; s < 100 + seeds; ++s) {
             Run r;
             start(r, patchOf(af::AP_RANDOM, d), static_cast<uint32_t>(s));
-            r.seconds(600);
+            r.seconds(600, 4096);
             total += static_cast<double>(r.ev.size());
             if (d == 60.0f)
                 for (size_t i = 1; i < r.ev.size(); ++i) gaps.push_back(static_cast<double>(r.ev[i].at - r.ev[i - 1].at) / kSr);
         }
         const double mean = total / seeds;
         CHECK(std::fabs(mean / want - 1.0) <= 0.03);
-        std::printf("  %2.0f a minute: seed 3 %3.0f in 10 min (%+.1f%%); %d seeds' mean %.1f (%+.2f%%)\n", d, got,
-                    100.0 * (got / want - 1.0), seeds, mean, 100.0 * (mean / want - 1.0));
+        std::printf("  %2.0f a minute: seed 3 %3.0f in 10 min (%+.1f%%; in steps of 4096 the same events: %s); %d seeds' "
+                    "mean %.1f (%+.2f%%)\n",
+                    d, got, 100.0 * (got / want - 1.0), same ? "yes" : "NO", seeds, mean, 100.0 * (mean / want - 1.0));
     }
+    CHECK(chunks);
     // The gaps are exponential: 1 - 1/e of them (63.2%) shorter than the mean.
     size_t shorter = 0;
     for (double g : gaps) shorter += g < 1.0 ? 1 : 0;
@@ -544,6 +650,34 @@ void testRange() {
     CHECK(inside);
     std::printf("  %d combinations of pattern, Register, key and Range: every note within its range (%d..%d in all)\n",
                 combos, lowest, highest);
+
+    // Three candidates at least, in every scale, key and Register at Range 0.5 (the header's ground
+    // for "never the note before"), and so in each scale at its least, one chord tone at Gravity 1,
+    // Random never plays the note before.
+    size_t fewest = 99;
+    bool never = true;
+    for (int scale = 0; scale < af::SC_COUNT; ++scale) {
+        for (int key = 0; key < 12; ++key)
+            for (int reg = 4; reg <= 6; ++reg) {
+                AirGenPatch p;
+                p.registerOct = reg;
+                p.rangeOct = 0.5f;
+                fewest = std::min(fewest, candidates(p, keyOf(key, scale)).size());
+            }
+        Run r;
+        AirGenPatch p = patchOf(af::AP_RANDOM);
+        p.gravity = 1.0f;
+        p.registerOct = 4;
+        p.rangeOct = 0.5f;
+        start(r, p, static_cast<uint32_t>(200 + scale), keyOf(0, scale), chordOf({60}));
+        r.events(100);
+        never = never && r.ev.size() >= 100 && noRepeats(r.ev, 1);
+    }
+    CHECK(fewest >= 3);
+    CHECK(never);
+    std::printf("  Range 0.5, every scale, key and Register: %zu candidates at fewest; one chord tone at Gravity 1, never "
+                "the note before: %s\n",
+                fewest, never ? "yes" : "no");
 }
 
 // --- 6. Rise and Fall -----------------------------------------------------------------------------
@@ -1257,6 +1391,120 @@ void testLoop() {
     }
 }
 
+// The recorded event a replayed one at `at` stands for: the one at its place in the pass (Rubato 0);
+// rec.size(): none.
+size_t recordedAt(const std::vector<Ev>& rec, int64_t pass, int64_t at) {
+    const int64_t place = ((at - rec[0].at) % pass + pass) % pass;
+    for (size_t k = 0; k < rec.size(); ++k)
+        if (std::llabs(rec[k].at - rec[0].at - place) <= 2) return k;
+    return rec.size();
+}
+
+void testLoopMoves() {
+    std::printf("== airgen: a loop through changes, and its seam\n");
+    // A loop recorded before a Register or Range change keeps its pitch classes, through the next
+    // chord change too, rather than piling up at the range's edge. Random at Gravity 0.6 (every tone
+    // of C major allowed, whatever the chord), recorded at Register 4 (60..72). At Register 6 each note
+    // plays 24 up, the loop's shape kept, and on F's chord still. At Range 0.5 (84..90) each folds in
+    // by octaves (G, A and B have no octave there: the nearest candidate to their nearest octave), and
+    // on G's chord the same. A note that then would repeat the one before goes to the nearest that
+    // doesn't (the seam's rule, below). Every replayed note is checked against these rules.
+    {
+        const int64_t pass = static_cast<int64_t>(10 * kSr);
+        Run r;
+        AirGenPatch p = patchOf(af::AP_RANDOM, 30.0f);
+        p.loopS = 10.0f;
+        p.rubato = 0.0f;
+        p.registerOct = 4;
+        p.rangeOct = 1.0f;
+        p.loop = true;
+        start(r, p, 97);
+        r.seconds(25);
+        std::vector<Ev> rec;
+        if (!r.ev.empty()) replays(r.ev, 0, r.ev[0].at, pass, 0.0, rec);
+        CHECK(rec.size() >= 3);
+        if (rec.size() < 3) return;
+        const HarmonyPatch h;
+        bool all = true;
+        auto follows = [&](const char* what) {
+            const size_t from = r.ev.size();
+            r.seconds(10);
+            bool ok = r.ev.size() + 1 >= from + rec.size();   // a pass's worth (one may fall just after)
+            std::vector<int> notes;
+            for (size_t k = from; ok && k < r.ev.size(); ++k) {
+                const size_t i = recordedAt(rec, pass, r.ev[k].at);
+                ok = i < rec.size();
+                if (!ok) break;
+                const int next = loopBase(rec[(i + 1) % rec.size()].note, 4, p, h);
+                const int base = loopBase(rec[i].note, 4, p, h);
+                const int want = loopNote(base, r.ev[k - 1].note, r.ev[k - 2].note, next, candidates(p, h));
+                ok = r.ev[k].note == want;
+                if (!ok) std::printf("  %s: recorded %d, played %d, the rules say %d\n", what, rec[i].note, r.ev[k].note, want);
+                notes.push_back(r.ev[k].note);
+            }
+            all = all && ok;
+            std::sort(notes.begin(), notes.end());
+            std::printf("  %s:", what);
+            for (int n : notes) std::printf(" %d", n);
+            std::printf(" (%zu different) %s\n", static_cast<size_t>(std::unique(notes.begin(), notes.end()) - notes.begin()),
+                        ok ? "yes" : "NO");
+        };
+        std::printf("  recorded at Register 4:");
+        for (const Ev& e : rec) std::printf(" %d", e.note);
+        std::printf("\n");
+        p.registerOct = 6;
+        r.g.set(p, h);
+        follows("Register 6");
+        r.g.setChord(chordOf({65, 69, 72}), true);
+        follows("Register 6, on F");
+        p.rangeOct = 0.5f;
+        r.g.set(p, h);
+        follows("Range 0.5");
+        r.g.setChord(chordOf({67, 71, 74}), true);
+        follows("Range 0.5, on G");
+        CHECK(all);
+    }
+
+    // The seam. Random over three candidates (C minor pentatonic, Register 4, Range 0.5: 60 63 65)
+    // can only go round them, a b c a b ...; four notes recorded (then not generating) are a b c a, a
+    // loop whose last note is its first. Coming round, the first would repeat the note before it: it
+    // goes to the candidate that is neither that one nor the one after it, c (not b, which would make
+    // the next one move in turn, and the next, all the way round), so the loop plays c b c a, pass
+    // after pass, never the note before. A loop of one note replays it as it is.
+    for (size_t n : {4, 1}) {
+        Run r;
+        AirGenPatch p = patchOf(af::AP_RANDOM, 60.0f);
+        p.registerOct = 4;
+        p.rangeOct = 0.5f;
+        p.loopS = 20.0f;
+        p.rubato = 0.0f;
+        p.loop = true;
+        start(r, p, 103, keyOf(0, af::SC_MIN_PENT));
+        r.events(n);
+        r.g.setChord(triadC(), false);
+        r.events(5 * n);   // four passes replayed
+        bool ok = r.ev.size() == 5 * n;
+        if (ok && n == 4) {
+            const int a = r.ev[0].note, b = r.ev[1].note, c = r.ev[2].note, x = 60 + 63 + 65 - a - b;
+            ok = r.ev[3].note == a && a != b && b != c && c != a;   // a b c a
+            for (size_t k = 4; ok && k < r.ev.size(); ++k) ok = r.ev[k].note == (k % 4 == 0 ? x : r.ev[k % 4].note);
+            ok = ok && noRepeats(r.ev, 1);
+        } else if (ok) {
+            for (const Ev& e : r.ev) ok = ok && e.note == r.ev[0].note;
+        }
+        if (!ok)
+            for (const Ev& e : r.ev) std::printf("  %d at %.2f s\n", e.note, e.at / kSr);
+        CHECK(ok);
+        if (n == 4)
+            std::printf("  a loop of %d %d %d %d: replayed as %d %d %d %d, four passes, never the note before: %s\n",
+                        r.ev[0].note, r.ev[1].note, r.ev[2].note, r.ev[3].note, r.ev.size() > 4 ? r.ev[4].note : -1,
+                        r.ev.size() > 5 ? r.ev[5].note : -1, r.ev.size() > 6 ? r.ev[6].note : -1,
+                        r.ev.size() > 7 ? r.ev[7].note : -1, ok ? "yes" : "no");
+        else
+            std::printf("  a loop of one note: the same note each pass: %s\n", ok ? "yes" : "no");
+    }
+}
+
 // --- 10. Notes off; odd input ---------------------------------------------------------------------
 
 void testNotesOff() {
@@ -1312,6 +1560,80 @@ void testOdd() {
                 ok ? "yes" : "no");
 }
 
+// --- 11. a knob turning ---------------------------------------------------------------------------
+
+void testSweeps() {
+    std::printf("== airgen: a knob turning\n");
+    // Air calls set() every block. Range turned from 0.5 to 3 over 10 000 blocks (29 s): the
+    // candidates are worked out again only where the range's top crosses a semitone, 78 to 108, 30
+    // times, not every block; the notes stay in the range as it grows.
+    {
+        Run r;
+        AirGenPatch p = patchOf(af::AP_CONSTELLATION);
+        p.rangeOct = 0.5f;
+        start(r, p, 101);
+        const uint64_t before = r.g.rebuilds();
+        bool inside = true;
+        for (int b = 0; b <= 10000; ++b) {
+            p.rangeOct = 0.5f + 2.5f * static_cast<float>(b) / 10000.0f;
+            r.g.set(p, HarmonyPatch{});
+            const size_t k = r.ev.size();
+            r.step();
+            for (size_t i = k; i < r.ev.size(); ++i)
+                inside = inside && r.ev[i].note >= 72 && r.ev[i].note <= rangeHi(p, HarmonyPatch{});
+        }
+        const uint64_t n = r.g.rebuilds() - before;
+        CHECK(n == 30);
+        CHECK(inside && r.ev.size() >= 15);
+        std::printf("  Range 0.5 -> 3 over 10 000 blocks: the candidates worked out %llu times; %zu notes, all in the "
+                    "range: %s\n",
+                    static_cast<unsigned long long>(n), r.ev.size(), inside ? "yes" : "no");
+    }
+    // Gravity turned from 0 to 1 over 5000 blocks, held, then (Random) back to 0: never. Its weights
+    // are read as notes are drawn, and what is allowed changes only where it crosses 1: there the
+    // motif's notes off the chord move onto it, so every note after is a chord tone; back at 0 the
+    // other tones come again, at their weight's share (7 chord tones of 15 candidates).
+    {
+        Run r;
+        AirGenPatch p = patchOf(af::AP_CONSTELLATION);
+        p.gravity = 0.0f;
+        p.mutate = 0.0f;
+        start(r, p, 107);
+        r.seconds(10);
+        const uint64_t before = r.g.rebuilds();
+        auto isChord = [](int note) { return note % 12 == 0 || note % 12 == 4 || note % 12 == 7; };
+        bool offBefore = false;
+        for (const Ev& e : r.ev) offBefore = offBefore || !isChord(e.note);
+        for (int b = 0; b <= 5000; ++b) {
+            p.gravity = static_cast<float>(b) / 5000.0f;
+            r.g.set(p, HarmonyPatch{});
+            r.step();
+        }
+        const size_t at1 = r.ev.size();
+        r.seconds(30);
+        bool onChord = r.ev.size() >= at1 + 15;
+        for (size_t i = at1; i < r.ev.size(); ++i) onChord = onChord && isChord(r.ev[i].note);
+        p.pattern = af::AP_RANDOM;
+        for (int b = 5000; b >= 0; --b) {
+            p.gravity = static_cast<float>(b) / 5000.0f;
+            r.g.set(p, HarmonyPatch{});
+            r.step();
+        }
+        const size_t at0 = r.ev.size();
+        r.seconds(300);
+        int chord = 0;
+        for (size_t i = at0; i < r.ev.size(); ++i) chord += isChord(r.ev[i].note);
+        const double share = chord / static_cast<double>(r.ev.size() - at0);
+        const uint64_t n = r.g.rebuilds() - before;
+        CHECK(n == 0);
+        CHECK(offBefore && onChord);
+        CHECK(std::fabs(share - 7.0 / 15.0) <= 0.1);
+        std::printf("  Gravity 0 -> 1 -> 0 over 10 000 blocks: the candidates worked out %llu times; at 1 only chord tones "
+                    "(the motif moved onto them) %s; back at 0, chord tones %.0f%% (7 of 15)\n",
+                    static_cast<unsigned long long>(n), onChord ? "yes" : "no", 100 * share);
+    }
+}
+
 } // namespace
 
 void airgenTests() {
@@ -1324,8 +1646,10 @@ void airgenTests() {
     testConstellation();
     testEcho();
     testLoop();
+    testLoopMoves();
     testNotesOff();
     testOdd();
+    testSweeps();
 }
 
 } // namespace aft
