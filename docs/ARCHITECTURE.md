@@ -45,6 +45,7 @@ flowchart LR
 |---|---|
 | `dsp/engine.*` | The engine: Listen routing from the keys and the harmony to Ground and Bloom, the pedal and Hold, Stop, the mix and sends, Space's decay hold, the output (tilt, volume, the guard, the limiter, Stop's fade), idling. Its header is the best single summary of how the instrument behaves |
 | `dsp/harmony.*` | The harmony brain: scales, Input mapping, diatonic chords, voicings, voice leading, the tunings, and the harmony memory (keys and their mapped notes, the current chord, the memory's timer). Also the `Listen` modes every stratum shares |
+| `dsp/airgen.*` | Air's generator: when Air plays and which note. The Poisson clock, the candidates and Gravity (never the last two notes, and how that gives way), Random, Rise, Fall, Constellation with Mutate, Echo of the player's notes, the Loop (record, replay with Rubato, overdub, free or synced to the bar), Rubato's velocity; one random sequence that no setting shifts |
 | `dsp/ground.*` | Ground, the drone: five partials on one table, beating in Hz, Gravity, the root's octave and Register, the fade, Body, Breath, Tone, Width |
 | `dsp/bloom.*` | Bloom, the chord voices: six voices of coupled oscillators, breath, the SVF, the envelope, unison, allocation and owners, the strum, voice-led moves, the tail handoff |
 | `dsp/airvoices.*` | Air's voices: six that ring once struck. Glass, Bowl, Bar and Bell as six decaying complex one-poles each, four to a vector; Kalimba, a Karplus-Strong pluck (an allpass for the period's fraction, the loop low-pass at Tone, a burst of noise); Felt on the Felt Piano table, Age moving as it fades. Allocation and the steal's fade, pans, sleeping |
@@ -76,6 +77,7 @@ flowchart LR
 | `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
 | `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
 | `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `airgen_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
 | `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
@@ -224,7 +226,8 @@ no voices, only its envelopes and starts move on.
 
 **Time** is 64-bit or double wherever it can run for hours: the engine's sample count, the
 harmony's beats, the oscillators' phases (32-bit fixed point, which wraps exactly), the sway's
-phase; Space's quiet counts saturate. Installations run for days.
+phase, Air's clock and its loop's place and passes; Space's quiet counts saturate. Installations
+run for days.
 
 ## Threads and real-time rules
 
@@ -236,7 +239,7 @@ phase; Space's quiet counts saturate. Installations run for days.
 
 - Nothing on the audio thread allocates, locks or throws. Every `dsp/` class allocates in its
   constructor (Space's Reverb buffers, about 870 KB); `render()` and `process()` never do. The
-  harmony keeps its keys in fixed arrays.
+  harmony keeps its keys in fixed arrays, Air's generator its motifs and its loop's recording.
 - Host callbacks happen only from `processReplacing`; never from `setParameter` or the dispatcher.
 - A `try`/`catch` stands between every entry point and MPC: an exception never reaches the host.
 - The patch reaches the audio thread as a snapshot of every parameter (a seqlock: a preset half
