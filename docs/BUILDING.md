@@ -124,8 +124,9 @@ the release is 20 and 40 dB down).
 | `ARM_RUN` | How ARM programs run here (default `qemu-arm -L /usr/arm-linux-gnueabihf`); empty on ARM |
 | `PLUGIN_VERSION` | Release version (default `0.0.1`): the zip's name, its `INSTALL.md` and the catalog manifest; CI sets it from the `vX.Y.Z` tag |
 | `BENCH_ARGS` | `afbench` arguments for `bench-device` (default `-s 3`) |
-| `ICOUNT_QEMU` | A `qemu-arm` built with TCG plugins, for `arm-icount` (default `/home/user/qemu-icount/qemu-arm-plugins`, where the machine M2 was planned on keeps one; see [below](#instruction-counts)) |
-| `ICOUNT_PLUGIN` | qemu's `insn` plugin built with it (default `/home/user/qemu-icount/libinsn.so`) |
+| `ICOUNT_QEMU` | A `qemu-arm` built with TCG plugins, for `arm-icount`: a path, or a name on `PATH` (default `/home/user/qemu-icount/qemu-arm-plugins`, where the machine M2 was planned on keeps one; see [below](#instruction-counts)) |
+| `ICOUNT_PLUGIN` | qemu's `insn` plugin built with it, a path (default `/home/user/qemu-icount/libinsn.so`) |
+| `ICOUNT_SYSROOT` | The ARM libraries `arm-icount` runs its programs with, qemu's `-L` (default `/usr/arm-linux-gnueabihf`, the cross toolchain's) |
 | `PRESET_LUFS` | The loudness `preset-levels` matches the factory presets to (default −16) |
 | `M` | The suite for `test-module` and `test-module-arm` |
 | `HOURS`, `SEED` | How long `soak` plays (default 1 hour), and its random sequence (default 1) |
@@ -221,41 +222,55 @@ the figures are in [Performance](PERFORMANCE.md#instruction-counts). It takes ab
   was trained on the code as it was before the change being measured. The shipped `.so` isn't touched.
 - **`afbench <so> --icount <case> <blocks>`** (the bench, built by `arm-bench`) sets the case up as the
   bench does (a fresh instance, its parameters by index, 2 s played) and plays `<blocks>` more blocks,
-  untimed. It runs under `ICOUNT_QEMU` with `ICOUNT_PLUGIN`, qemu's `insn` plugin, which counts each
-  guest thread's instructions apart and prints them when the program exits (`cpu 0 insns: N`; the
-  main thread is cpu 0).
+  untimed; the timed bench plays a case the same way, through the same function. It runs under
+  `ICOUNT_QEMU` with `ICOUNT_PLUGIN`, qemu's `insn` plugin, which counts instructions per vCPU index,
+  modulo 8, and prints them when the program exits (`cpu 0 insns: N`). In user mode every thread is
+  a vCPU, and a new one takes the index after the highest alive, so cpu 0 is the main thread's alone
+  as long as no thread reaches index 8 (afbench has three alive at most).
 - **Each case runs twice**, 256 and 768 blocks after its 2 s, and its line is the difference over 512:
   what comes before the blocks is the same in both runs and cancels.
 - **Only the main thread is counted, and it only plays.** Some of what comes before the blocks costs
   what the machine makes it cost: the wait for the tables polls `/proc` with a sleep (as the bench
   does), and a parameter set looks for the trace's flag file once a second of wall time. So a helper
   thread loads the plugin, waits for the table builder to go and sets the case up, and the main thread
-  waits for it in one call, however long that takes. Nothing but the main thread runs while the blocks
-  play.
-- **The same stack:** the environment and the arguments are copied onto the main thread's stack and
-  move what lands there (a few instructions a block), so qemu runs with an empty environment
-  (`env -i`) and paths relative to the repository.
+  waits for it in one call, however long that takes. No other thread may be alive while the blocks
+  play, since its work would go uncounted: the helper looks before it goes and the main thread after
+  the blocks, and either fails the run.
+- **The same totals everywhere:** the environment and the arguments are copied onto the main
+  thread's stack and move both runs' counts by hundreds of instructions. That cancels in the
+  difference, but qemu runs with an empty environment (`env -i`) and paths relative to the
+  repository anyway, so a run's total is the same on any machine too.
 - **What is left** is the plugin's CPU meter, which tells the host when its figures change (it looks
   every 0.5 s of audio): a few dozen instructions in a run at most, under 0.1 a block, far under the
   0.1k shown. Its clock's seconds become a double through 32 bits for this: libgcc's conversion of a
   64-bit one returns early for 0, so every block cost less while the audio thread had run under a
   second, and how many blocks that was depended on the machine.
 
-The counts belong to the qemu that made them: another build (another version, another default CPU
-and with it other choices in glibc) counts other figures, so compare counts made with the same one.
-The counts [Performance](PERFORMANCE.md#instruction-counts) had before `arm-icount` came from another
-build, and run 6–12% over this one's for the same code.
+The counts belong to what made them:
+- the qemu: another version, or another default CPU and with it other choices in glibc, counts
+  other figures;
+- the cross compiler (`ARM_CXX`) and the ARM libraries in `ICOUNT_SYSROOT` (glibc, libstdc++,
+  libgcc), which the plugin calls into;
+- the bench itself: its loop is in the main thread's count, and its stack frames decide where the
+  plugin's fall, which can move paths that depend on alignment. Reworking `afbench`'s loop once
+  moved the worst case by 40 instructions a block (0.01%), and idle by 5.
+
+Compare counts made with the same four; `arm-icount` names the first three in its header. The
+counts [Performance](PERFORMANCE.md#instruction-counts) had before `arm-icount` came from another
+qemu build, and ran 7–14% over this one's for the same code.
 
 ### Building the counting qemu
 
 Distributions build qemu without TCG plugins, so `arm-icount` needs one built from source. Without
 one, `make arm-icount` stops before building anything and says where it looked. The defaults were
 built from Ubuntu 24.04's qemu source package, `8.2.2+ds-0ubuntu1.18` (qemu 8.2.2 with Ubuntu's
-patches), like this (apt's `deb-src` lines enabled):
+patches), like this, with apt's `deb-src` lines enabled (Ubuntu 24.04: `Types: deb deb-src` in
+`/etc/apt/sources.list.d/ubuntu.sources`):
 
 ```sh
+sudo apt-get update
 sudo apt-get install -y dpkg-dev build-essential ninja-build meson flex bison pkg-config libglib2.0-dev python3-venv
-apt-get source qemu
+apt-get source qemu=1:8.2.2+ds-0ubuntu1.18
 cd qemu-8.2.2+ds && mkdir build && cd build
 ../configure --target-list=arm-linux-user --enable-plugins --disable-system --disable-tools --disable-docs \
     --disable-werror --without-default-features --enable-tcg --disable-install-blobs
@@ -265,8 +280,9 @@ cp qemu-arm /home/user/qemu-icount/qemu-arm-plugins && cp tests/plugin/libinsn.s
 ```
 
 Elsewhere, set `ICOUNT_QEMU` and `ICOUNT_PLUGIN` (on the command line or in `local.mk`) to where they
-are. Another qemu version works if its `insn` plugin prints a `cpu 0 insns:` line; its figures are
-its own.
+are. Once the archive has moved past that revision, `apt-get source qemu` without the pin builds the
+same way. Another qemu version works if its `insn` plugin prints a `cpu 0 insns:` line; its figures
+are its own.
 
 ## Soak
 

@@ -244,25 +244,31 @@ $(ARM_BENCH): tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN)
 
 # Instruction counts: each bench case's ARM instructions a block, exact and the same on every run,
 # to measure a change between device runs (docs/PERFORMANCE.md#instruction-counts). ICOUNT_QEMU is a
-# qemu-arm built with TCG plugins, ICOUNT_PLUGIN qemu's insn plugin (tests/plugin/insn.c), which
-# counts each guest thread's instructions on its own. The defaults are where the machine M2 was
-# planned on keeps them, built from Ubuntu 24.04's qemu source package (8.2.2+ds-0ubuntu1.18);
-# docs/BUILDING.md#instruction-counts says how to build them.
+# qemu-arm built with TCG plugins (a path, or a name on PATH), ICOUNT_PLUGIN qemu's insn plugin
+# (tests/plugin/insn.c), which counts instructions per vCPU index modulo 8; in user mode every thread
+# is a vCPU, and the main thread is cpu 0. The defaults are where the machine M2 was planned on keeps
+# them, built from Ubuntu 24.04's qemu source package (8.2.2+ds-0ubuntu1.18);
+# docs/BUILDING.md#instruction-counts says how to build them. ICOUNT_SYSROOT: the ARM libraries the
+# programs run with. The counts belong to that qemu, the cross compiler and those libraries.
 # The plugin is the plain build, the device's flags without the profile: the profile was trained on
 # the code as it was before the change being measured. Every case runs twice, 256 and 768 blocks after
 # its 2 s, counting the main thread only, which does nothing but play (afbench --icount): everything
-# before the blocks is the same in both runs, so the difference is 512 blocks' instructions. env -i:
-# the environment is copied onto the program's stack and would move what lands there with it (a few
-# instructions a block); the arguments too, so their paths are relative to the repository.
-ICOUNT_QEMU   ?= /home/user/qemu-icount/qemu-arm-plugins
-ICOUNT_PLUGIN ?= /home/user/qemu-icount/libinsn.so
-ICOUNT_RUN     = env -i $(ICOUNT_QEMU) -L /usr/arm-linux-gnueabihf -plugin $(ICOUNT_PLUGIN) -d plugin
-ARM_SO_PLAIN  := $(BUILD)/arm-plain/ambientforce.so
-ICOUNT_LOG    := $(BUILD)/arm-plain/icount.log
+# before the blocks is the same in both runs, so the difference is 512 blocks' instructions. env -i,
+# and paths relative to the repository: the environment and the arguments are copied onto the
+# program's stack and move both runs' counts by hundreds of instructions. That cancels, but this way
+# the totals match from one machine to the next too.
+ICOUNT_QEMU    ?= /home/user/qemu-icount/qemu-arm-plugins
+ICOUNT_PLUGIN  ?= /home/user/qemu-icount/libinsn.so
+ICOUNT_SYSROOT ?= /usr/arm-linux-gnueabihf
+ICOUNT_RUN      = env -i $(ICOUNT_BIN) -L $(ICOUNT_SYSROOT) -plugin $(ICOUNT_PLUGIN) -d plugin
+ARM_SO_PLAIN   := $(BUILD)/arm-plain/ambientforce.so
+ICOUNT_LOG     := $(BUILD)/arm-plain/icount.log
 
-# Checked before anything is built: without them there is nothing to count with.
+# Checked before anything is built: without them there is nothing to count with. ICOUNT_BIN is the
+# qemu's path (env -i leaves no PATH to find it on).
 ifneq ($(filter arm-icount,$(MAKECMDGOALS)),)
-ifneq ($(shell [ -x '$(ICOUNT_QEMU)' ] && echo y),y)
+ICOUNT_BIN := $(shell p=$$(command -v '$(ICOUNT_QEMU)') && [ -x "$$p" ] && echo "$$p")
+ifeq ($(ICOUNT_BIN),)
 $(error arm-icount: no qemu-arm with TCG plugins at ICOUNT_QEMU=$(ICOUNT_QEMU). Build one from qemu's source with --enable-plugins (docs/BUILDING.md#instruction-counts) or set ICOUNT_QEMU to yours)
 endif
 ifneq ($(shell [ -f '$(ICOUNT_PLUGIN)' ] && echo y),y)
@@ -276,11 +282,12 @@ $(ARM_SO_PLAIN): $(SRC) $(HDR) $(GEN) plugin/exports.map $(ARM_SO_STAMP)
 
 arm-icount: $(ARM_SO_PLAIN) $(ARM_BENCH)
 	@echo "ARM instructions a block, in thousands: $(ARM_SO_PLAIN) (the device's flags, no profile)"
+	@echo "  built by $$($(ARM_CXX) --version | head -1), run with $(ICOUNT_SYSROOT)'s libraries"
 	@echo "  counted by $(ICOUNT_PLUGIN), the main thread at 768 blocks less at 256, over 512,"
-	@echo "  under $(ICOUNT_QEMU): $$($(ICOUNT_QEMU) --version | head -1)"
+	@echo "  under $(ICOUNT_BIN): $$($(ICOUNT_BIN) --version | head -1)"
 	@echo "  (the default is built from Ubuntu 24.04's qemu source package 8.2.2+ds-0ubuntu1.18 with TCG plugins:"
-	@echo "  docs/BUILDING.md#instruction-counts)"
-	@$(ICOUNT_QEMU) -L /usr/arm-linux-gnueabihf $(ARM_BENCH) --cases > $(ICOUNT_LOG).cases
+	@echo "  docs/BUILDING.md#instruction-counts); counts compare only with the same qemu, compiler and libraries"
+	@$(ICOUNT_BIN) -L $(ICOUNT_SYSROOT) $(ARM_BENCH) --cases > $(ICOUNT_LOG).cases
 	@while IFS= read -r c; do \
 		for n in 256 768; do \
 			$(ICOUNT_RUN) $(ARM_BENCH) $(ARM_SO_PLAIN) --icount "$$c" $$n > $(ICOUNT_LOG) 2>&1 || \

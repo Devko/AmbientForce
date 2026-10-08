@@ -38,18 +38,23 @@
 // each case's time goes, in us per block: Ground, Bloom, Space and the output (dsp/stages.h).
 //
 // --icount is make arm-icount's half. It runs under a qemu-arm with TCG plugins, whose insn plugin
-// counts each guest thread's instructions on its own, and plays the case untimed, its 2 s and then
-// <blocks> more, printing nothing unless something fails. The count that matters is the main
-// thread's, and the main thread only plays. Everything whose instructions depend on the machine runs
-// on a helper thread that main joins: the dlopen, the wait for the tables (it polls /proc with a
-// sleep, so how often it looks depends on the machine's speed), opening the case's instance and
-// setting its parameters (a parameter set looks for the trace's flag file once a second of wall
-// time). The main thread's count is then the same on every run, but for a few dozen instructions at
-// most: the plugin's CPU meter tells the host when its figures change, looking every 0.5 s of audio.
-// The environment and the arguments go on the main thread's stack and move what lands there, so
-// make arm-icount runs this with an empty environment and paths relative to the repository. Two
-// runs that play different numbers of blocks then differ by those blocks: make arm-icount plays 256
-// and 768 and divides the difference by 512. --cases lists the cases, one a line, for it.
+// counts instructions per vCPU index, modulo 8. In user mode every thread is a vCPU, and a new one
+// takes the index after the highest alive, so cpu 0 is the main thread's alone as long as no thread
+// gets index 8 (afbench has three at most: main, the helper below, the table builder). It plays the
+// case untimed (playCase, as the timed bench does), its 2 s and then <blocks> more, printing nothing
+// unless something fails. The count that matters is the main thread's, and the main thread only
+// plays. Everything whose instructions depend on the machine runs on a helper thread that main joins:
+// the dlopen, the wait for the tables (it polls /proc with a sleep, so how often it looks depends on
+// the machine's speed), opening the case's instance and setting its parameters (a parameter set looks
+// for the trace's flag file once a second of wall time). A thread of the plugin's alive while the
+// blocks play would go uncounted, so there may be none: the helper looks before it goes, and main
+// after the blocks. The main thread's count is then the same on every run, but for a few dozen
+// instructions at most: the plugin's CPU meter tells the host when its figures change, looking every
+// 0.5 s of audio. Two runs that play different numbers of blocks differ by those blocks: make
+// arm-icount plays 256 and 768 and divides the difference by 512. The environment and the arguments
+// move both runs' counts alike, by hundreds of instructions; make arm-icount gives them an empty
+// environment and paths relative to the repository, so the totals match from one machine to the next
+// too. --cases lists the cases, one a line, for it.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -58,6 +63,8 @@
 #include "param_ids.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -109,6 +116,16 @@ int threads() {
         if (t->d_name[0] != '.') ++n;
     closedir(d);
     return n;
+}
+
+// A whole number, all of s and in an int's range: false for "", "10abc" or "1e3".
+bool number(const char* s, int& v) {
+    char* end = nullptr;
+    errno = 0;
+    const long long n = std::strtoll(s, &end, 10);
+    if (end == s || *end || errno || n < INT_MIN || n > INT_MAX) return false;
+    v = static_cast<int>(n);
+    return true;
 }
 
 void midi(AEffect* e, uint8_t st, uint8_t d1, uint8_t d2) {
@@ -213,13 +230,32 @@ void keys(AEffect* e, int c, int chord, bool down) {
         for (uint8_t k : kSix[chord]) midi(e, st, k, vel);
 }
 
-// Before block b (from -kWarmBlocks, the first of the 2 s): the worst case lets its six keys go for
-// the other six every kRestrikeBlocks.
-void restrike(AEffect* e, int c, int b, int& chord) {
-    if (c == C_WORST && b > -kWarmBlocks && (b + kWarmBlocks) % kRestrikeBlocks == 0) {
-        keys(e, c, chord, false);
-        chord ^= 1;
-        keys(e, c, chord, true);
+// Case c's instance, set up through its parameters: the host's side of a case.
+AEffect* openCase(void* lib, int c) {
+    AEffect* e = openPlugin(lib);
+    setUp(e, c);
+    return e;
+}
+
+// Plays case c on its instance: its keys, the 2 s (kWarmBlocks) and then `blocks` more, the worst
+// case letting its six keys go for the other six before every kRestrikeBlocks-th block. Each block
+// is block(b, render), b counted from -kWarmBlocks, which calls render() once: the timed bench times
+// it, --icount only renders. The one way to play a case, so the counts and the timings are always of
+// the same thing.
+template <class Block>
+void playCase(AEffect* e, int c, int blocks, Block&& block) {
+    std::vector<float> L(kBlock), R(kBlock);
+    float* out[2] = {L.data(), R.data()};
+    const auto render = [e, &out] { e->processReplacing(e, nullptr, out, kBlock); };
+    if (c != C_IDLE) keys(e, c, 0, true);
+    int chord = 0;
+    for (int b = -kWarmBlocks; b < blocks; ++b) {
+        if (c == C_WORST && b > -kWarmBlocks && (b + kWarmBlocks) % kRestrikeBlocks == 0) {
+            keys(e, c, chord, false);
+            chord ^= 1;
+            keys(e, c, chord, true);
+        }
+        block(b, render);
     }
 }
 
@@ -228,25 +264,19 @@ struct Result { double avg, p99, max; };
 using StageFn = int (*)(double*, const char**, int);
 
 Result runCase(void* lib, int seconds, int c, StageFn stages) {
-    AEffect* e = openPlugin(lib);
-    setUp(e, c);
-    std::vector<float> L(kBlock), R(kBlock);
-    float* out[2] = {L.data(), R.data()};
-    if (c != C_IDLE) keys(e, c, 0, true);
+    AEffect* e = openCase(lib, c);
     const int blocks = seconds * static_cast<int>(kRate) / kBlock;
     std::vector<double> t(static_cast<size_t>(blocks));
-    int chord = 0;
-    for (int b = -kWarmBlocks; b < blocks; ++b) {
-        restrike(e, c, b, chord);
+    playCase(e, c, blocks, [&](int b, const auto& render) {
         if (b == 0 && stages) {   // the stage counters start over here: only the timed blocks count
             double us[8];
             const char* names[8];
             stages(us, names, 8);
         }
         const double t0 = cpuUs();
-        e->processReplacing(e, nullptr, out, kBlock);
+        render();
         if (b >= 0) t[static_cast<size_t>(b)] = cpuUs() - t0;
-    }
+    });
     e->dispatcher(e, vst::effClose, 0, 0, nullptr, 0.0f);
     std::vector<double> s = t;
     std::sort(s.begin(), s.end());
@@ -261,31 +291,38 @@ Result runCase(void* lib, int seconds, int c, StageFn stages) {
 
 // --icount: case c played for its 2 s and then `blocks` blocks on the main thread, and nothing else
 // there (the header says why). A helper thread, standing in for the host's own threads, loads the
-// plugin, waits for the tables and sets the case up; main joins it and plays. 0 when all went well.
+// plugin, waits for the tables and opens the case; main joins it and plays. No thread but main may
+// be alive while the blocks play (a loader thread, say), since only main's count is read: the
+// helper looks once the builder has gone, main once the blocks are over (sooner would race the
+// helper's own exit, and waiting it out would make main's count depend on the machine again). 0
+// when all went well.
 int icount(const char* so, int c, int blocks) {
     void* lib = nullptr;
     AEffect* e = nullptr;
+    int alone = -1;   // the process's threads with main and the helper alone (qemu's own count too)
     bool ok = false;
+    const char* const others = "  FAIL: a thread besides main is alive while the blocks play: what it does goes uncounted\n";
     std::thread host([&] {
+        alone = threads();
         lib = dlopen(so, RTLD_NOW | RTLD_LOCAL);
         if (!lib) {
             std::fprintf(stderr, "dlopen: %s\n", dlerror());
             return;
         }
         ok = waitForTables(lib, true);
-        e = openPlugin(lib);
-        setUp(e, c);
+        e = openCase(lib, c);
+        if (ok && threads() != alone) {
+            std::printf("%s", others);
+            ok = false;
+        }
     });
     host.join();
-    if (!ok) return 1;   // the count would be over the sine fallback, or with the builder in it
+    if (!ok) return 1;   // the count would be over the sine fallback, or miss a thread's work
 
-    std::vector<float> L(kBlock), R(kBlock);
-    float* out[2] = {L.data(), R.data()};
-    if (c != C_IDLE) keys(e, c, 0, true);
-    int chord = 0;
-    for (int b = -kWarmBlocks; b < blocks; ++b) {
-        restrike(e, c, b, chord);
-        e->processReplacing(e, nullptr, out, kBlock);
+    playCase(e, c, blocks, [](int, const auto& render) { render(); });
+    if (threads() != alone - 1) {   // the helper gone, and nothing else
+        std::printf("%s", others);
+        return 1;
     }
     e->dispatcher(e, vst::effClose, 0, 0, nullptr, 0.0f);
     dlclose(lib);
@@ -299,27 +336,28 @@ int main(int argc, char** argv) {
         for (const char* name : kCaseNames) std::printf("%s\n", name);
         return 0;
     }
-    if (argc < 2) {
+    const auto usage = [argv] {
         std::fprintf(stderr, "usage: %s <plugin.so> [-s seconds] [-c cpu]\n"
-                             "       %s <plugin.so> --icount <case> <blocks>\n"
-                             "       %s --cases\n", argv[0], argv[0], argv[0]);
+                             "       %s <plugin.so> --icount <case> <blocks>   (blocks >= 1)\n"
+                             "       %s --cases                                (the cases' names)\n", argv[0], argv[0], argv[0]);
         return 2;
-    }
+    };
+    if (argc < 2) return usage();
+    // Anything else fails rather than being let go: a mistyped --icount would run the timed bench.
     int counted = -1, countBlocks = 0;   // --icount: the case and how many blocks after its 2 s
+    int seconds = 3, cpu = 1;
     if (argc > 2 && !std::strcmp(argv[2], "--icount")) {
         for (int c = 0; argc == 5 && c < C_COUNT; ++c)
             if (!std::strcmp(argv[3], kCaseNames[c])) counted = c;
-        countBlocks = argc == 5 ? std::atoi(argv[4]) : 0;
-        if (counted < 0 || countBlocks < 1) {
-            std::fprintf(stderr, "usage: %s <plugin.so> --icount <case> <blocks>, blocks >= 1 (%s --cases lists the cases)\n",
-                         argv[0], argv[0]);
-            return 2;
+        if (counted < 0 || !number(argv[4], countBlocks) || countBlocks < 1) return usage();
+    } else {
+        for (int i = 2; i < argc; i += 2) {
+            int v = 0;
+            if (i + 1 == argc || !number(argv[i + 1], v)) return usage();
+            if (!std::strcmp(argv[i], "-s")) seconds = std::max(1, v);
+            else if (!std::strcmp(argv[i], "-c")) cpu = v;
+            else return usage();
         }
-    }
-    int seconds = 3, cpu = 1;
-    for (int i = 2; counted < 0 && i + 1 < argc; i += 2) {
-        if (!std::strcmp(argv[i], "-s")) seconds = std::max(1, std::atoi(argv[i + 1]));
-        else if (!std::strcmp(argv[i], "-c")) cpu = std::atoi(argv[i + 1]);
     }
     if (cpu >= 0 && counted < 0) {   // -c -1: don't pin (x86 runs, CI)
         cpu_set_t set;
