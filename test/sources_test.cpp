@@ -51,35 +51,60 @@
 #include <unordered_set>
 #include <vector>
 
-#if defined(__SANITIZE_ADDRESS__)
-// The sanitizer runtime's (sanitizer/allocator_interface.h, which GCC doesn't install): hooks its
-// allocator calls on every allocation and free.
-extern "C" int __sanitizer_install_malloc_and_free_hooks(void (*malloc_hook)(const volatile void*, size_t),
-                                                         void (*free_hook)(const volatile void*));
-#define SOURCES_COUNTS_ALLOCS 1
-#endif
-
 // An allocation that fails on request, for the out-of-memory cases: once armed (t_skip >= 0) a thread's
-// next allocation of 24 bytes or more, after `t_skip` of them have been let through, throws bad_alloc.
-// This replaces operator new for the whole test binary; unarmed it is malloc.
+// next allocation of 24 bytes or more, after `t_skip` of them have been let through, throws bad_alloc
+// (the nothrow forms return nullptr). This replaces operator new for the whole test binary; unarmed it is
+// malloc. Every form that is paired with a delete is replaced, the nothrow and array ones too: a block the
+// sanitizer's own nothrow new made, freed by a replaced delete (std::stable_sort's buffer is one), aborts the
+// run (alloc-dealloc-mismatch). The over-aligned forms are left to the sanitizer, both new and delete.
 namespace sources_oom {
 thread_local int t_skip = -1;
 std::atomic<int> g_thrown{0};
 }
 void* operator new(std::size_t n) {
-    if (sources_oom::t_skip >= 0 && n >= 24) {
-        if (sources_oom::t_skip == 0) {
-            sources_oom::t_skip = -1;
-            ++sources_oom::g_thrown;
-            throw std::bad_alloc();
+    for (;;) {
+        if (sources_oom::t_skip >= 0 && n >= 24) {
+            if (sources_oom::t_skip == 0) {
+                sources_oom::t_skip = -1;
+                ++sources_oom::g_thrown;
+                throw std::bad_alloc();
+            }
+            --sources_oom::t_skip;
         }
-        --sources_oom::t_skip;
+        if (void* p = std::malloc(n ? n : 1)) return p;
+        const std::new_handler handler = std::get_new_handler();
+        if (!handler) throw std::bad_alloc();
+        handler();
     }
-    if (void* p = std::malloc(n ? n : 1)) return p;
-    throw std::bad_alloc();
 }
+void* operator new[](std::size_t n) { return operator new(n); }
+void* operator new(std::size_t n, const std::nothrow_t&) noexcept {
+    try {
+        return operator new(n);
+    } catch (...) {
+        return nullptr;
+    }
+}
+void* operator new[](std::size_t n, const std::nothrow_t&) noexcept {
+    try {
+        return operator new(n);
+    } catch (...) {
+        return nullptr;
+    }
+}
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"   // (a replaced delete is what frees a replaced new's memory)
+#endif
 void operator delete(void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { ::operator delete(p); }
+void operator delete(void* p, std::size_t) noexcept { ::operator delete(p); }
+void operator delete[](void* p, std::size_t) noexcept { ::operator delete(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { ::operator delete(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { ::operator delete(p); }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace aft {
 namespace {
@@ -122,11 +147,7 @@ const std::string& dir() {
     return d;
 }
 
-#if SOURCES_COUNTS_ALLOCS
-constexpr bool kCountsAllocs = true;
-#else
-constexpr bool kCountsAllocs = false;
-#endif
+constexpr bool kCountsAllocs = AFT_COUNTS_ALLOCS != 0;
 // The waits are for the worker to get something done; the same work under qemu (no ASan, test-arm) takes
 // a good deal longer than on x86, so a wait that gives up gives up later there.
 constexpr int kSlow = kCountsAllocs ? 1 : 10;
@@ -149,32 +170,21 @@ bool writeBytes(const std::string& path, const Bytes& b) {
     return static_cast<bool>(f);
 }
 
-#if SOURCES_COUNTS_ALLOCS
-// ASan calls these on every allocation; only the test's own thread, while tracking, is looked at.
-thread_local bool t_tracking = false;
-size_t g_biggest = 0;
-void onMalloc(const volatile void*, size_t size) {
-    if (t_tracking) g_biggest = std::max(g_biggest, size);
-}
-void onFree(const volatile void*) {}
-#endif
 struct Track {   // the largest single allocation made while this lives (0 without ASan)
     Track() {
-#if SOURCES_COUNTS_ALLOCS
-        static const bool hooked = __sanitizer_install_malloc_and_free_hooks(onMalloc, onFree) != 0;
-        (void)hooked;
-        g_biggest = 0;
-        t_tracking = true;
+#if AFT_COUNTS_ALLOCS
+        hookAllocations();
+        trackBiggestAllocation();
 #endif
     }
     ~Track() {
-#if SOURCES_COUNTS_ALLOCS
-        t_tracking = false;
+#if AFT_COUNTS_ALLOCS
+        stopTrackingBiggest();
 #endif
     }
     size_t biggest() const {
-#if SOURCES_COUNTS_ALLOCS
-        return g_biggest;
+#if AFT_COUNTS_ALLOCS
+        return g_biggestAlloc;
 #else
         return 0;
 #endif
@@ -1596,14 +1606,16 @@ struct GState {
 };
 static_assert(sizeof(GState) == 43, "no padding: the state is compared and hashed as bytes");
 
-struct GHash {
-    size_t operator()(const GState& g) const {
-        uint64_t h = 1469598103934665603ull;
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&g);
-        for (size_t i = 0; i < sizeof g; ++i) h = (h ^ b[i]) * 1099511628211ull;
-        return static_cast<size_t>(h);
-    }
-};
+// A state is remembered by a 64-bit hash of its bytes (FNV-1a, then a mixer): a collision, a chance of about
+// states^2 / 2^65 ~ 1e-7 at a million, could only hide a state, never invent a bug.
+uint64_t hashOf(const GState& g) {
+    uint64_t h = 1469598103934665603ull;
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(&g);
+    for (size_t i = 0; i < sizeof g; ++i) h = (h ^ b[i]) * 1099511628211ull;
+    h ^= h >> 32;
+    h *= 0x9E3779B97F4A7C15ull;
+    return h ^ (h >> 29);
+}
 
 enum GVariant { GV_RULE, GV_HOLDS_IGNORED, GV_NO_PLUS_ONE, GV_SEEN_NO_E0, GV_SEEN_ONLY_AFTER };
 
@@ -1620,12 +1632,12 @@ bool neverSeen(int v, const GState& st, uint8_t o, uint8_t n) {
 
 // True if a bug is found; `states` the number of states visited.
 bool explore(int v, int maxBlocks, int maxSwaps, int maxChecks, size_t* states) {
-    std::unordered_set<GState, GHash> seen;
+    std::unordered_set<uint64_t> seen;
     std::vector<GState> stack{GState{}};
     while (!stack.empty()) {
         const GState st = stack.back();
         stack.pop_back();
-        if (!seen.insert(st).second) continue;
+        if (!seen.insert(hashOf(st)).second) continue;
         const auto go = [&](GState n) { stack.push_back(n); };
         // The audio thread.
         switch (st.apc) {
@@ -1752,17 +1764,20 @@ void testGraveModel() {
     std::printf("== sources: the graveyard's rule over every interleaving\n");
     size_t states = 0;
     const auto t0 = Clock::now();
-    const bool bug = explore(GV_RULE, 2, 3, 2, &states);
+    // x86 under ASan explores 3 blocks, 3 swaps and 3 checks (about a million states); qemu, where the same
+    // work takes twenty times as long, the smaller 2, 3 and 2.
+    const int blocks = kCountsAllocs ? 3 : 2, checks = kCountsAllocs ? 3 : 2;
+    const bool bug = explore(GV_RULE, blocks, 3, checks, &states);
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     std::printf("  the rule: %zu states, %s (%.0f ms)\n", states, bug ? "A BUG" : "no read of a freed object", ms);
-    CHECK(!bug && states > 50000);
+    CHECK(!bug && states > 100000);
     // The model finds the bugs of weaker rules: PolyForce's (the audio side holding nothing between blocks,
     // so it frees when none runs), a count short by one, and a never-seen rule that forgets a block running
     // as the object went in, or one that started before it.
     const char* names[] = {"", "holds ignored", "no +1", "never seen, ignoring a block running at the store", "never seen, ignoring blocks before the store"};
     for (int v = GV_HOLDS_IGNORED; v <= GV_SEEN_ONLY_AFTER; ++v) {
         size_t n = 0;
-        const bool found = explore(v, 2, 3, 2, &n);
+        const bool found = explore(v, blocks, 3, checks, &n);
         std::printf("  %s: %s after %zu states\n", names[v], found ? "a read of a freed object" : "NOT FOUND", n);
         CHECK(found);
     }
@@ -1806,6 +1821,47 @@ void testPublishOom() {
     CHECK(!freed0.load());                                 // still there for the block running
     L.blockDone(false);
     CHECK(until([&] { return freed0.load(); }));
+}
+
+// The replaced operator new in its other forms. std::stable_sort, stable_partition and inplace_merge take
+// their buffer with new(nothrow) and free it with delete: with the nothrow form left to the sanitizer, the
+// replaced delete freed memory the sanitizer had allocated, and the run aborted (alloc-dealloc-mismatch).
+void testAllocatorForms() {
+    std::printf("== sources: the replaced operator new, in every form\n");
+    std::vector<int> v(5000);
+    uint32_t s = 5;
+    const auto fill = [&] {
+        for (int& x : v) {
+            s = s * 1664525u + 1013904223u;
+            x = static_cast<int>(s >> 12);
+        }
+    };
+    fill();
+    std::stable_sort(v.begin(), v.end());
+    CHECK(std::is_sorted(v.begin(), v.end()));
+    fill();
+    const auto odd = [](int x) { return (x & 1) != 0; };
+    const auto mid = std::stable_partition(v.begin(), v.end(), odd);
+    CHECK(std::all_of(v.begin(), mid, odd) && std::none_of(mid, v.end(), odd));
+    fill();
+    std::sort(v.begin(), v.begin() + 2500);
+    std::sort(v.begin() + 2500, v.end());
+    std::inplace_merge(v.begin(), v.begin() + 2500, v.end());
+    CHECK(std::is_sorted(v.begin(), v.end()));
+    int* a = new int[10];
+    delete[] a;
+    int* b = new (std::nothrow) int(3);
+    delete b;
+    int* c = new (std::nothrow) int[4];
+    delete[] c;
+    std::string* d = new std::string(100, 'x');
+    delete d;
+    // The nothrow forms say no, as they should, when the allocation fails.
+    sources_oom::t_skip = 0;
+    int* e = new (std::nothrow) int[100];
+    sources_oom::t_skip = -1;
+    CHECK(e == nullptr);
+    delete[] e;
 }
 
 // An allocation that fails while a source is being made is a failed load, not an exception out of
@@ -2299,6 +2355,76 @@ int wavFiles(const std::string& folder) {
     return n;
 }
 
+// Keep's numbers when the folder's note or the names are not what Keep wrote: a note of 99999999 once
+// made the next Keep "Memory 100000000.wav", which the listing of the next could not read back, and after
+// a hundred more every Keep failed. And an empty file a crash left is cleared away, not counted for ever.
+void testKeepNumbers() {
+    std::printf("== sources: Keep's numbers\n");
+    const std::string plug = dir() + "/keepnum/plugin", ssd = dir() + "/keepnum/ssd";
+    fs::create_directories(plug);
+    fs::create_directories(ssd);
+    useRoots(plug, ssd);
+    const std::string folder = ssd + "/AmbientForce/Memories", prefix = "ssd:AmbientForce/Memories/";
+    auto mem = remembered(1.0);
+    std::string err;
+    const auto note = [&](const char* text) { std::ofstream(folder + "/.last") << text; };
+    const auto name = [&](int n) {
+        char b[32];
+        std::snprintf(b, sizeof b, "Memory %03d.wav", n);
+        return prefix + b;
+    };
+    CHECK(keepMemory(*mem, &err) == name(1));
+    int next = 2;
+    for (const char* text : {"99999999", "5000000", "1000000", "-3", "abc", "", "0", "999999999999999999999"}) {
+        note(text);
+        const std::string key = keepMemory(*mem, &err);
+        CHECK(key == name(next));   // the note is not a number of ours: the files say where we are
+        if (key != name(next)) std::printf("  note \"%s\": %s\n", text, key.c_str());
+        ++next;
+    }
+    // Names with a number too long to be ours don't count either (the listing would not read them back).
+    makeWav(folder + "/Memory 1234567.wav", 100);
+    makeWav(folder + "/Memory 99999999999999999999.wav", 100);
+    CHECK(keepMemory(*mem, &err) == name(next));
+    ++next;
+    // The largest numbers: six digits, and then no more.
+    note("999997");
+    CHECK(keepMemory(*mem, &err) == name(999998));
+    CHECK(keepMemory(*mem, &err) == name(999999));
+    const int files = wavFiles(folder);
+    CHECK(keepMemory(*mem, &err).empty() && err == "too many memories");
+    CHECK(wavFiles(folder) == files);
+    CHECK(contains(sourceKeys(), name(999999)));
+
+    // An empty Memory file more than a minute old is what a crash between the claim and the write leaves:
+    // it goes at the next Keep, its number not used again; a younger one may be another Keep's, and a file
+    // with something in it is the user's, however old.
+    const std::string plug2 = dir() + "/keepnum2/plugin", ssd2 = dir() + "/keepnum2/ssd";
+    fs::create_directories(plug2);
+    fs::create_directories(ssd2);
+    useRoots(plug2, ssd2);
+    const std::string folder2 = ssd2 + "/AmbientForce/Memories";
+    fs::create_directories(folder2);
+    const auto plant = [&](const char* file, bool empty, int ageSeconds) {
+        const std::string p = folder2 + "/" + file;
+        if (empty) {
+            std::ofstream f(p);   // created, nothing in it
+        } else {
+            makeWav(p, 100);
+        }
+        fs::last_write_time(p, fs::file_time_type::clock::now() - std::chrono::seconds(ageSeconds));
+    };
+    plant("Memory 010.wav", true, 120);   // a crash's
+    plant("Memory 011.wav", true, 5);     // another Keep's, perhaps
+    plant("Memory 020.wav", false, 7200); // the user's
+    CHECK(keepMemory(*mem, &err) == name(21));
+    CHECK(!fs::exists(folder2 + "/Memory 010.wav"));
+    CHECK(fs::exists(folder2 + "/Memory 011.wav") && fs::exists(folder2 + "/Memory 020.wav"));
+    fs::remove(folder2 + "/Memory 021.wav");
+    CHECK(keepMemory(*mem, &err) == name(22));   // 21 was used: not again
+    useRoots(plug2, ssd2);
+}
+
 void testKeep() {
     std::printf("== sources: Keep\n");
     const std::string plug = dir() + "/keep/plugin", ssd = dir() + "/keep/ssd";
@@ -2579,6 +2705,7 @@ void sourcesTests() {
     testLoaderStates();
     testGraveyard();
     testGraveModel();
+    testAllocatorForms();
     testPublishOom();
     testLoadOom();
     testPost();
@@ -2586,6 +2713,7 @@ void sourcesTests() {
     testSourceSlot();
     testStale();
     testKeep();
+    testKeepNumbers();
     if (old) setenv("AF_SOURCE_ROOTS", saved.c_str(), 1);
     else unsetenv("AF_SOURCE_ROOTS");
     rescanSources();

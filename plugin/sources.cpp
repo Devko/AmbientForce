@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <mutex>
@@ -127,39 +128,64 @@ FileStamp stampOf(const std::string& path) {
     return s;
 }
 
+constexpr int kMaxMemory = 999999;   // numbers stay within six digits; the name has three at least ("Memory 007.wav")
+constexpr auto kStaleClaim = std::chrono::minutes(1);
+
+// "Memory 123.wav" is 123; anything else (another name, a number over kMaxMemory, one too long to be ours) is 0.
+int memoryNumber(const std::string& name) {
+    if (name.compare(0, 7, "Memory ") != 0 || name.size() < 12 || !std::isdigit(static_cast<unsigned char>(name[7]))) return 0;
+    char* end = nullptr;
+    const long n = std::strtol(name.c_str() + 7, &end, 10);
+    if (std::strcmp(end, ".wav") != 0 || n < 1 || n > kMaxMemory) return 0;
+    return static_cast<int>(n);
+}
+
 // The next Memory number: one past the highest ever used, the files there and the folder's own note
 // of the last one kept (.last, hidden from the listing), so a deleted "Memory 007" is never used
 // again: a project or preset that named it shows MISSING, not another recording (the presets' rule,
-// plugin/presets.cpp's nextUserPreset). The name is claimed by creating it, exclusively. 0 with
-// *err if the folder can't be written.
+// plugin/presets.cpp's nextUserPreset). The name is claimed by creating it, exclusively. A number
+// that is not a number of ours (over six digits, or the note holding something else) is not counted:
+// it could only be a name the next listing could not read back. An empty Memory file more than a
+// minute old is what a crash between the claim and the write leaves, and goes (its number is
+// counted, and not used again); a younger one may be another Keep's. 0 with *err if no number can
+// be claimed.
 int claimMemory(const std::string& dir, std::string* path, std::string* name, std::string* err) {
     int top = 0;
+    std::vector<fs::path> stale;
     std::error_code ec;
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        int n = 0;
-        char tail[8] = {};
-        // %8d: a huge number in a file name can't overflow n, or top + 100 below.
-        if (std::sscanf(it->path().filename().string().c_str(), "Memory %8d.wa%1s", &n, tail) == 2 && tail[0] == 'v' && n > 0)
-            top = std::max(top, n);
+        const int n = memoryNumber(it->path().filename().string());
+        if (n == 0) continue;
+        top = std::max(top, n);
+        std::error_code fe;
+        if (it->is_regular_file(fe) && it->file_size(fe) == 0 && !fe) {
+            const auto age = fs::file_time_type::clock::now() - it->last_write_time(fe);
+            if (!fe && age > kStaleClaim) stale.push_back(it->path());
+        }
     }
+    for (const fs::path& p : stale) fs::remove(p, ec);
     std::string last;
-    if (readFile(dir + "/.last", last, 64)) top = std::max(top, std::min(std::max(std::atoi(last.c_str()), 0), 99999999));
+    if (readFile(dir + "/.last", last, 64)) {
+        const long v = std::strtol(last.c_str(), nullptr, 10);
+        if (v >= 1 && v <= kMaxMemory) top = std::max(top, static_cast<int>(v));
+    }
     if (g_keepHook) g_keepHook(g_keepCtx, KS_NUMBERED);
-    for (int n = top + 1; n < top + 100; ++n) {
+    for (int n = top + 1; n <= kMaxMemory; ++n) {
         char buf[32];
         std::snprintf(buf, sizeof buf, "Memory %03d.wav", n);
         const std::string p = dir + "/" + buf;
         const int fd = ::open(p.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
         if (fd < 0) {
             if (errno == EEXIST) continue;   // taken since the listing
-            break;                          // the folder can't be written: the next number won't do either
+            if (err) *err = "cannot write the Memories folder";   // the next number won't do either
+            return 0;
         }
         ::close(fd);
         *path = p;
         *name = buf;
         return n;
     }
-    if (err) *err = "cannot write the Memories folder";
+    if (err) *err = "too many memories";
     return 0;
 }
 

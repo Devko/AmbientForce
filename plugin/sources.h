@@ -65,7 +65,10 @@ inline const GrainSource* sourceOf(const void* live) {
 // down for headroom; the file has that back, clamped). NNN is one past the highest number ever used
 // (001 the first): never a deleted file's, as the user presets do, so a project or preset that
 // named one shows MISSING rather than playing another recording; the folder's hidden .last keeps
-// the highest, and the name is claimed by creating it exclusively. Its key, or "" with *err:
+// the highest, and the name is claimed by creating it exclusively. Numbers run to 999999 (then "too
+// many memories"); a note or a name holding a number over that is not counted, so a damaged note
+// can't make names the listing could not read back. An empty Memory file over a minute old, what
+// a crash between the claim and the write leaves, is cleared at the next Keep. Its key, or "" with *err:
 // nothing remembered, no SSD (its root must exist: the folders under it are made), a folder or
 // file that can't be written. Call it from the loader's thread (Loader::post): it reads and writes
 // the disk. The ring is pinned while it is copied and let go before the write (the SSD's, which can
