@@ -248,7 +248,7 @@ void Weather::set(const WeatherPatch& p, const HarmonyPatch& h) {
     const int key = ((h.key % 12) + 12) % 12, scale = std::min(std::max(h.scale, 0), SC_COUNT - 1);
     nKeyPcs_ = scaleSize(scale);
     for (int d = 0; d < nKeyPcs_; ++d) keyPcs_[d] = (key + scaleStep(scale, d)) % 12;
-    // Nothing to hear (closed, or the level or the mute at 0 and the gain already down there):
+    // Nothing to hear (closed, or the level at 0 or muted and the gain already down there):
     // everything where it is aimed, so no render() can glide it back up (only set() or gate() makes
     // it audible again), and no grain or source kept (silence()).
     if (!audible()) {
@@ -309,9 +309,10 @@ void Weather::reset() {
 // engine may skip Weather from here on, and the loader or a Remember may free the source
 // meanwhile, so nothing may keep a pointer into it: a grain still reading it would be copied from
 // it at the next source change. The next render() with something to hear takes its source afresh
-// (changeSource: the modes from the anchor, a grain at once). With the gate off it closes at once
-// too: there is nothing left to fade, and a fade left part done while the engine skipped Weather
-// would play out when the level came back.
+// (changeSource: the modes from the anchor, a grain at once). Duck's envelope empties: it only
+// moves in render(), so it would come back holding Bloom's peaks from before the silence. With the
+// gate off the gate closes at once too: there is nothing left to fade, and a fade left part done
+// while the engine skipped Weather would play out when the level came back.
 void Weather::silence() {
     for (Voice& v : voice_) {
         v.on = false;
@@ -320,6 +321,8 @@ void Weather::silence() {
     tiltS_[0] = tiltS_[1] = hpS_[0] = hpS_[1] = 0.0f;
     src_ = GrainSource{};
     hasSrc_ = false;
+    duckEnv_ = 0.0f;
+    duckGain_ = 1.0f;
     if (!gateOn_) {
         closed_ = true;
         ending_ = false;
@@ -621,6 +624,7 @@ void Weather::step(int m, float d0, float dStep, float* outL, float* outR, float
     for (Voice& v : voice_)
         if (v.on) {
             if (heard) renderVoice(v, m);
+            else v.exactIn = 0;   // moved on unread: its window's recurrence starts afresh, exactly
             any = true;
             v.t += m;
             if (v.t >= std::min(v.end, v.relEnd)) v.on = false;

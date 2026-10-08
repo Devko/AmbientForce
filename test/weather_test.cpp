@@ -1,10 +1,11 @@
 // Weather (dsp/weather.h) and its sources (dsp/grainsrc.h) on their own: a source's loop, level and
-// slower levels; silence without a source; pitch to the cent and no aliasing two octaves up; To Key's
-// pitch classes; the level across grain counts; Stream's seamless joins and its level drifting or
-// transposed; the gate's fade; Duck; a source or mode change mid-cloud (the old source scribbled
-// over under it); origin; the window against the Hann; mute; a source freed while Weather is
-// silent; a call cut into the engine's pieces; determinism, stability, and nothing allocating.
-// Needs no plugin: make test-module M=weather.
+// slower levels; silence without a source (or a source not ready); pitch to the cent and no
+// aliasing two octaves up; To Key's pitch classes; the level across grain counts; Stream's seamless
+// joins and its level drifting or transposed; Stretch's head and level; the gate's fade; Duck; a
+// source or mode change mid-cloud (the old source scribbled over under it); origin; the window
+// against the Hann; reverse; backward reads near a level's start; mute; a source freed while
+// Weather is silent; the gate turned off while silent; a call cut into the engine's pieces;
+// determinism, stability, and nothing allocating. Needs no plugin: make test-module M=weather.
 #include "check.h"
 #include "signal.h"
 #include "../dsp/grainsrc.h"
@@ -138,14 +139,17 @@ void testBuildSource() {
     std::printf("  seam step %.4f, the sine's largest %.4f\n", seam, own);
     CHECK(seam <= 1.5f * own);
     // Level 1 (22.05 kHz) and 2 (11.025 kHz) hold the sine at its level; a 1 kHz component there
-    // reads as 2 and 4 kHz would at 44.1 kHz.
+    // reads as 2 and 4 kHz would at 44.1 kHz. Their seams join as level 0's does.
     for (int level = 1; level <= 2; ++level) {
         const Buf x = levelOf(g, level, 0);
         const size_t skip = x.size() / 4;   // past the loop's crossfade, where the sine swells
         const double d = db(rms(x, skip) / rms(l0, skip << level));
         const double m = db(magnitude(x, 1000.0 * (1 << level), skip) / magnitude(l0, 1000.0, skip << level));
-        std::printf("  level %d: RMS %+.4f dB, the 1 kHz tone %+.4f dB\n", level, d, m);
+        const float steps = maxStep(x), join = std::fabs(x.front() - x.back());
+        std::printf("  level %d: RMS %+.4f dB, the 1 kHz tone %+.4f dB; seam step %.4f, its largest %.4f\n", level, d,
+                    m, join, steps);
         CHECK(std::fabs(d) < 0.1 && std::fabs(m) < 0.1);
+        CHECK(join <= 1.5f * steps);
     }
     // The guard: every level's start again past its end.
     bool guard = true;
@@ -171,6 +175,24 @@ void testBuildSource() {
         const auto o = source(x);
         CHECK(o && o->src.frames >= 4 && o->src.frames % 4 == 0 && o->src.frames <= std::max(4, n));
     }
+    // Short signals: 7 frames loop 4 faded over 3 (the loop's first frame is the signal's fifth, its
+    // fourth the signal's own); 1 to 6 frames loop their first 4 unfaded, padded with silence.
+    for (int n : {3, 6, 7}) {
+        Buf x(static_cast<size_t>(n));
+        for (int i = 0; i < n; ++i) x[static_cast<size_t>(i)] = 0.1f * static_cast<float>(i + 1);
+        const auto o = source(x);
+        const Buf l = levelOf(o->src, 0, 0);
+        const auto near = [](float a, float b) { return std::fabs(a - b) < 2e-3f * std::fabs(b); };
+        const bool ok = n == 7 ? near(l[0] / l[3], 1.25f)
+                               : near(l[1] / l[0], 2.0f) && near(l[2] / l[0], 3.0f) && (n == 3 ? l[3] == 0.0f : near(l[3] / l[0], 4.0f));
+        CHECK(o->src.frames == 4 && ok);
+    }
+    // Equal power: a DC swells 3 dB half way through the loop's fade (sin + cos is sqrt 2 there).
+    const auto dc = source(Buf(static_cast<size_t>(3 * kSec), 0.25f));
+    const Buf d0 = levelOf(dc->src, 0, 0);
+    const double swell = db(peak(d0) / static_cast<double>(*std::min_element(d0.begin(), d0.end())));
+    std::printf("  a DC across the loop's fade: %+.2f dB\n", swell);
+    CHECK(std::fabs(swell - 3.01) < 0.05);
     CHECK(af::buildSource(s.data(), s.data(), 0) == nullptr);
     const Buf quiet(1000, 0.0f);
     const auto q = source(quiet);
@@ -367,7 +389,7 @@ void testStream() {
     const double spread = envelopeSpread(o.L, at(2.5), at(6.5));
     const double lvl = db(rms(o.L, at(2.5), at(6.5)));
     std::printf("  220 Hz, size 0.5 s: the envelope spreads %.3f dB, at %.2f dBFS RMS\n", spread, lvl);
-    CHECK(spread < 1.0);
+    CHECK(spread < 0.05);   // the joins are exact: what spread there is is the 16-bit samples'
     CHECK(std::fabs(lvl - af::kSourceRmsDb) < 0.5);   // the source itself
 
     // Noise under 4 kHz, so neither the reads' interpolation nor the slower levels take any of it:
@@ -388,6 +410,60 @@ void testStream() {
             std::printf("  noise, drift %.1f, %+.0f: %.2f dBFS RMS\n", drift, semis, r);
             CHECK(std::fabs(r - af::kSourceRmsDb) < 0.75);
         }
+}
+
+// Stretch: its head crawls through the source at 1/8 of real time, and it plays at Cloud's level.
+// The head's speed is read from where the grains read: the source's left channel is a ramp (a
+// frame's value grows by 1 LSB every 16 frames) and its right a constant, so left over right is the
+// window-weighted mean of the grains' read positions, which moves with the head.
+void testStretch() {
+    std::printf("== weather: Stretch\n");
+    const int n = 1 << 19, kGuard = af::GrainSource::kGuard;
+    std::vector<int16_t> ramp(static_cast<size_t>(2 * (n + kGuard)));
+    for (int i = 0; i < n + kGuard; ++i) {
+        ramp[static_cast<size_t>(2 * i)] = static_cast<int16_t>(((i % n) >> 4) - (n >> 5));
+        ramp[static_cast<size_t>(2 * i + 1)] = int16_t{16384};
+    }
+    af::GrainSource src;
+    src.frames = n;
+    for (int l = 0; l < 3; ++l) src.level[l] = ramp.data();   // (level 0 is all that is read at pitch 0)
+    Weather w;
+    w.seed(97);
+    af::WeatherPatch p = loud(af::WM_STRETCH);
+    p.grains = 8;
+    p.sizeS = 0.1f;
+    p.spray = 0.0f;
+    p.drift = 0.0f;
+    p.width = 0.0f;
+    p.position = 0.25f;
+    w.set(p, af::HarmonyPatch{});
+    w.gate(true);
+    const Out o = play(w, &src, 7 * kSec);
+    // The mean read position over a second (16 frames an LSB, the ramp's 0 at the source's middle).
+    const auto where = [&](double from) {
+        double l = 0.0, r = 0.0;
+        for (size_t i = at(from); i < at(from + 1.0); ++i) {
+            l += o.L[i];
+            r += o.R[i];
+        }
+        return 16.0 * (16384.0 * l / r) + n / 2;
+    };
+    const double speed = (where(5.5) - where(2.5)) / (3.0 * kSec);
+    std::printf("  the head: %.5f of real time\n", speed);
+    CHECK(std::fabs(speed / 0.125 - 1.0) < 0.01);
+    // The level, on noise, at 4 and 16 grains: the source's own (Cloud's law).
+    const auto noise = source(whiteNoise(10 * kSec, 0.5f, 99));
+    for (int grains : {4, 16}) {
+        Weather s;
+        s.seed(101);
+        af::WeatherPatch q = loud(af::WM_STRETCH);
+        q.grains = grains;
+        s.set(q, af::HarmonyPatch{});
+        s.gate(true);
+        const double lvl = dbRms(play(s, &noise->src, 12 * kSec), at(3.0));
+        std::printf("  %2d grains: %.2f dBFS RMS\n", grains, lvl);
+        CHECK(std::fabs(lvl - af::kSourceRmsDb) <= 1.5);
+    }
 }
 
 // The cloud the gate, Duck and the source checks listen to: noise, 16 grains.
@@ -461,6 +537,28 @@ void testDuck() {
     CHECK(under <= -12.0);
     CHECK(std::fabs(back) <= 1.0);
     CHECK(maxStep(a1.L) <= 1.2f * maxStep(b1.L));   // it glides
+    // Silent, the envelope empties: ducked deep, then the level to 0 and the engine skipping Weather
+    // (its envelope then never falls), the level back with Bloom quiet plays undocked at once,
+    // sample for sample the unducked reference.
+    play(a, &sb->src, 2 * kSec, 0.5f);
+    play(b, &sb->src, 2 * kSec, 0.5f);
+    af::WeatherPatch q = dense();
+    q.level = 0.0f;
+    b.set(q, af::HarmonyPatch{});
+    q.duck = 1.0f;
+    a.set(q, af::HarmonyPatch{});
+    for (int i = 0; i < kSec / kBlk && (a.audible() || b.audible()); ++i) {
+        play(a, &sb->src, kBlk, 0.5f);
+        play(b, &sb->src, kBlk, 0.5f);
+    }
+    CHECK(!a.audible() && !b.audible());
+    q.level = 1.0f;
+    a.set(q, af::HarmonyPatch{});
+    q.duck = 0.0f;
+    b.set(q, af::HarmonyPatch{});
+    const Out a3 = play(a, &sb->src, kSec), b3 = play(b, &sb->src, kSec);
+    std::printf("  back from silence after a duck: %.2f dB against unducked\n", db(rms(a3.L) / rms(b3.L)));
+    CHECK(same(a3.L, b3.L) && same(a3.R, b3.R));
 }
 
 // 9. A source change mid-cloud: every grain fades out over 20 ms reading a copy of the old
@@ -571,15 +669,19 @@ void testOrigin() {
     CHECK(rms(oa.L, at(3.0)) > 0.03);
 }
 
-// A grain is a Hann window: one grain over a constant source traces sin^2(pi t / L) (its window runs
-// on a recurrence across steps, worked out exactly every few), short and long, forward and back.
+// A grain is a Hann window: one grain over a constant source traces sin^2(pi t / L) from end to end
+// (its window runs on a recurrence across steps, worked out exactly every few), short and long,
+// forward and back. The source is constant in its first half and silent in its second; once the
+// grain has started, Position moves to the silent half, so the grains after it add exact zeros.
 void testWindow() {
     std::printf("== weather: the window\n");
-    const int n = 3 * kSec;
-    std::vector<int16_t> flat(static_cast<size_t>(2 * (n + af::GrainSource::kGuard)), int16_t{16384});
+    const int n = 10 * kSec, kGuard = af::GrainSource::kGuard;
+    std::vector<int16_t> half(static_cast<size_t>(2 * (n + kGuard)), int16_t{0});
+    std::fill(half.begin(), half.begin() + n, int16_t{16384});        // the first n / 2 frames
+    std::copy(half.begin(), half.begin() + 2 * kGuard, half.begin() + 2 * n);   // the guard
     af::GrainSource dc;
     dc.frames = n;
-    for (int l = 0; l < 3; ++l) dc.level[l] = flat.data();   // a constant is the same at every level
+    for (int l = 0; l < 3; ++l) dc.level[l] = half.data();   // (level 0 is all that is read at pitch 0)
     for (float size : {0.02f, 0.3f, 2.0f})
         for (float reverse : {0.0f, 1.0f}) {
             Weather w;
@@ -591,21 +693,66 @@ void testWindow() {
             p.drift = 0.0f;
             p.width = 0.0f;
             p.reverse = reverse;
+            p.position = 0.25f;   // 2 s either side stays in the constant half
             w.set(p, af::HarmonyPatch{});
             w.gate(true);
             play(w, nullptr, 3 * kSec);   // the gate fully open, and no grain yet
-            // Up to 0.6 of the grain: the next one comes at 0.7 of its length or later.
-            const int len = static_cast<int>(size * kSec + 0.5f), upto = len * 6 / 10;
-            const Out o = play(w, &dc, upto + kBlk);
+            const int len = static_cast<int>(size * kSec + 0.5f);
+            Out o = play(w, &dc, kBlk);   // the grain starts at the first sample, the next at 0.7 of it or later
+            p.position = 0.75f;
+            w.set(p, af::HarmonyPatch{});
+            o = cat(o, play(w, &dc, len));
             const double amp = 0.5 / std::sqrt(0.375);   // 16384 / 32768 at one grain's level
             double worst = 0.0;
-            for (int t = 0; t < upto; ++t) {
+            for (int t = 0; t < len; ++t) {
                 const double s = std::sin(kPi * t / len);
                 worst = std::max(worst, std::fabs(o.L[static_cast<size_t>(t)] / amp - s * s));
             }
             std::printf("  %.2f s%s: off the Hann by %.1e at most\n", size, reverse > 0.0f ? ", backwards" : "", worst);
             CHECK(worst < 4e-6);
+            CHECK(peak(o.L, static_cast<size_t>(len)) == 0.0f);   // and nothing after it
         }
+}
+
+// Reverse plays backwards: one grain over a ramp (each frame's value its distance from the middle,
+// in LSBs) reads up it forwards and down it backwards, sample for sample (the cubic is exact on a
+// line).
+void testReverse() {
+    std::printf("== weather: reverse\n");
+    const int n = 65536, kGuard = af::GrainSource::kGuard;
+    std::vector<int16_t> ramp(static_cast<size_t>(2 * (n + kGuard)));
+    for (int i = 0; i < n + kGuard; ++i)
+        ramp[static_cast<size_t>(2 * i)] = ramp[static_cast<size_t>(2 * i + 1)] = static_cast<int16_t>(i % n - n / 2);
+    af::GrainSource src;
+    src.frames = n;
+    for (int l = 0; l < 3; ++l) src.level[l] = ramp.data();   // (level 0 is all that is read at pitch 0)
+    for (float reverse : {0.0f, 1.0f}) {
+        Weather w;
+        w.seed(89);
+        af::WeatherPatch p = loud();
+        p.grains = 1;
+        p.sizeS = 0.3f;
+        p.spray = 0.0f;
+        p.drift = 0.0f;
+        p.width = 0.0f;
+        p.position = 0.5f;   // the grain starts on the ramp's 0
+        p.reverse = reverse;
+        w.set(p, af::HarmonyPatch{});
+        w.gate(true);
+        play(w, nullptr, 3 * kSec);
+        // Up to 0.6 of the grain: the next one comes at 0.7 of its length or later.
+        const int len = static_cast<int>(0.3f * kSec + 0.5f), upto = len * 6 / 10;
+        const Out o = play(w, &src, upto);
+        const double amp = 1.0 / std::sqrt(0.375) / 32768.0, dir = reverse > 0.0f ? -1.0 : 1.0;
+        double worst = 0.0;
+        for (int t = 0; t < upto; ++t) {
+            const double s = std::sin(kPi * t / len);
+            worst = std::max(worst, std::fabs(o.L[static_cast<size_t>(t)] - amp * s * s * dir * t));
+        }
+        std::printf("  %s: off the ramp by %.1e at most (it reaches %+.3f)\n", reverse > 0.0f ? "backwards" : "forwards",
+                    worst, o.L[static_cast<size_t>(upto - 1)]);
+        CHECK(worst < 1e-5);
+    }
 }
 
 // Backward grains born within a step's reach of a level's first frame: a grain starting part way
@@ -672,10 +819,11 @@ void testMute() {
 // With nothing to hear (level 0 or muted, the glide down done) the engine may skip Weather, and the
 // loader or a Remember may free its source meanwhile. Once audible() is false every grain has
 // stopped and the source is forgotten, so the level coming back over another source reads nothing
-// of the freed one (ASan would report it). Rendered on while silent, no grain starts.
+// of the freed one (ASan would report it). Rendered on while silent, no grain starts. Every mode.
 void testFreedWhileSilent() {
     std::printf("== weather: a source freed while silent\n");
     const auto b = source(whiteNoise(4 * kSec, 0.5f, 93));
+    for (int mode = 0; mode < af::WM_COUNT; ++mode)
     for (bool mute : {false, true}) {
         auto a = source(whiteNoise(4 * kSec, 0.5f, 91), whiteNoise(4 * kSec, 0.5f, 92));
         Weather w;
@@ -683,11 +831,12 @@ void testFreedWhileSilent() {
         Spawns s;
         w.setSpawnHook(record, &s);
         af::WeatherPatch p = dense();
+        p.mode = mode;
         w.set(p, af::HarmonyPatch{});
         w.gate(true);
         play(w, &a->src, 3 * kSec);
         const int on = w.grainsOn();
-        CHECK(on > 2);
+        CHECK(on >= 2);   // (Stream's two)
         p.mute = mute;
         p.level = mute ? 1.0f : 0.0f;
         w.set(p, af::HarmonyPatch{});
@@ -696,8 +845,8 @@ void testFreedWhileSilent() {
             play(w, &a->src, kBlk);
             ++blocks;
         }
-        std::printf("  %s: %d grains, silent after %d blocks with %d left\n", mute ? "muted" : "level 0", on,
-                    blocks, w.grainsOn());
+        std::printf("  %s, %s: %d grains, silent after %d blocks with %d left\n", af::kWeatherModeNames[mode],
+                    mute ? "muted" : "level 0", on, blocks, w.grainsOn());
         CHECK(!w.audible() && w.grainsOn() == 0);
         // An engine that renders it anyway: nothing starts, nothing is added.
         const size_t spawned = s.semis.size();
@@ -712,7 +861,7 @@ void testFreedWhileSilent() {
         const Out o = play(w, &b->src, 2 * kSec);
         const double lvl = dbRms(o, at(1.0));
         std::printf("  back over another source: %d grains, %.2f dBFS RMS\n", w.grainsOn(), lvl);
-        CHECK(w.grainsOn() > 2);
+        CHECK(w.grainsOn() >= 2);
         CHECK(std::fabs(lvl - af::kSourceRmsDb) <= 1.5);
     }
 }
@@ -917,11 +1066,13 @@ void weatherTests() {
     testToKey();
     testLevel();
     testStream();
+    testStretch();
     testGate();
     testDuck();
     testSourceChange();
     testOrigin();
     testWindow();
+    testReverse();
     testBackwardsNearTheStart();
     testMute();
     testFreedWhileSilent();

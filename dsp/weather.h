@@ -47,8 +47,9 @@
 // the grain's). A grain's window runs on a recurrence, exact to 3e-6 (weather.cpp says how; checked).
 // Positions in double; each grain reads its level's ring from `origin` on (position 0 is the
 // source's start), wrapping once a control step through the guard frames, so a grain stays inside
-// the source's loop however long it reads. The source's frames need not be its ring's capacity (a
-// Memory not yet full).
+// the source's loop however long it reads. Weather wraps at `frames`, so the source's frames need
+// not be its ring's capacity (a Memory not yet full), provided the source then starts at the ring's
+// frame 0 (origin 0) with the guard right after `frames`.
 //
 // After the grains, in stereo: the output's tilt shelf (TiltShelf, dsp/svf.h: one first-order shelf
 // pivoting at 800 Hz, +-6 dB at the ends, bypassed at 0, gliding as the output's does: the whole
@@ -59,7 +60,8 @@
 // 50 ms time constant and falling 60 dB in 1.5 s (a 0.22 s time constant: 3 s after Bloom stops
 // Weather is back within 0.01 dB, where a 1.5 s time constant would still hold it 6 dB down), sets
 // the gain 1 / (1 + 16 duck env): at duck 1, -6 dB under a peak at -24 dBFS, -19 dB at -6 dBFS
-// (EffectForce's Delay's law). It glides across the call.
+// (EffectForce's Delay's law). It glides across the call. With nothing to hear (audible() false)
+// the envelope empties: it moves only in render(), so it would come back holding old peaks.
 //
 // The gate: gate(true) fades in from -60 dB to 0 over kGateS, linear in dB; gate(false) fades out
 // the same way, and at -60 dB every grain stops and nothing is rendered (audible() false) until
@@ -69,7 +71,8 @@
 // may be skipping Weather, and a fade left part done would play out when the level came back.
 //
 // Changes: Pitch, To Key, Size, Grains, Spray, Reverse and Width take effect with the next grain. A
-// mode change fades every grain out over 20 ms (EffectForce's mode fade) while the new mode's start.
+// mode change fades every grain out over 20 ms (EffectForce's mode fade) while the new mode's grains
+// start.
 // A source change (another source, or none: nullptr or !ready()) does the same, and the grains
 // fading out of the old source read a copy of what they have left to read, taken at the change
 // (at most 1280 frames each): the old source may be freed or rewritten as soon as render() returns.
@@ -94,16 +97,19 @@
 // whatever the steps.
 //
 // Cost, as ARM instructions per 128-sample block (qemu's count, the device's flags, a 12 s source,
-// rendered in the engine's pieces of 32): the plan's worst case (Grains 16, Cloud, +12 so level-1
-// reads, To Key Chord, tilt, HP and Duck on) 58.3k, against the plan's 60k; Stretch 58.7k,
-// Stream 13.0k, without tilt, HP and Duck 56.3k, 8 grains 33.6k, 1 grain 9.8k. A grain costs 3.4k
-// (27 instructions a sample: 16.5 the reads, 4.5 the positions and window, the rest its step's
-// setup), the rest 6.3k. Grains 16 keeps about 15.3 sounding on average (the intervals' jitter
-// against the cap); a block with all 16 would be about 61k. By the plan's 0.0245 points of p99 a
-// thousand: 1.4 points (device: pending). A block where the source changes costs about 28k more
-// (the earlier review's count): the grains' copies of what they have left to read, up to 16 x 1280
-// frames. Level 0 was 3.5k while its grains still moved on unread; they stop now, so it is less
-// (not measured again), and the engine may skip it altogether.
+// rendered in the engine's pieces of 32), counted before the review's fixes: the plan's worst case
+// (Grains 16, Cloud, +12 so level-1 reads, To Key Chord, tilt, HP and Duck on) 58.3k, against the
+// plan's 60k; Stretch 58.7k, Stream 13.0k, without tilt, HP and Duck 56.3k, 8 grains 33.6k, 1 grain
+// 9.8k, level 0 3.5k. A grain costs 3.4k (27 instructions a sample: 16.5 the reads, 4.5 the
+// positions and window, the rest its step's setup), the rest 6.3k. The fixes, counted on a second
+// harness (a noise source, To Key's chord C E G; 57.4k for the worst case before them), add 0.1k to
+// 0.2k to a sounding block in every mode and take level 0 from 3.2k to 2.4k, its grains now
+// stopped (and the engine may skip it altogether): the worst case is about 58.4k. Grains 16 keeps
+// about 15.3 sounding on average (the intervals' jitter against the cap), so the 60k share is met
+// on average only: a block with all 16 sounding, about 61k, is 1k over it, and p99 sits on those
+// blocks. At the plan's 0.0268 points of p99 a thousand: 1.57 points on average, 1.63 with all 16
+// sounding (device: pending). A block where the source changes costs about 28k more (the earlier
+// review's count): the grains' copies of what they have left to read, up to 16 x 1280 frames.
 //
 // Real-time rules: everything is fixed-size, allocated in the constructor (the grains' copy room,
 // 86 KB). Nothing allocates, locks or throws after it.
