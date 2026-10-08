@@ -1340,6 +1340,85 @@ void resumeGhost() {
         }
 }
 
+// Space the engine's way: set() at every 128-sample block, then the block's four 32-sample pieces,
+// each run only while the strata send (a 0.3 s burst of noise at -6 dBFS) or Space isn't silent().
+struct EngineWay {
+    Space s;
+    Buf sendL = whiteNoise(104 * 128, 0.5f, 101), sendR = whiteNoise(104 * 128, 0.5f, 102);
+    size_t pos = 0;
+    bool endedSilent = false;   // a process() call has ended silent()
+
+    float block(const Space::Params& p) {   // the return's peak
+        s.set(p, {});
+        float top = 0.0f;
+        for (int k = 0; k < 4; ++k, pos += 32) {
+            const bool sending = pos < sendL.size();
+            if (!sending && s.silent()) continue;
+            float l[32] = {}, r[32] = {};
+            if (sending) {
+                std::copy(&sendL[pos], &sendL[pos] + 32, l);
+                std::copy(&sendR[pos], &sendR[pos] + 32, r);
+            }
+            s.process(l, r, l, r, 32);
+            endedSilent = endedSilent || s.silent();
+            for (int i = 0; i < 32; ++i) top = std::max({top, std::fabs(l[i]), std::fabs(r[i])});
+        }
+        return top;
+    }
+};
+
+// A silence can begin at set(), not at the end of a process() call: the reach takes the larger of
+// where the Reverb is and where it is going, and set() can take the second back, so the first
+// silent() the engine sees comes after no process() at all. Room at size 0 and decay 0.1 s, the
+// burst, then during its tail Size to 1 and back to 0 while the size still glides up (or the mode to
+// Abyss and back within its 12 ms fade-out), the moment swept over where the tail ends. The engine
+// skips Space once silent(); 0.12 s on the predelay goes to 250 ms, and over the next second the
+// return stays under -120 dBFS. Some of the moments begin the silence at set(): before Space::set()
+// forgot, each of those replayed the burst's end (-20 dBFS).
+void silenceAtSet() {
+    struct Path {
+        const char* what;
+        int lead;       // blocks before the move back that the move went out
+        bool mode;      // to Abyss and back, or Size to 1 and back
+    };
+    std::printf("  space: a silence begun at set(), then the predelay to 250 ms:");
+    for (const Path path : {Path{"size up 4 blocks", 4, false}, Path{"size up 30 blocks", 30, false}, Path{"Abyss for a block", 1, true}}) {
+        int atSet = 0;
+        float worst = 0.0f;
+        for (int back = 60; back < 86; ++back) {   // blocks after the burst
+            EngineWay e;
+            Space::Params p;
+            p.rise = 0.0f;
+            p.reverb.mode = Reverb::ROOM;
+            p.reverb.size = 0.0f;
+            p.reverb.decayS = 0.1f;
+            p.reverb.predelayMs = 0.0f;
+            for (int b = 0; b < 104 + back; ++b) {
+                if (b == 104 + back - path.lead) {
+                    if (path.mode) p.reverb.mode = Reverb::ABYSS;
+                    else p.reverb.size = 1.0f;
+                }
+                e.block(p);
+            }
+            p.reverb.mode = Reverb::ROOM;
+            p.reverb.size = 0.0f;
+            const bool before = e.s.silent();
+            e.s.set(p, {});
+            atSet += !before && e.s.silent() && !e.endedSilent;
+            float top = 0.0f;
+            for (int b = 0; b < 40 + 345; ++b) {   // 0.12 s as it is, then a second at 250 ms
+                if (b == 40) p.reverb.predelayMs = 250.0f;
+                top = std::max(top, e.block(p));
+            }
+            worst = std::max(worst, top);
+            CHECK(top < 1e-6f);
+        }
+        std::printf(" %s: %d begun at set(), loudest after %.0f dBFS;", path.what, atSet, db(worst));
+        CHECK(atSet > 0);
+    }
+    std::printf("\n");
+}
+
 } // namespace
 
 void reverbTests() {
@@ -1379,6 +1458,7 @@ void reverbTests() {
     rise();
     silence();
     resumeGhost();
+    silenceAtSet();
 }
 
 } // namespace aft

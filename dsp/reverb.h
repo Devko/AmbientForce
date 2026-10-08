@@ -106,15 +106,16 @@ public:
     int reachSamples() const;
 
     // The input has been silent for the last `quiet` samples, and the caller may stop running the
-    // reverb (Space calls this when a call ends silent(), as the engine may skip it from then on):
-    // the predelay forgets what came in before them, as after reset(), so a longer predelay set
-    // while the reverb isn't run reads zeros there, not a ghost of what played before the silence
-    // (minutes old, maybe, at its own level). Nothing is cleared: the predelay's age, which hides
-    // what came before a reset, is lowered. A clear would land in the block that wakes the reverb,
-    // usually the one a note starts in, on top of the reverb's own work: 128 KB for the predelay
-    // alone (8k NEON stores), 870 KB for all it holds (55k). A read within the last `quiet`
-    // samples finds what it would have found, and with `quiet` at least the reach, so does every
-    // read the settings then make: only a longer predelay's read past them changes.
+    // reverb (Space calls this once a silence begins, at the end of a process() call or at a set()
+    // that shortens the reach, as the engine may skip it from then on): the predelay forgets what
+    // came in before them, as after reset(), so a longer predelay set while the reverb isn't run
+    // reads zeros there, not a ghost of what played before the silence (minutes old, maybe, at its
+    // own level). Nothing is cleared: the predelay's age, which hides what came before a reset, is
+    // lowered. A clear would land in the block that wakes the reverb, usually the one a note starts
+    // in, on top of the reverb's own work: 128 KB for the predelay alone (8k NEON stores), 870 KB
+    // for all it holds (55k). A read within the last `quiet` samples finds what it would have
+    // found, and with `quiet` at least the reach, so does every read the settings then make: only
+    // a longer predelay's read past them changes.
     void forgetInput(uint32_t quiet);
 
     // Whether the last chunk's loop gains or damping moved (the slower network loop), and whether
