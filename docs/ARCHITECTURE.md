@@ -157,8 +157,9 @@ gliding 10 ms; Echo runs while a sounding stratum sends to it or it isn't `silen
 goes into the mix and, at Echo Space, into Space's send. Sends to Echo are 0 where nobody would hear
 it, Air's and Weather's Space sends where Space's return is 0. Memory records its tap (the strata's
 dry, or the dry and the returns before the tilt) straight from the bus, after Weather, and goes on
-recording across Stop and a long suspend; the guard and CC 120 start its ring afresh. All of it is
-off in Init, which plays 0.0.2's samples.
+recording across Stop and a long suspend, sealed at the sleep (what it cut off fades out over 5 ms
+there, what the wake records fades in: a dip, never a step); the guard and CC 120 start its ring
+afresh. All of it is off in Init, which plays 0.0.2's samples.
 
 **The output:** dry + Echo's and Space's returns → tilt → make-up and volume → the non-finite guard →
 limiter → Stop's fade.

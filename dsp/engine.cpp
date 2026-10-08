@@ -530,8 +530,10 @@ void Engine::resume(double awayS) {
 }
 
 // Every DSP state silent and empty: the strata, Echo, Space, the output's filters; with
-// `restartMemory` (the guard, CC 120) Memory's ring recording starts afresh too. What Memory
-// remembered stays either way (plan decision 10: only a new Remember replaces it).
+// `restartMemory` (the guard, CC 120) Memory's ring recording starts afresh too, without it (a
+// sleep that keeps the ring) Memory seals it: the sound it cut off fades out there, and what the
+// wake records fades in (memory.h: Sleeps). What Memory remembered stays either way (plan
+// decision 10: only a new Remember replaces it).
 void Engine::clearDsp(bool restartMemory) {
     ground_.reset();
     bloom_.reset();
@@ -539,6 +541,7 @@ void Engine::clearDsp(bool restartMemory) {
     weather_.reset();
     echo_.reset();
     if (restartMemory) memory_.reset();
+    else memory_.seal();
     space_.reset();
     tiltS_[0] = tiltS_[1] = 0.0f;
     limitD_ = 0.0f;
@@ -564,7 +567,8 @@ void Engine::reset() { sleep(true); }
 
 // Silence now, the harmony and the keys forgotten, asleep: CC 120 and reset() (restartMemory: the
 // ring recording starts afresh), Stop's Cut, the end of its Fade and a long suspend (the last 16 s
-// stay recorded, so Remember after a Stop still finds what was played: the author's decision).
+// stay recorded, so Remember after a Stop still finds what was played: the author's decision;
+// sealed where the sleep cut them, clearDsp()).
 void Engine::sleep(bool restartMemory) {
     clearDsp(restartMemory);
     harmony_.clear();

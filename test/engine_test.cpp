@@ -2225,6 +2225,58 @@ void testMemoryAcrossStop() {
     }
 }
 
+// A sleep that keeps the ring (Stop's Cut, the end of its Fade, a long suspend) cuts the sound
+// mid-way, at the Fade's end at full level (the tap is before the output's fade): Memory seals the
+// ring there (memory.h: Sleeps). Bloom's 440 Hz sine played 1 s, the sleep, the sine struck again
+// and played 1 s, then remembered: at every level the join's largest step is at most the sine's own
+// (its steady parts, both sides).
+void testMemoryJoinAfterSleep() {
+    std::printf("== engine: Memory's join after a sleep\n");
+    enum Way { CUT, FADE, SUSPEND };
+    const char* names[] = {"Cut", "the Fade's end", "a long suspend"};
+    for (int way = CUT; way <= SUSPEND; ++way) {
+        Engine e(defaults());
+        Patch p = bloomSine();
+        p.onStop = way == CUT ? af::OS_CUT : af::OS_FADE;
+        e.setPatch(p);
+        Clock t;
+        t.playing = true;
+        e.noteOn(69, 100);
+        render(e, 1.0, &t);
+        if (way == SUSPEND) {
+            e.suspend();
+            e.resume(2.0);
+        } else {
+            t.playing = false;
+            render(e, way == FADE ? Engine::kFadeS + 0.5 : 0.1, &t);
+        }
+        const bool asleep = !e.info().awake;
+        const int join = static_cast<int>(std::lround(e.info().memoryFill * af::Memory::kFrames));   // frames before it
+        t.playing = true;
+        e.noteOn(69, 100);
+        render(e, 1.0, &t);
+        e.remember();
+        render(e, 0.01, &t);
+        const af::GrainSource* s = e.memory().remembered();
+        CHECK(asleep && s && e.info().memoryGeneration == 1);
+        if (!s) continue;
+        std::printf("  %-14s (the join at frame %d):", names[way], join);
+        bool ok = true;
+        for (int k = 0; k < af::GrainSource::kLevels; ++k) {
+            Buf x(static_cast<size_t>(s->frames >> k));   // not full: in order from frame 0
+            for (size_t i = 0; i < x.size(); ++i) x[i] = s->level[k][2 * i] / 32768.0f;
+            const size_t j = static_cast<size_t>(join >> k), reach = static_cast<size_t>(300 >> k);
+            const size_t far = static_cast<size_t>(8000 >> k), near = static_cast<size_t>(2000 >> k);
+            const float at = maxStep(x, j - reach, j + reach);
+            const float own = std::max(maxStep(x, j - far, j - near), maxStep(x, j + near, j + far));
+            std::printf("  %d: %.4f of %.4f", k, at, own);
+            ok = ok && at <= own;
+        }
+        std::printf("\n");
+        CHECK(ok);
+    }
+}
+
 // The author's decision: Air lets its voices go once its level has glided to 0 (or is set to 0 where
 // it already is). Two Felt notes at Decay 20, Air muted a second in: within 10 ms (and a step) none
 // rings, in Info or the meter's count; unmuted a minute later, nothing comes back. And a note struck
@@ -2375,6 +2427,7 @@ void engineTests() {
     testEverythingLoud();
     testResets();
     testMemoryAcrossStop();
+    testMemoryJoinAfterSleep();
     testAirLetsGo();
     testRememberBeforeWeather();
     testCost();

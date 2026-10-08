@@ -15,10 +15,18 @@
 // over a run of frames as they lie (the same output, measured; half the instructions). Taking 128
 // at a time, the decimators always have whole pairs, the rings hold the same bits whatever the
 // pieces the signal came in (checked with pieces of 1, 33, 77, 100, 128 and at random), and a block
-// costs about the same whether it comes whole or in the engine's pieces. fill() and remember()
-// count the frames staged too (a Remember records them first); nothing else looks at the ring
-// recording. A ring that has gone a while without write() (the engine idle) just joins what comes
-// next to what came before.
+// costs about the same whether it comes whole or in the engine's pieces. fill(), seal() and
+// remember() count the frames staged too (a Remember records them first); nothing else looks at the
+// ring recording.
+//
+// Sleeps: asleep the engine writes nothing, so the ring joins what it recorded last to what comes
+// after the wake, and a sleep cuts the sound mid-way (the tap is before the output's fade). seal(),
+// at every sleep that keeps the ring (Stop's Cut, the end of its Fade, a long suspend), fades the
+// newest kSeamFade frames to 0 (the staged ones before they are decimated, and those in the ring at
+// each level over 220, 110 and 55 frames, as a Remember's seam; the decimators' state with them)
+// and arms a fade-in over the next kSeamFade frames staged: the join is a dip, never a step. A ring
+// that goes a while without write() and without a seal (a host that just stops calling) still joins
+// what comes next to what came before.
 //
 // Remember: the ring recording becomes the remembered source, and recording goes on in the other,
 // from its frame 0, empty. Its seam (newest frame against oldest) is faded over 5 ms each side at
@@ -55,7 +63,9 @@
 // write() 3.3k a 128-sample block given whole, 3.6k given in the engine's pieces of 32 (19k in
 // pieces of 1), against the plan's 4k: 0.09 and 0.10 points of p99 at its 0.0268 a thousand
 // (device: pending). remember() adds 22.9k to its block (25.2k with 127 frames staged to record
-// first), most of it the seam's fades a sample at a time; once in 2 s at most.
+// first), most of it the seam's fades a sample at a time; once in 2 s at most. seal() 12.5k with
+// nothing staged (all 385 frames it fades in the rings, a sample at a time), its fade-in 0.5k more
+// over the writes after; 7.4k in all with 127 staged; once a sleep.
 //
 // Real-time rules: both rings (9.9 MB) are allocated in the constructor; nothing allocates, locks or
 // throws after it.
@@ -87,6 +97,9 @@ public:
     // Audio thread: n samples of the tap (any n; the engine's pieces), scaled by 1/2 into 16 bit
     // (6 dB of headroom), clamped; a sample not finite is 0.
     void write(const float* L, const float* R, int n);
+    // Audio thread, at a sleep that keeps the ring: its newest 5 ms faded to 0 and the next 5 ms
+    // written to fade in, so what the wake records joins it with a dip (above: Sleeps).
+    void seal();
     // Audio thread: the ring recording becomes the remembered source (its seam faded over 5 ms each
     // side, its guard written), and recording goes on in the other, empty. False (nothing changes)
     // within kRememberGapS of the last, with under kMinS recorded, or while pinned.
@@ -121,6 +134,7 @@ private:
     int written_ = 0, staged_ = 0;
     int w_[GrainSource::kLevels] = {};
     FrameDecimator down1_, down2_;
+    int rise_ = kSeamFade;               // the next frame of a seal's fade-in; kSeamFade: none under way
     int64_t since_;                      // frames recorded since the last Remember (saturating; 64 bit)
     std::atomic<uint32_t> gen_{0};
     std::atomic<int> gate_{0};           // 0 free; -1 a Remember under way; > 0 pins held
