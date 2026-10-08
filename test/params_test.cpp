@@ -1,8 +1,9 @@
 // The parameters as surface.py declares them, against the engine they drive: every default and the text it
 // reads, the display formats, the popups, the help lines, the patch map (the defaults play what a Patch{} plays,
-// every option lands on its value), the macros (at 0 nothing, else their own fields one way, in range), and every
-// sound value at both ends of its range while a chord sounds. That the option lists are the engine's names is
-// checked as plugin/patch_map.cpp compiles.
+// every option lands on its value, M2's strata off in every factory preset), the macros (at 0 nothing, else their
+// own fields one way, in range), and every sound value at both ends of its range while a chord sounds, Air,
+// Weather and Echo on for the new ones. That the option lists are the engine's names is checked as
+// plugin/patch_map.cpp compiles.
 #include "host.h"
 #include "factory_presets.h"
 
@@ -48,6 +49,19 @@ const struct {
     {"m_horizon", "0%"}, {"m_motion", "0%"}, {"m_glow", "0%"}, {"m_density", "0%"},
     {"g_breathrate", "14 s"}, {"g_breathsync", "Free"}, {"g_breathdiv", "8 Bars"}, {"g_swaysync", "Free"},
     {"g_swaydiv", "8 Bars"}, {"b_swaysync", "Free"}, {"b_swaydiv", "8 Bars"},
+    // M2: Echo, Air, Weather. Off in Init: the levels and the Echo sends at 0.
+    {"e_mode", "Stereo"}, {"e_sync", "Sync"}, {"e_time", "450 ms"}, {"e_div", "1/4."}, {"e_feedback", "45%"},
+    {"e_lowcut", "150 Hz"}, {"e_highcut", "4.50 kHz"}, {"e_wow", "30%"}, {"e_duck", "30%"}, {"e_diffuse", "30%"},
+    {"e_return", "70%"}, {"e_space", "30%"}, {"g_echo", "0%"}, {"b_echo", "0%"},
+    {"a_listen", "Harmony"}, {"a_mute", "Off"}, {"a_level", "0%"}, {"a_tone", "6.00 kHz"}, {"a_sound", "Glass"},
+    {"a_decay", "4.00 s"}, {"a_density", "12 /min"}, {"a_pattern", "Constellation"}, {"a_reg", "Mid"},
+    {"a_range", "2.0 Oct"}, {"a_gravity", "60%"}, {"a_motif", "5"}, {"a_mutate", "30%"}, {"a_loop", "Off"},
+    {"a_looplen", "16.0 s"}, {"a_loopsync", "Free"}, {"a_loopdiv", "4 Bars"}, {"a_rubato", "20%"}, {"a_vel", "50%"},
+    {"a_width", "70%"}, {"a_space", "50%"}, {"a_echo", "0%"}, {"a_pan", "C"}, {"h_split", "Off"},
+    {"w_listen", "Free"}, {"w_mute", "Off"}, {"w_level", "0%"}, {"w_mode", "Cloud"}, {"w_position", "50%"},
+    {"w_drift", "20%"}, {"w_spray", "30%"}, {"w_size", "250 ms"}, {"w_grains", "8"}, {"w_pitch", "0 st"},
+    {"w_tokey", "Off"}, {"w_reverse", "0%"}, {"w_width", "70%"}, {"w_tilt", "0%"}, {"w_hp", "20 Hz"},
+    {"w_duck", "0%"}, {"w_space", "30%"}, {"w_echo", "0%"}, {"w_pan", "C"}, {"w_memtap", "Output"},
 };
 
 void testDefaults() {
@@ -98,6 +112,23 @@ void testFormats() {
     CHECK(shown(af::P_G_CUTOFF, 40.0f) == "40 Hz" && shown(af::P_G_CUTOFF, 16000.0f) == "16.0 kHz" &&
           shown(af::P_B_CUTOFF, 20.0f) == "20 Hz");
     CHECK(shown(af::P_H_STRUM, 2.0f) == "2.00 s" && shown(af::P_G_GRAVITY, 30.0f) == "30.0 s");
+    // permin: Air Density in notes a minute, "off" where the patch map makes it 0 (kAirDensityOff).
+    CHECK(shown(af::P_A_DENSITY, 0.0f) == "off" && shown(af::P_A_DENSITY, 0.04f) == "off" &&
+          shown(af::P_A_DENSITY, 0.06f) == "0.1 /min" && shown(af::P_A_DENSITY, 5.0f) == "5.0 /min" &&
+          shown(af::P_A_DENSITY, 12.0f) == "12 /min" && shown(af::P_A_DENSITY, 60.0f) == "60 /min");
+    // note: Split as a note's name and octave, C4 = 60; 0 is off.
+    CHECK(shown(af::P_H_SPLIT, 0.0f) == "Off" && shown(af::P_H_SPLIT, 60.0f) == "C4" &&
+          shown(af::P_H_SPLIT, 61.0f) == "C#4" && shown(af::P_H_SPLIT, 72.0f) == "C5" &&
+          shown(af::P_H_SPLIT, 127.0f) == "G9" && shown(af::P_H_SPLIT, 1.0f) == "C#-1");
+    // octr: Air Range in octaves, not signed.
+    CHECK(shown(af::P_A_RANGE, 0.5f) == "0.5 Oct" && shown(af::P_A_RANGE, 2.0f) == "2.0 Oct" &&
+          shown(af::P_A_RANGE, 3.0f) == "3.0 Oct");
+    // The rest of M2's formats are old ones: ms for Echo Time, semitones, counts, times.
+    CHECK(shown(af::P_E_TIME, 1.0f) == "1.0 ms" && shown(af::P_E_TIME, 2000.0f) == "2000 ms" &&
+          shown(af::P_W_PITCH, -24.0f) == "-24 st" && shown(af::P_W_PITCH, 12.0f) == "+12 st" &&
+          shown(af::P_W_GRAINS, 16.0f) == "16" && shown(af::P_A_MOTIF, 3.0f) == "3" &&
+          shown(af::P_W_SIZE, 0.02f) == "20 ms" && shown(af::P_W_SIZE, 2.0f) == "2.00 s" &&
+          shown(af::P_A_LOOPLEN, 120.0f) == "120.0 s" && shown(af::P_A_DECAY, 0.1f) == "100 ms");
 }
 
 
@@ -113,7 +144,101 @@ void testPopups() {
         CHECK(of >= 0 && af::PARAM_INFO[of].kind == af::Kind::Synth && af::PARAM_INFO[of].nopts > 2 &&
               std::string(af::PARAM_INFO[i].name) == std::string(af::PARAM_INFO[of].name) + " List");
     }
-    CHECK(popups == 11);   // Key, Scale, Chord, Memory, the three tables, Space Type, the three Divs
+    // Key, Scale, Chord, Memory, the three tables, Space Type, the three Divs; M2's Echo Div, Air Sound, Air Pattern
+    // and Loop Div.
+    CHECK(popups == 15);
+}
+
+// --- the patch, field by field ----------------------------------------------------------------------
+
+// Every number in a Patch, by name, as a float (an int or bool exactly): two patches are alike when these are, bit
+// for bit. A field added to Patch is added here: those of 0.0.2 in fields(), M2's in newFields().
+struct Field {
+    const char* name;
+    float v;
+};
+std::vector<Field> fields(const af::Patch& p) {
+    const af::HarmonyPatch& h = p.harmony;
+    const af::GroundPatch& g = p.ground;
+    const af::BloomPatch& b = p.bloom;
+    const af::Reverb::Params& r = p.space.reverb;
+    auto f = [](int v) { return static_cast<float>(v); };
+    return {
+        {"volumeDb", p.volumeDb}, {"tilt", p.tilt}, {"hold", f(p.hold)}, {"onStop", f(p.onStop)},
+        {"key", f(h.key)}, {"scale", f(h.scale)}, {"tuning", f(h.tuning)}, {"input", f(h.input)}, {"chord", f(h.chord)},
+        {"voicing", f(h.voicing)}, {"leading", f(h.leading)}, {"strumS", h.strumS}, {"memoryBars", f(h.memoryBars)},
+        {"g.listen", f(g.listen)}, {"g.mute", f(g.mute)}, {"g.level", g.level}, {"g.cutoffHz", g.cutoffHz},
+        {"g.table", f(g.table)}, {"g.age", g.pos.age}, {"g.sway", g.pos.sway}, {"g.swayHz", g.pos.swayHz},
+        {"g.smear", g.pos.smear}, {"g.beatHz", g.beatHz}, {"g.gravityS", g.gravityS}, {"g.fadeS", g.fadeS},
+        {"g.sub", g.sub}, {"g.root", g.root}, {"g.fifth", g.fifth}, {"g.octave", g.octave}, {"g.color", g.color},
+        {"g.colorInterval", f(g.colorInterval)}, {"g.registerOct", f(g.registerOct)}, {"g.body", g.body},
+        {"g.breath", g.breath}, {"g.breathHz", g.breathHz}, {"g.breathBeats", g.breathBeats},
+        {"g.swayBeats", g.pos.swayBeats}, {"g.width", g.width},
+        {"groundSpace", p.groundSpace}, {"groundPan", p.groundPan},
+        {"b.listen", f(b.listen)}, {"b.mute", f(b.mute)}, {"b.level", b.level}, {"b.cutoffHz", b.cutoffHz},
+        {"b.reso", b.reso}, {"b.filterMode", f(b.filterMode)}, {"b.table", f(b.table)}, {"b.age", b.pos.age},
+        {"b.sway", b.pos.sway}, {"b.swayHz", b.pos.swayHz}, {"b.smear", b.pos.smear},
+        {"b.swayBeats", b.pos.swayBeats}, {"b.tableB", f(b.tableB)},
+        {"b.bOctave", f(b.bOctave)}, {"b.blend", b.blend}, {"b.couple", f(b.couple)}, {"b.coupleAmt", b.coupleAmt},
+        {"b.unison", f(b.unison)}, {"b.detuneCents", b.detuneCents}, {"b.swellS", b.swellS},
+        {"b.releaseS", b.releaseS}, {"b.velSens", b.velSens}, {"b.breath", b.breath}, {"b.tail", f(b.tail)},
+        {"b.width", b.width}, {"bloomSpace", p.bloomSpace}, {"bloomPan", p.bloomPan},
+        {"r.mode", f(r.mode)}, {"r.size", r.size}, {"r.decayS", r.decayS}, {"r.predelayMs", r.predelayMs},
+        {"r.dampHz", r.dampHz}, {"r.lowCutHz", r.lowCutHz}, {"r.mod", r.mod}, {"r.width", r.width},
+        {"r.freeze", f(r.freeze)}, {"r.mix", r.mix}, {"r.shimmer", r.shimmer}, {"r.shimmerInterval", f(r.shimmerInterval)},
+        {"rise", p.space.rise}, {"spaceReturn", p.spaceReturn},
+    };
+}
+
+// M2's fields: Air, Weather and Echo, the strata's Echo sends, the memory tap and the split.
+std::vector<Field> newFields(const af::Patch& p) {
+    const af::AirPatch& a = p.air;
+    const af::AirGenPatch& ag = a.gen;
+    const af::WeatherPatch& w = p.weather;
+    const af::Delay::Params& d = p.echo.delay;
+    auto f = [](int v) { return static_cast<float>(v); };
+    return {
+        {"groundEcho", p.groundEcho}, {"bloomEcho", p.bloomEcho},
+        {"a.listen", f(a.listen)}, {"a.mute", f(a.mute)}, {"a.level", a.level}, {"a.velSens", a.velSens},
+        {"a.sound", f(a.voice.sound)}, {"a.toneHz", a.voice.toneHz}, {"a.decayS", a.voice.decayS},
+        {"a.width", a.voice.width}, {"a.density", ag.density}, {"a.pattern", f(ag.pattern)},
+        {"a.registerOct", f(ag.registerOct)}, {"a.rangeOct", ag.rangeOct}, {"a.gravity", ag.gravity},
+        {"a.motif", f(ag.motif)}, {"a.mutate", ag.mutate}, {"a.loop", f(ag.loop)}, {"a.loopS", ag.loopS},
+        {"a.loopBeats", ag.loopBeats}, {"a.rubato", ag.rubato}, {"airSpace", p.airSpace}, {"airEcho", p.airEcho},
+        {"airPan", p.airPan},
+        {"w.listen", f(w.listen)}, {"w.mute", f(w.mute)}, {"w.level", w.level}, {"w.memory", f(w.memory)},
+        {"w.mode", f(w.mode)}, {"w.position", w.position}, {"w.drift", w.drift}, {"w.spray", w.spray},
+        {"w.sizeS", w.sizeS}, {"w.grains", f(w.grains)}, {"w.pitch", w.pitch}, {"w.toKey", f(w.toKey)},
+        {"w.reverse", w.reverse}, {"w.width", w.width}, {"w.tilt", w.tilt}, {"w.hpHz", w.hpHz}, {"w.duck", w.duck},
+        {"weatherSpace", p.weatherSpace}, {"weatherEcho", p.weatherEcho}, {"weatherPan", p.weatherPan},
+        {"e.mode", f(d.mode)}, {"e.sync", f(d.sync)}, {"e.timeMs", d.timeMs}, {"e.divBeats", static_cast<float>(d.divBeats)},
+        {"e.feedback", d.feedback}, {"e.spread", d.spread}, {"e.lowCutHz", d.lowCutHz}, {"e.highCutHz", d.highCutHz},
+        {"e.wow", d.wow}, {"e.drive", d.drive}, {"e.duck", d.duck}, {"e.mix", d.mix}, {"e.glide", f(d.glide)},
+        {"e.diffuse", d.diffuse}, {"echoReturn", p.echoReturn}, {"echoSpace", p.echoSpace},
+        {"memoryTap", f(p.memoryTap)}, {"split", f(p.split)},
+    };
+}
+// Every field: 0.0.2's and M2's. The macros' checks hold all of them (a macro moves only its own, bit for bit).
+std::vector<Field> allFields(const af::Patch& p) {
+    std::vector<Field> all = fields(p);
+    const std::vector<Field> more = newFields(p);
+    all.insert(all.end(), more.begin(), more.end());
+    return all;
+}
+
+bool sameBits(float a, float b) { return std::memcmp(&a, &b, sizeof a) == 0; }
+
+// The fields' bits folded into one number (FNV-1a over each float's four bytes, in order).
+uint64_t foldFields(uint64_t h, const std::vector<Field>& f) {
+    for (const Field& x : f) {
+        uint32_t bits;
+        std::memcpy(&bits, &x.v, sizeof bits);
+        for (int k = 0; k < 4; ++k) {
+            h ^= (bits >> (8 * k)) & 0xffu;
+            h *= 1099511628211ull;
+        }
+    }
+    return h;
 }
 
 bool near(float a, float b) { return std::fabs(a - b) <= 1e-4f * std::max(1.0f, std::fabs(b)); }
@@ -157,6 +282,20 @@ void testPatchMap() {
           near(r.dampHz, dr.dampHz) && near(r.lowCutHz, dr.lowCutHz) && near(r.mod, dr.mod) && near(r.width, dr.width) &&
           r.freeze == dr.freeze && near(r.shimmer, dr.shimmer) && r.shimmerInterval == dr.shimmerInterval &&
           near(p.space.rise, d.space.rise) && near(p.spaceReturn, d.spaceReturn));
+    // M2's: every field of Air, Weather and Echo, the sends, the tap and the split, as Patch{} has them.
+    {
+        const auto a = newFields(p), b = newFields(d);
+        bool ok = a.size() == b.size() && a.size() > 60;
+        for (size_t i = 0; ok && i < a.size(); ++i)
+            if (!near(a[i].v, b[i].v)) {
+                std::printf("  %s: the default knobs give %g, Patch{} has %g\n", a[i].name, a[i].v, b[i].v);
+                ok = false;
+            }
+        CHECK(ok);
+        // Off in Init, exactly: the levels and every Echo send are 0, not nearly.
+        CHECK(p.air.level == 0.0f && p.weather.level == 0.0f && p.groundEcho == 0.0f && p.bloomEcho == 0.0f &&
+              p.airEcho == 0.0f && p.weatherEcho == 0.0f && p.split == -1 && !p.weather.memory);
+    }
 
     // Away from the defaults.
     auto with = [&norm](int id, float value) {
@@ -196,6 +335,19 @@ void testPatchMap() {
         {af::P_S_MODE, [](const af::Patch& q) { return q.space.reverb.mode; }, 0},
         {af::P_S_FREEZE, [](const af::Patch& q) { return static_cast<int>(q.space.reverb.freeze); }, 0},
         {af::P_S_SHINT, [](const af::Patch& q) { return q.space.reverb.shimmerInterval; }, 0},
+        {af::P_E_MODE, [](const af::Patch& q) { return q.echo.delay.mode; }, 0},
+        {af::P_E_SYNC, [](const af::Patch& q) { return static_cast<int>(q.echo.delay.sync); }, 0},
+        {af::P_A_LISTEN, [](const af::Patch& q) { return q.air.listen; }, 0},
+        {af::P_A_MUTE, [](const af::Patch& q) { return static_cast<int>(q.air.mute); }, 0},
+        {af::P_A_SOUND, [](const af::Patch& q) { return q.air.voice.sound; }, 0},
+        {af::P_A_PATTERN, [](const af::Patch& q) { return q.air.gen.pattern; }, 0},
+        {af::P_A_REG, [](const af::Patch& q) { return q.air.gen.registerOct; }, 4},
+        {af::P_A_LOOP, [](const af::Patch& q) { return static_cast<int>(q.air.gen.loop); }, 0},
+        {af::P_W_LISTEN, [](const af::Patch& q) { return q.weather.listen; }, 0},
+        {af::P_W_MUTE, [](const af::Patch& q) { return static_cast<int>(q.weather.mute); }, 0},
+        {af::P_W_MODE, [](const af::Patch& q) { return q.weather.mode; }, 0},
+        {af::P_W_TOKEY, [](const af::Patch& q) { return q.weather.toKey; }, 0},
+        {af::P_W_MEMTAP, [](const af::Patch& q) { return q.memoryTap; }, 0},
     };
     for (const auto& l : lists) {
         bool ok = true;
@@ -215,6 +367,7 @@ void testPatchMap() {
         {af::P_G_BREATHSYNC, af::P_G_BREATHDIV, [](const af::Patch& q) { return q.ground.breathBeats; }},
         {af::P_G_SWAYSYNC, af::P_G_SWAYDIV, [](const af::Patch& q) { return q.ground.pos.swayBeats; }},
         {af::P_B_SWAYSYNC, af::P_B_SWAYDIV, [](const af::Patch& q) { return q.bloom.pos.swayBeats; }},
+        {af::P_A_LOOPSYNC, af::P_A_LOOPDIV, [](const af::Patch& q) { return q.air.gen.loopBeats; }},
     };
     bool divs = af::kNumBarDivs == 9 && af::kBarDivBeats[0] == 1.0f && af::kBarDivBeats[2] == 4.0f && af::kBarDivBeats[8] == 256.0f;
     for (const auto& c : synced) {
@@ -231,7 +384,13 @@ void testPatchMap() {
     CHECK(divs);
     int synthLists = 0;
     for (int i = 0; i < af::P_COUNT; ++i) synthLists += af::PARAM_INFO[i].kind == af::Kind::Synth && af::PARAM_INFO[i].nopts > 0;
-    CHECK(memory && synthLists == static_cast<int>(std::size(lists)) + 1 + 2 * static_cast<int>(std::size(synced)));
+    // Echo Div: option k is kDelayDivs[k], quarter notes (sync or not: the division waits, as Loop Div does not).
+    bool echoDivs = af::PARAM_INFO[af::P_E_DIV].nopts == af::kNumDelayDivs;
+    for (int k = 0; echoDivs && k < af::kNumDelayDivs; ++k)
+        echoDivs = with(af::P_E_DIV, static_cast<float>(k)).echo.delay.divBeats == af::kDelayDivs[k].beats;
+    CHECK(echoDivs && std::string(af::kDelayDivs[12].name) == "1/4." && af::kDelayDivs[12].beats == 1.5);
+    // Memory and Echo Div are the two lists that are neither a plain enum nor a Free / Sync pair.
+    CHECK(memory && synthLists == static_cast<int>(std::size(lists)) + 2 + 2 * static_cast<int>(std::size(synced)));
     // Whole numbers, the taper, the continuous values in their units.
     CHECK(with(af::P_B_BOCT, -2.0f).bloom.bOctave == -2 && with(af::P_B_BOCT, 1.0f).bloom.bOctave == 1);
     CHECK(near(with(af::P_G_LEVEL, 0.5f).ground.level, 0.25f) && with(af::P_B_LEVEL, 0.0f).bloom.level == 0.0f &&
@@ -241,6 +400,44 @@ void testPatchMap() {
     CHECK(near(with(af::P_S_PREDELAY, 250.0f).space.reverb.predelayMs, 250.0f) &&
           near(with(af::P_G_SWAYRATE, 0.002f).ground.pos.swayHz, 0.002f) &&
           near(with(af::P_B_SWELL, 30.0f).bloom.swellS, 30.0f));
+
+    // M2. The levels and sends of the new strata and of Echo are knobs with the taper, like the others.
+    CHECK(near(with(af::P_A_LEVEL, 0.5f).air.level, 0.25f) && near(with(af::P_W_LEVEL, 0.5f).weather.level, 0.25f) &&
+          near(with(af::P_A_SPACE, 0.2f).airSpace, 0.04f) && near(with(af::P_W_SPACE, 0.2f).weatherSpace, 0.04f) &&
+          near(with(af::P_G_ECHO, 0.5f).groundEcho, 0.25f) && near(with(af::P_B_ECHO, 1.0f).bloomEcho, 1.0f) &&
+          near(with(af::P_A_ECHO, 0.5f).airEcho, 0.25f) && near(with(af::P_W_ECHO, 0.5f).weatherEcho, 0.25f) &&
+          near(with(af::P_E_RETURN, 0.5f).echoReturn, 0.25f) && near(with(af::P_E_SPACE, 0.5f).echoSpace, 0.25f));
+    // Their ranges in their units: the ends of Echo, Air and Weather land where the engine's headers say.
+    CHECK(near(with(af::P_E_TIME, 1.0f).echo.delay.timeMs, 1.0f) && near(with(af::P_E_TIME, 2000.0f).echo.delay.timeMs, 2000.0f) &&
+          near(with(af::P_E_LOWCUT, 20.0f).echo.delay.lowCutHz, 20.0f) &&
+          near(with(af::P_E_HIGHCUT, 20000.0f).echo.delay.highCutHz, 20000.0f) &&
+          near(with(af::P_E_FEEDBACK, 1.0f).echo.delay.feedback, 1.0f) &&
+          near(with(af::P_A_TONE, 200.0f).air.voice.toneHz, 200.0f) && near(with(af::P_A_DECAY, 20.0f).air.voice.decayS, 20.0f) &&
+          near(with(af::P_A_RANGE, 0.5f).air.gen.rangeOct, 0.5f) && near(with(af::P_A_LOOPLEN, 120.0f).air.gen.loopS, 120.0f) &&
+          with(af::P_A_MOTIF, 3.0f).air.gen.motif == 3 && with(af::P_A_MOTIF, 8.0f).air.gen.motif == 8 &&
+          near(with(af::P_W_SIZE, 0.02f).weather.sizeS, 0.02f) && near(with(af::P_W_SIZE, 2.0f).weather.sizeS, 2.0f) &&
+          with(af::P_W_GRAINS, 1.0f).weather.grains == 1 && with(af::P_W_GRAINS, 16.0f).weather.grains == 16 &&
+          near(with(af::P_W_PITCH, -24.0f).weather.pitch, -24.0f) && near(with(af::P_W_PITCH, 24.0f).weather.pitch, 24.0f) &&
+          near(with(af::P_W_HP, 2000.0f).weather.hpHz, 2000.0f) && near(with(af::P_W_TILT, -1.0f).weather.tilt, -1.0f) &&
+          near(with(af::P_A_PAN, -1.0f).airPan, -1.0f) && near(with(af::P_W_PAN, 1.0f).weatherPan, 1.0f));
+    // Split: 0 is off (-1 for the engine), else the note itself.
+    CHECK(with(af::P_H_SPLIT, 0.0f).split == -1 && with(af::P_H_SPLIT, 1.0f).split == 1 &&
+          with(af::P_H_SPLIT, 72.0f).split == 72 && with(af::P_H_SPLIT, 127.0f).split == 127);
+    // Air Density: under what the knob reads "off" at the engine gets 0; from there up, the density itself.
+    CHECK(with(af::P_A_DENSITY, 0.0f).air.gen.density == 0.0f && with(af::P_A_DENSITY, 0.04f).air.gen.density == 0.0f &&
+          near(with(af::P_A_DENSITY, 0.06f).air.gen.density, 0.06f) && near(with(af::P_A_DENSITY, 60.0f).air.gen.density, 60.0f));
+    // A loop on the bars is synced to the division, free at Loop Length; Air Reg Low is octave 4.
+    {
+        float n[af::P_COUNT];
+        std::copy(norm, norm + af::P_COUNT, n);
+        n[af::P_A_LOOPDIV] = af::paramNorm(af::P_A_LOOPDIV, 2.0f);   // 1 Bar
+        const af::Patch free = af::patchFromParams(n);
+        n[af::P_A_LOOPSYNC] = 1.0f;
+        const af::Patch bar = af::patchFromParams(n);
+        CHECK(free.air.gen.loopBeats == 0.0f && bar.air.gen.loopBeats == 4.0f && near(bar.air.gen.loopS, free.air.gen.loopS));
+    }
+    // The source of Weather is not a knob: no parameter sets weather.memory (the plugin does, with the loader).
+    CHECK(!with(af::P_W_MEMTAP, 0.0f).weather.memory && !with(af::P_W_LEVEL, 1.0f).weather.memory);
 }
 
 // The help lines (surface.py "help", shown on the status line after a move): every control a hand moves has one,
@@ -267,47 +464,6 @@ void testHelp() {
 }
 
 // --- the macros ----------------------------------------------------------------------------------
-
-// Every number in a Patch, by name, as a float (an int or bool exactly): two patches are alike when these are, bit
-// for bit. A field added to Patch is added here.
-struct Field {
-    const char* name;
-    float v;
-};
-std::vector<Field> fields(const af::Patch& p) {
-    const af::HarmonyPatch& h = p.harmony;
-    const af::GroundPatch& g = p.ground;
-    const af::BloomPatch& b = p.bloom;
-    const af::Reverb::Params& r = p.space.reverb;
-    auto f = [](int v) { return static_cast<float>(v); };
-    return {
-        {"volumeDb", p.volumeDb}, {"tilt", p.tilt}, {"hold", f(p.hold)}, {"onStop", f(p.onStop)},
-        {"key", f(h.key)}, {"scale", f(h.scale)}, {"tuning", f(h.tuning)}, {"input", f(h.input)}, {"chord", f(h.chord)},
-        {"voicing", f(h.voicing)}, {"leading", f(h.leading)}, {"strumS", h.strumS}, {"memoryBars", f(h.memoryBars)},
-        {"g.listen", f(g.listen)}, {"g.mute", f(g.mute)}, {"g.level", g.level}, {"g.cutoffHz", g.cutoffHz},
-        {"g.table", f(g.table)}, {"g.age", g.pos.age}, {"g.sway", g.pos.sway}, {"g.swayHz", g.pos.swayHz},
-        {"g.smear", g.pos.smear}, {"g.beatHz", g.beatHz}, {"g.gravityS", g.gravityS}, {"g.fadeS", g.fadeS},
-        {"g.sub", g.sub}, {"g.root", g.root}, {"g.fifth", g.fifth}, {"g.octave", g.octave}, {"g.color", g.color},
-        {"g.colorInterval", f(g.colorInterval)}, {"g.registerOct", f(g.registerOct)}, {"g.body", g.body},
-        {"g.breath", g.breath}, {"g.breathHz", g.breathHz}, {"g.breathBeats", g.breathBeats},
-        {"g.swayBeats", g.pos.swayBeats}, {"g.width", g.width},
-        {"groundSpace", p.groundSpace}, {"groundPan", p.groundPan},
-        {"b.listen", f(b.listen)}, {"b.mute", f(b.mute)}, {"b.level", b.level}, {"b.cutoffHz", b.cutoffHz},
-        {"b.reso", b.reso}, {"b.filterMode", f(b.filterMode)}, {"b.table", f(b.table)}, {"b.age", b.pos.age},
-        {"b.sway", b.pos.sway}, {"b.swayHz", b.pos.swayHz}, {"b.smear", b.pos.smear},
-        {"b.swayBeats", b.pos.swayBeats}, {"b.tableB", f(b.tableB)},
-        {"b.bOctave", f(b.bOctave)}, {"b.blend", b.blend}, {"b.couple", f(b.couple)}, {"b.coupleAmt", b.coupleAmt},
-        {"b.unison", f(b.unison)}, {"b.detuneCents", b.detuneCents}, {"b.swellS", b.swellS},
-        {"b.releaseS", b.releaseS}, {"b.velSens", b.velSens}, {"b.breath", b.breath}, {"b.tail", f(b.tail)},
-        {"b.width", b.width}, {"bloomSpace", p.bloomSpace}, {"bloomPan", p.bloomPan},
-        {"r.mode", f(r.mode)}, {"r.size", r.size}, {"r.decayS", r.decayS}, {"r.predelayMs", r.predelayMs},
-        {"r.dampHz", r.dampHz}, {"r.lowCutHz", r.lowCutHz}, {"r.mod", r.mod}, {"r.width", r.width},
-        {"r.freeze", f(r.freeze)}, {"r.mix", r.mix}, {"r.shimmer", r.shimmer}, {"r.shimmerInterval", f(r.shimmerInterval)},
-        {"rise", p.space.rise}, {"spaceReturn", p.spaceReturn},
-    };
-}
-
-bool sameBits(float a, float b) { return std::memcmp(&a, &b, sizeof a) == 0; }
 
 // The fields each macro owns, the way each one goes as the macro rises (+1 up, -1 down), and the range it must
 // stay in (the parameter's own; a level or send 0..1 as a gain).
@@ -353,8 +509,9 @@ void testMacros() {
     // Every factory preset, as the plugin loads it: with its macros at 0 (as saved) it plays the knobs' patch bit for
     // bit, through patchFromParams as the audio thread builds it.
     std::vector<std::vector<float>> presets;   // each one's 0..1
-    bool same = true;
+    bool same = true, newOff = true;
     int asBefore = 0;
+    uint64_t golden = 1469598103934665603ull;
     for (int k = 0; k < af::kNumFactoryPresets; ++k) {
         Host h;
         CHECK(h.load(af::kFactoryPresets[k].text) == 1);
@@ -373,15 +530,34 @@ void testMacros() {
             CHECK(free);
             ++asBefore;
         }
-        const auto a = fields(af::patchFromParams(norm.data())), b = fields(af::patchFromKnobs(norm.data()));
+        const af::Patch knobs = af::patchFromKnobs(norm.data());
+        const auto a = allFields(af::patchFromParams(norm.data())), b = allFields(knobs);
         for (size_t f = 0; f < a.size(); ++f)
             if (!sameBits(a[f].v, b[f].v)) {
                 std::printf("  %s: %s %g with the macros at 0, %g without\n", af::kFactoryPresets[k].name, a[f].name, a[f].v, b[f].v);
                 same = false;
             }
+        golden = foldFields(golden, fields(knobs));
+        // M2's fields are Patch{}'s (the presets of 0.0.2 name none of its parameters), the new strata and every Echo
+        // send exactly off.
+        const auto fresh = newFields(af::Patch{}), mine = newFields(knobs);
+        for (size_t f = 0; f < mine.size(); ++f)
+            if (!near(mine[f].v, fresh[f].v)) {
+                std::printf("  %s: %s is %g, not Patch{}'s %g\n", af::kFactoryPresets[k].name, mine[f].name, mine[f].v, fresh[f].v);
+                newOff = false;
+            }
+        newOff = newOff && knobs.air.level == 0.0f && knobs.weather.level == 0.0f && knobs.groundEcho == 0.0f &&
+                 knobs.bloomEcho == 0.0f && knobs.airEcho == 0.0f && knobs.weatherEcho == 0.0f;
         presets.push_back(std::move(norm));
     }
-    CHECK(same && presets.size() == static_cast<size_t>(af::kNumFactoryPresets) && asBefore >= af::kNumFactoryPresets - 2);
+    CHECK(same && newOff && presets.size() == static_cast<size_t>(af::kNumFactoryPresets) && asBefore >= af::kNumFactoryPresets - 2);
+    // The 28 presets give 0.0.2's Patch, bit for bit, apart from M2's fields (just checked at their defaults): the
+    // 0.0.2 fields of all of them folded into one number, taken from 0.0.2's patch map (the merge of Tasks 1-8 before
+    // this task; the patch map did not change in them). x86 only: the arithmetic behind a field (pow, log, exp) is
+    // libm's, and the device's flags fuse multiply-adds.
+#if !defined(__arm__)
+    CHECK(golden == 0x6c3af5238ae84bbaull);
+#endif
 
     // Each macro swept from -1 to +1 on every factory preset: its own fields each one way, inside their range;
     // nothing else moves (bit for bit); and each field it owns moves on some preset.
@@ -390,12 +566,12 @@ void testMacros() {
         bool others = true, monotonic = true, inRange = true;
         for (const auto& norm : presets) {
             const af::Patch knobs = af::patchFromKnobs(norm.data());
-            const auto base = fields(knobs);
+            const auto base = allFields(knobs);
             std::vector<float> last(spec.owned.size(), 0.0f);
             for (int s = -10; s <= 10; ++s) {
                 af::Patch p = knobs;
                 af::applyMacros(p, only(spec.id, static_cast<float>(s) / 10.0f));
-                const auto now = fields(p);
+                const auto now = allFields(p);
                 for (size_t f = 0; f < now.size(); ++f) {
                     size_t o = 0;
                     while (o < spec.owned.size() && std::strcmp(spec.owned[o].field, now[f].name) != 0) ++o;
@@ -455,7 +631,7 @@ void testMacros() {
         std::vector<float> norm(af::P_COUNT);
         for (int i = 0; i < af::P_COUNT; ++i) norm[static_cast<size_t>(i)] = d.get(i);
         const auto same = [&norm]() {
-            const auto a = fields(af::patchFromParams(norm.data())), b = fields(af::patchFromKnobs(norm.data()));
+            const auto a = allFields(af::patchFromParams(norm.data())), b = allFields(af::patchFromKnobs(norm.data()));
             for (size_t f = 0; f < a.size(); ++f)
                 if (!sameBits(a[f].v, b[f].v)) return false;
             return true;
@@ -521,6 +697,47 @@ void testExtremes() {
     std::printf("  peak %.2f\n", worst);
 }
 
+// M2's sound values at both ends with every stratum and Echo on: Air generating at 60 a minute in a loop, the keys
+// above Split striking it, every send into Echo open at a feedback that holds, a chord under it. (Weather has no
+// source until the loader gives it one: the engine's tests play it over fields and Memory.) Each new value at 0 and at
+// 1 for a quarter of a second, one after another and back between: every sample finite, and the output under the
+// limiter's ceiling.
+void testExtremesM2() {
+    std::printf("== every M2 sound value at both ends, every stratum and Echo on\n");
+    Host h;
+    h.set(af::P_B_SWELL, 0.005f);
+    for (int id : {af::P_A_LEVEL, af::P_W_LEVEL, af::P_G_ECHO, af::P_B_ECHO, af::P_A_ECHO, af::P_W_ECHO, af::P_E_RETURN,
+                   af::P_E_SPACE})
+        h.setN(id, 1.0f);
+    h.set(af::P_A_DENSITY, 60.0f);
+    h.set(af::P_A_LOOP, 1.0f);
+    h.set(af::P_A_DECAY, 20.0f);
+    h.set(af::P_E_FEEDBACK, 0.9f);
+    h.set(af::P_E_DIFFUSE, 1.0f);
+    h.set(af::P_H_SPLIT, 72.0f);
+    for (int note : {48, 55, 64, 67, 76}) h.on(note, 100);
+    h.run(kBlocksPerSec / 2);
+    bool finite = true;
+    float worst = 0.0f;
+    int swept = 0;
+    for (int i = af::P_E_MODE; i <= af::P_W_MEMTAP; ++i) {
+        if (af::PARAM_INFO[i].kind != af::Kind::Synth) continue;
+        ++swept;
+        const float was = h.get(i);
+        for (float end : {0.0f, 1.0f}) {
+            h.setN(i, end);
+            worst = std::max(worst, h.run(kBlocksPerSec / 4));
+            if (!h.finite) std::printf("  %s at %g: not finite\n", af::PARAM_INFO[i].key, end);
+            finite = finite && h.finite;
+            h.finite = true;
+        }
+        h.setN(i, was);
+    }
+    worst = std::max(worst, h.run(kBlocksPerSec / 2));
+    CHECK(swept == 58 && finite && h.finite && worst <= 0.8913f);   // the limiter's ceiling
+    std::printf("  %d values, peak %.2f\n", swept, worst);
+}
+
 } // namespace
 
 void paramsTests() {
@@ -531,6 +748,7 @@ void paramsTests() {
     testPatchMap();
     testMacros();
     testExtremes();
+    testExtremesM2();
 }
 
 } // namespace aft

@@ -47,7 +47,9 @@ void testState() {
             CHECK(false);
         }
     // Every sound value, each somewhere of its own, comes back from a saved project where it was: options and
-    // whole numbers exactly, the rest within 1e-5 of their 0..1 (a value is saved to 6 digits).
+    // whole numbers exactly (as the value they play: a range of 48 steps or more, Weather Pitch and Split, follows
+    // MPC's raw 0..1, and is saved as the whole number it plays), the rest within 1e-5 of their 0..1 (a value is
+    // saved to 6 digits).
     {
         Host r;
         uint32_t seed = 777;
@@ -66,10 +68,52 @@ void testState() {
         for (int i = 0; i < af::P_COUNT; ++i) {
             if (af::PARAM_INFO[i].kind != af::Kind::Synth) continue;
             const bool stepped = af::PARAM_SPECS[i].curve == af::Curve::Enum || af::PARAM_SPECS[i].curve == af::Curve::Int;
-            if (stepped ? r.get(i) == r2.get(i) : std::fabs(r.get(i) - r2.get(i)) <= 1e-5f) ++same;
+            if (stepped ? r.value(i) == r2.value(i) : std::fabs(r.get(i) - r2.get(i)) <= 1e-5f) ++same;
             else std::printf("  %s: %g saved, %g loaded\n", af::PARAM_INFO[i].key, r.value(i), r2.value(i));
         }
         CHECK(same == synth);
+    }
+    // M2's values are saved under their keys and come back: Air, Weather and Echo, a split and a division among them.
+    {
+        Host m;
+        m.set(af::P_A_LEVEL, 0.8f);
+        m.set(af::P_H_SPLIT, 72.0f);
+        m.set(af::P_E_DIV, 3.0f);
+        m.set(af::P_W_PITCH, -7.0f);
+        m.set(af::P_W_MEMTAP, 0.0f);
+        const std::string t = m.chunk();
+        CHECK(t.find("a_level=0.8\n") != std::string::npos && t.find("h_split=72\n") != std::string::npos &&
+              t.find("e_div=3\n") != std::string::npos && t.find("w_pitch=-7\n") != std::string::npos &&
+              t.find("w_memtap=0\n") != std::string::npos);
+        Host n;
+        CHECK(n.load(t) == 1 && std::fabs(n.value(af::P_A_LEVEL) - 0.8f) < 1e-3f && n.value(af::P_H_SPLIT) == 72.0f &&
+              n.value(af::P_E_DIV) == 3.0f && n.value(af::P_W_PITCH) == -7.0f && n.value(af::P_W_MEMTAP) == 0.0f &&
+              n.display(af::P_H_SPLIT) == "C5" && n.display(af::P_E_DIV) == "1/16T");
+    }
+    // A project or preset of 0.0.2 names none of M2's parameters. Over a fresh instance the new strata are off and
+    // every new value at its default; a project changes only what it lists, so over an instance that has them moved
+    // it leaves them; a preset names every sound value, so loading one brings them back.
+    {
+        const std::string old = "ambientforce 1\nvolume=-3\nh_key=2\ng_level=0.5\nb_swell=1.5\n";
+        const auto atDefaults = [](Host& h) {
+            int off = 0;
+            for (int i = af::P_E_MODE; i <= af::P_W_MEMTAP; ++i)
+                if (af::PARAM_INFO[i].kind == af::Kind::Synth && std::fabs(h.get(i) - af::PARAM_INFO[i].def) > 1e-5f) ++off;
+            return off == 0;
+        };
+        Host fresh;
+        CHECK(fresh.load(old) == 1 && atDefaults(fresh) && std::fabs(fresh.value(af::P_VOLUME) + 3.0f) < 1e-3f);
+        CHECK(fresh.value(af::P_A_LEVEL) == 0.0f && fresh.value(af::P_W_LEVEL) == 0.0f && fresh.value(af::P_G_ECHO) == 0.0f &&
+              fresh.value(af::P_B_ECHO) == 0.0f && fresh.value(af::P_A_ECHO) == 0.0f && fresh.value(af::P_W_ECHO) == 0.0f &&
+              fresh.value(af::P_H_SPLIT) == 0.0f);
+        Host moved;
+        moved.set(af::P_A_LEVEL, 0.8f);
+        moved.set(af::P_E_TIME, 900.0f);
+        moved.set(af::P_H_SPLIT, 60.0f);
+        CHECK(moved.load(old) == 1 && !atDefaults(moved) && std::fabs(moved.value(af::P_A_LEVEL) - 0.8f) < 1e-3f &&
+              moved.value(af::P_H_SPLIT) == 60.0f && std::fabs(moved.value(af::P_VOLUME) + 3.0f) < 1e-3f);
+        moved.press(af::P_PRE_INIT);
+        CHECK(atDefaults(moved));
     }
     // A project's state changes only what it lists; unknown keys and bad numbers are skipped.
     Host c;
