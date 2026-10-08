@@ -2,7 +2,7 @@
 
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
-- [Make targets](#make-targets)
+- [Make targets](#make-targets) ([how builds run](#how-builds-run))
 - [Make variables](#make-variables)
 - [Tests](#tests)
 - [Benchmarking on the device](#benchmarking-on-the-device)
@@ -66,7 +66,7 @@ changes; it checks the layout and every factory preset before writing anything. 
 | `test` | The whole suite under ASan/UBSan: every dsp part on its own, then the plugin through its VST2 entry points |
 | `test-arm` | The same suite built for the Force's CPU, run under `qemu-arm` |
 | `test-arm-pgo` | The suite linked against the profile-guided objects the shipped `.so` is made of |
-| `test-module M=<suite>` | One dsp suite on its own under ASan/UBSan, quicker to iterate on: `test/<suite>_test.cpp` with every `dsp/*.cpp` (`M=harmony`, `reverb`, `echo`, `lifeosc`, `ground`, `bloom`, `engine`); `M=sources` also gets the plugin files its suite tests (`paths`, `loader`, `wav`, `sources`) |
+| `test-module M=<suite>` | One dsp suite on its own under ASan/UBSan, quicker to iterate on: `test/<suite>_test.cpp` with every `dsp/*.cpp` (`M=harmony`, `reverb`, `echo`, `lifeosc`, `ground`, `bloom`, `engine`); `M=sources` also gets the plugin files its suite tests (`paths`, `loader`, `wav`, `sources`); linked from the objects `make test` builds ([below](#how-builds-run)) |
 | `test-module-arm M=<suite>` | The same for the Force's CPU, under `qemu-arm` |
 | `demos` | Render every factory preset playing the demo phrase to `build/demos-out/*.wav` (stereo, as the plugin plays), and all of them back to back as `tour.wav`; prints what each one measures ([below](#the-demo-phrase-and-the-presets-levels)) |
 | `preset-levels` | Set every factory preset's volume so its demo phrase plays at `PRESET_LUFS` (default −16); the limiter holds the peaks under −1 dBFS, and a preset it takes more than 1 dB off fails, as one off its target does |
@@ -79,9 +79,48 @@ changes; it checks the layout and every factory preset before writing anything. 
 | `soak HOURS=<n>` | Render hours of playing offline and check it stays sane (see [below](#soak)) |
 | `plugin-package` | `dist/AmbientForce-<version>-mpc-armv7.zip` with the installer |
 | `plugin-install` | Package, copy to the device and install without asking (`install.sh -y`: stops and restarts MPC) |
-| `clean` | Remove `build/` and `surface/build/` |
+| `clean` | Remove `build/` (the object directories, `build/obj/`, included) and `surface/build/` |
 
 `make` on its own runs the tests and builds the device `.so` and the x86 profiling build.
+
+### How builds run
+
+Every source is compiled to an object of its own, `build/obj/<set>/<path>.o`, with one directory (a
+set) for each set of compiler flags, and a binary is linked from the objects of one set:
+
+| Set | Flags of | Linked into |
+|---|---|---|
+| `asan` | the ASan/UBSan build | `build/plugin_test`, `build/<suite>_test` (`test-module`) |
+| `arm-test` | the device's CPU, no profile | `build/arm/plugin_test`, `build/arm/<suite>_test` (`test-module-arm`), `build/arm/afbench` |
+| `o2` | x86 `-O2` | `build/demos`, `build/soak`, `build/afbench` |
+| `x86-so`, `x86-stages` | the x86 `.so`, and with `-DAF_STAGE_TIMING` | `build/ambientforce.so`, `build/ambientforce_stages.so` |
+| `arm-pic`, `arm-stages` | the device `.so`'s flags, and with `-DAF_STAGE_TIMING` | `build/arm-plain/ambientforce.so` (`arm-icount`; `build/arm/ambientforce.so` too with `PGO=0`), `build/arm/ambientforce_stages.so` |
+| `pgo-gen`, `pgo-train`, `pgo`, `arm-pgotest` | the profile-guided build: the instrumented plugin, the trainer, the plugin built with the profile, and the suite for `test-arm-pgo` | `build/arm/pgo/train`, `build/arm/ambientforce.so` (from `pgo`), `build/arm/plugin_test_pgo` (with `pgo`'s objects) |
+
+- **Incremental.** A change to a `.cpp` or a header recompiles the objects that include it, and nothing
+  else (each object has a `.d` file listing its headers), then relinks. A change to a set's flags (a
+  variable such as `ARM_OPT`, or an edit of the Makefile) rebuilds that set. `make test-module M=echo`
+  links the objects `make test` built; only `test/module_main.cpp` is compiled for the suite (with
+  `-DMODULE_TESTS=echoTests`), so the next `make test` compiles nothing for it. A suite that tests
+  `plugin/` files besides the `dsp/` ones lists them in `MOD_PLUGIN_<suite>` in the Makefile.
+- **Generated headers.** `surface/build/param_ids.h` and `factory_presets.h` exist before the first
+  compile; when `surface.py` rewrites them, the objects that include them are rebuilt, the others are not.
+- **Parallel.** Make runs one job per core (`JOBS`, default `nproc`) without `-j`; `make JOBS=1` or
+  `make -j1` builds one at a time, and so prints as it goes. With several jobs `--output-sync=target`
+  keeps each target's output together: a compile's warnings are never mixed with another's, and a long run
+  such as `make soak` prints its report when it ends (use `make -j1 soak` after a `make build/soak` to
+  watch the windows as they happen). What must not overlap is one recipe, so it does not: the profile run,
+  `arm-icount`'s measurements, the soak, the device targets. Goals that run something (`test`,
+  `test-arm`, `soak`, `arm-icount`, ...) take turns when given together, in the order given, while their
+  builds overlap.
+- **The profile-guided build** compiles both rounds in parallel. The instrumented objects
+  (`build/obj/pgo-gen`) are kept until their sources change; the trainer's run (`build/arm/pgo/trained`
+  stamps its profile) and the objects built with the profile (`build/obj/pgo`) follow every change. GCC
+  finds a profile, and numbers a file's own functions, by the path of the object it was compiled for, so
+  the instrumented objects are compiled to `build/obj/pgo/` as well, and moved to `pgo-gen` at once. A
+  missing profile fails the build (`-Werror=missing-profile`), as before. Two runs of the trainer never
+  give quite the same profile, so two builds of the same sources give `.so` files whose code differs
+  (by a few KB of 400); the plain builds (`arm-plain`, the tests) are the same bit for bit.
 
 ### The demo phrase and the presets' levels
 
@@ -128,6 +167,7 @@ the release is 20 and 40 dB down).
 | `ICOUNT_PLUGIN` | qemu's `insn` plugin built with it, a path (default `/home/user/qemu-icount/libinsn.so`) |
 | `ICOUNT_SYSROOT` | The ARM libraries `arm-icount` runs its programs with, qemu's `-L` (default `/usr/arm-linux-gnueabihf`, the cross toolchain's) |
 | `PRESET_LUFS` | The loudness `preset-levels` matches the factory presets to (default −16) |
+| `JOBS` | How many jobs make runs at once (default: the number of cores, `nproc`; `1`: one at a time, with live output). A `-j` on the command line wins ([below](#how-builds-run)) |
 | `M` | The suite for `test-module` and `test-module-arm` |
 | `HOURS`, `SEED` | How long `soak` plays (default 1 hour), and its random sequence (default 1) |
 
