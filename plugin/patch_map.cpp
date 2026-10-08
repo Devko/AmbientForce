@@ -233,10 +233,13 @@ Macros macrosFromParams(const float* norm) {
 // Fixed and relative: each macro moves the fields it owns from wherever the preset has them, the same way in
 // every preset. Times, rates and frequencies move in octaves (x 2^(k x)), depths toward their ends, levels and
 // sends as gains (their knobs squared, 0..1). A field at 0 that a macro scales stays 0 (a send, a
-// partial, Body, Beat, Detune, Breath), so what a preset switched off stays off. Where two macros share
-// a field (Horizon and Glow both move the tones) they apply one after the other, each clamping. Far steps the
-// dry back, and dark and thick take a little off the volume, so the level stays near the preset's
-// (test/preset_test.cpp: none leans on the limiter or drops far).
+// partial, Body, Beat, Detune, Breath, Air's and Weather's levels, every Echo send, Air Density), so what a
+// preset switched off stays off: no macro brings a stratum or an Echo send in from nothing, and a preset of
+// 0.0.2, which has Air, Weather and Echo off, sounds the same at every macro position as it did. (Air Rubato
+// and Mutate, Weather Drift and Echo Wow are depths and do move where nothing plays: nothing is heard of it.)
+// Where two macros share a field (Horizon and Glow both move the tones) they apply one after the other, each
+// clamping. Far steps the dry back, and dark and thick take a little off the volume, so the level stays near
+// the preset's (test/preset_test.cpp: none leans on the limiter or drops far).
 namespace {
 
 float clampTo(int id, float v) { return std::clamp(v, PARAM_SPECS[id].lo, PARAM_SPECS[id].hi); }
@@ -267,12 +270,18 @@ constexpr float kHorizonDecayOct = 1.3f;    // Space Decay x 2^(1.3 h): 0.41x..2
 constexpr float kHorizonPredelayMs = 50.0f; // Pre-Delay + 50 h ms
 constexpr float kHorizonToneOct = -0.5f;    // both Tones and Space Damp, x 2^(-0.5 h): half an octave darker far
 constexpr float kHorizonRiseUp = 0.6f;      // Rise toward 1 by 60% far, toward 0 near
+// Air's and Weather's sends into Space, and all four Echo sends (Ground's, Bloom's, Air's, Weather's), move by
+// the same octaves as Ground's and Bloom's Space sends; Air's and Weather's levels step back far like theirs.
 // Motion, still (-1) to moving (+1).
 constexpr float kMotionSwayUp = 0.8f;       // both Sways toward 1 by 80% (toward 0 still)
 constexpr float kMotionRateOct = 2.0f;      // both Rates and Breath Rate x 2^(2 m): a quarter .. 4x (free only)
 constexpr float kMotionSmearUp = 0.6f;      // Bloom Smear toward 1 by 60%
 constexpr float kMotionBreathUp = 0.7f;     // Ground Breath toward 1 by 70%
 constexpr float kMotionBeatOct = 1.5f;      // Ground Beat x 2^(1.5 m) moving (capped at 3 Hz), to 0 still
+constexpr float kMotionRubatoUp = 0.6f;     // Air Rubato toward 1 by 60% (toward 0 still)
+constexpr float kMotionMutateUp = 0.5f;     // Air Mutate toward 1 by 50% (toward 0 still)
+constexpr float kMotionDriftUp = 0.7f;      // Weather Drift toward 1 by 70% (toward 0 still)
+constexpr float kMotionWowUp = 0.5f;        // Echo Wow toward 1 by 50% (toward 0 still)
 // Glow, dark (-1) to bright (+1).
 constexpr float kGlowToneOct = 2.0f;        // both Tones x 2^(2 g): two octaves either way (Bloom's on LP only)
 constexpr float kGlowTilt = 0.3f;           // Tilt + 0.3 g
@@ -280,6 +289,9 @@ constexpr float kGlowDampOct = 1.0f;        // Space Damp x 2^g
 constexpr float kGlowShimmerUp = 0.35f;     // bright only: Shimmer + 0.35 g (an upward interval only)
 constexpr float kGlowBodyOct = -1.0f;       // Ground Body x 2^-g: half toward bright, twice (darker vowels) toward dark
 constexpr float kGlowDarkTrimDb = 1.5f;     // dark only: the volume down 1.5 dB at -1 (the low shelf and Body add level)
+constexpr float kGlowAirToneOct = 2.0f;     // Air Tone x 2^(2 g): two octaves either way, like the other Tones
+constexpr float kGlowWeatherTilt = 0.3f;    // Weather Tilt + 0.3 g, like the output Tilt
+constexpr float kGlowEchoCutOct = 1.0f;     // Echo High Cut x 2^g: an octave either way
 // Density, sparse (-1) to thick (+1).
 constexpr float kDensityPartialOct = 1.0f;  // Ground Sub, Octave, Color x (1 + d) sparse (0 at -1), x 2^d thick
 constexpr float kDensityDetuneOct = 1.0f;   // Bloom Detune: to 0 sparse (unison 2 plays as 1), x 2^d thick
@@ -287,6 +299,8 @@ constexpr float kDensityBreathOct = 1.0f;   // Bloom Breath: to 0 sparse, x 2^d 
 constexpr float kDensityStrumOct = 1.0f;    // Strum, sparse: x 2^(-d) + 0.6 s x (-d) (one by one); thick: down to a quarter
 constexpr float kDensityStrumS = 0.6f;
 constexpr float kDensityStrumThick = 0.75f;
+constexpr float kDensityAirOct = 1.0f;      // Air Density to 0 sparse, x 2^d thick (capped at 60 a minute)
+constexpr float kDensityGrainsOct = 1.0f;   // Weather Grains to 1 sparse, x 2^d thick (rounded, 1..16)
 constexpr float kDensityThickTrimDb = 1.0f; // thick only: the volume down 1 dB at +1 (the partials add level)
 
 } // namespace
@@ -295,14 +309,25 @@ void applyMacros(Patch& p, const Macros& m) {
     GroundPatch& g = p.ground;
     BloomPatch& b = p.bloom;
     Reverb::Params& r = p.space.reverb;
+    AirPatch& a = p.air;
+    WeatherPatch& w = p.weather;
+    Delay::Params& e = p.echo.delay;
     if (m.horizon != 0.0f) {
         const float h = std::clamp(m.horizon, -1.0f, 1.0f);
         const float send = h * (h < 0.0f ? kHorizonSendNear : kHorizonSendFar);
         p.groundSpace = gain01(octaves(p.groundSpace, send));
         p.bloomSpace = gain01(octaves(p.bloomSpace, send));
+        p.airSpace = gain01(octaves(p.airSpace, send));
+        p.weatherSpace = gain01(octaves(p.weatherSpace, send));
+        p.groundEcho = gain01(octaves(p.groundEcho, send));
+        p.bloomEcho = gain01(octaves(p.bloomEcho, send));
+        p.airEcho = gain01(octaves(p.airEcho, send));
+        p.weatherEcho = gain01(octaves(p.weatherEcho, send));
         const float back = -kHorizonDryOct * std::max(h, 0.0f);
         g.level = gain01(octaves(g.level, back));
         b.level = gain01(octaves(b.level, back));
+        a.level = gain01(octaves(a.level, back));
+        w.level = gain01(octaves(w.level, back));
         r.decayS = clampTo(P_S_DECAY, octaves(r.decayS, kHorizonDecayOct * h));
         r.predelayMs = clampTo(P_S_PREDELAY, r.predelayMs + kHorizonPredelayMs * h);
         g.cutoffHz = clampTo(P_G_CUTOFF, octaves(g.cutoffHz, kHorizonToneOct * h));
@@ -320,6 +345,10 @@ void applyMacros(Patch& p, const Macros& m) {
         b.pos.smear = toward(b.pos.smear, x, 0.0f, 1.0f, 1.0f, kMotionSmearUp);
         g.breath = toward(g.breath, x, 0.0f, 1.0f, 1.0f, kMotionBreathUp);
         g.beatHz = fadeOrScale(g.beatHz, x, kMotionBeatOct, PARAM_SPECS[P_G_BEAT].hi);
+        a.gen.rubato = toward(a.gen.rubato, x, 0.0f, 1.0f, 1.0f, kMotionRubatoUp);
+        a.gen.mutate = toward(a.gen.mutate, x, 0.0f, 1.0f, 1.0f, kMotionMutateUp);
+        w.drift = toward(w.drift, x, 0.0f, 1.0f, 1.0f, kMotionDriftUp);
+        e.wow = toward(e.wow, x, 0.0f, 1.0f, 1.0f, kMotionWowUp);
     }
     if (m.glow != 0.0f) {
         const float x = std::clamp(m.glow, -1.0f, 1.0f);
@@ -330,6 +359,9 @@ void applyMacros(Patch& p, const Macros& m) {
         if (r.shimmerInterval != Reverb::DOWN_OCTAVE)   // a shimmer an octave down darkens: left as it is
             r.shimmer = std::min(1.0f, r.shimmer + kGlowShimmerUp * std::max(x, 0.0f));
         g.body = clampTo(P_G_BODY, octaves(g.body, kGlowBodyOct * x));
+        a.voice.toneHz = clampTo(P_A_TONE, octaves(a.voice.toneHz, kGlowAirToneOct * x));
+        w.tilt = clampTo(P_W_TILT, w.tilt + kGlowWeatherTilt * x);
+        e.highCutHz = clampTo(P_E_HIGHCUT, octaves(e.highCutHz, kGlowEchoCutOct * x));
         trim(p, kGlowDarkTrimDb * std::min(x, 0.0f));
     }
     if (m.density != 0.0f) {
@@ -339,6 +371,10 @@ void applyMacros(Patch& p, const Macros& m) {
         g.color = fadeOrScale(g.color, x, kDensityPartialOct, 1.0f);
         b.detuneCents = fadeOrScale(b.detuneCents, x, kDensityDetuneOct, PARAM_SPECS[P_B_DETUNE].hi);
         b.breath = fadeOrScale(b.breath, x, kDensityBreathOct, 1.0f);
+        a.gen.density = fadeOrScale(a.gen.density, x, kDensityAirOct, PARAM_SPECS[P_A_DENSITY].hi);
+        w.grains = std::clamp(static_cast<int>(std::lround(fadeOrScale(static_cast<float>(w.grains), x, kDensityGrainsOct,
+                                                                       PARAM_SPECS[P_W_GRAINS].hi))),
+                              static_cast<int>(PARAM_SPECS[P_W_GRAINS].lo), static_cast<int>(PARAM_SPECS[P_W_GRAINS].hi));
         float& strum = p.harmony.strumS;
         strum = clampTo(P_H_STRUM, x < 0.0f ? octaves(strum, -kDensityStrumOct * x) - kDensityStrumS * x
                                             : strum * (1.0f - kDensityStrumThick * x));
