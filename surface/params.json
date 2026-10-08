@@ -1003,7 +1003,7 @@
     "1/4.",
     "1/2",
     "1/2.",
-    "1 bar"
+    "1 Bar"
    ],
    "default": "1/4."
   },
@@ -1020,7 +1020,7 @@
   },
   {
    "key": "e_feedback",
-   "name": "Echo Fdbk",
+   "name": "Echo Repeats",
    "min": 0,
    "max": 1,
    "default": 0.45,

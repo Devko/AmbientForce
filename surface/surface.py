@@ -285,7 +285,7 @@ popup_flag("b_swaydiv")
 ECHO_MODES = ["Stereo", "Ping-Pong", "Mono"]                                                # dsp/echo.h kEchoModeNames
 # dsp/common.h kDelayDivs: the synced Echo time, a 64th to a bar.
 DELAY_DIVS = ["1/64", "1/32T", "1/32", "1/16T", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4", "1/2T", "1/4.",
-              "1/2", "1/2.", "1 bar"]
+              "1/2", "1/2.", "1 Bar"]
 AIR_SOUNDS = ["Glass", "Bowl", "Bar", "Bell", "Kalimba", "Felt"]                            # dsp/airvoices.h
 AIR_PATTERNS = ["Random", "Rise", "Fall", "Constellation", "Echo"]                          # dsp/airgen.h
 WEATHER_MODES = ["Cloud", "Stretch", "Stream"]                                              # dsp/weather.h
@@ -298,7 +298,7 @@ enum("e_sync", "Echo Sync", SYNC, "Sync", help="Sync follows MPC's tempo, Free u
 num("e_time", "Echo Time", "log", 1, 2000, 450, "ms", help="the time between repeats when Free, 1 ms to 2 s")
 enum("e_div", "Echo Div", DELAY_DIVS, "1/4.", help="the synced time between repeats, a 64th to a bar")
 popup_flag("e_div")
-num("e_feedback", "Echo Fdbk", "lin", 0, 1, 0.45, "pct", help="how much of each repeat comes round again")
+num("e_feedback", "Echo Repeats", "lin", 0, 1, 0.45, "pct", help="feedback: how much comes round again")
 num("e_lowcut", "Echo Low Cut", "log", 20, 2000, 150, "hz", help="keeps the lows out of the repeats")
 num("e_highcut", "Echo High Cut", "log", 500, 20000, 4500, "hz", help="darkens the repeats, more each pass")
 num("e_wow", "Echo Wow", "lin", 0, 1, 0.3, "pct", help="tape wow and flutter on the repeats")
@@ -740,7 +740,7 @@ def build_layout():
     notes, voice = ["a_reg", "a_range", "a_vel", "a_pan"], ["h_split", "a_sound", "a_decay", "a_tone"]
     L.page("AIR LOOP", loop + motif + notes + voice)
     L.header()
-    bank_card(L, R1, "LOOP AND FIGURES", loop + motif)
+    bank_card(L, R1, "LOOP AND MOTIF", loop + motif)
     bank_halves(L, R2, ("NOTES", notes), ("SPLIT AND SOUND", voice))
 
     # GRAINS: where the grains gather and how they are tuned and shaped; then the source, the mode and the cloud's

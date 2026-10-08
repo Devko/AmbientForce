@@ -14,7 +14,8 @@ constexpr const char* kMemoryNames[] = {"Off", "1 Bar", "2 Bars", "4 Bars", "8 B
                                         "Forever"};
 constexpr int kMemoryBars[] = {0, 1, 2, 4, 8, 16, 32, 64, -1};   // HarmonyPatch::memoryBars: off, bars, forever
 static_assert(sizeof kMemoryNames / sizeof *kMemoryNames == sizeof kMemoryBars / sizeof *kMemoryBars, "Memory");
-constexpr const char* kRegisterNames[] = {"Low", "Mid", "High"};   // GroundPatch::registerOct 1, 2, 3
+// Ground Reg and Air Reg: GroundPatch::registerOct 1, 2, 3; AirGenPatch::registerOct 4, 5, 6.
+constexpr const char* kRegisterNames[] = {"Low", "Mid", "High"};
 constexpr const char* kUnisonNames[] = {"1", "2"};                 // BloomPatch::unison
 constexpr const char* kOnOff[] = {"Off", "On"};                    // a switch: 0 off, 1 on
 // Echo Div's options are kDelayDivs' names: the table holds the beats beside them, so its names are gathered here.
@@ -86,8 +87,14 @@ constexpr int firstUnlike() {
 
 static_assert(firstUnlike() == -1, "surface.py's option list for this parameter is not the engine's names (kOptionLists)");
 static_assert(PARAM_SPECS[P_B_BOCT].lo == -2.0f && PARAM_SPECS[P_B_BOCT].hi == 2.0f, "BloomPatch::bOctave -2..+2");
-static_assert(PARAM_SPECS[P_W_GRAINS].hi == static_cast<float>(Weather::kGrains), "Weather::kGrains is Grains' top");
-static_assert(PARAM_SPECS[P_A_MOTIF].hi == static_cast<float>(AirGen::kMotifMax), "AirGen::kMotifMax is Motif's top");
+static_assert(PARAM_SPECS[P_W_GRAINS].lo == 1.0f && PARAM_SPECS[P_W_GRAINS].hi == static_cast<float>(Weather::kGrains),
+              "Grains runs from 1 to Weather::kGrains");
+static_assert(PARAM_SPECS[P_A_MOTIF].lo == 3.0f && PARAM_SPECS[P_A_MOTIF].hi == static_cast<float>(AirGen::kMotifMax),
+              "Motif runs from 3 to AirGen::kMotifMax");
+// A saved project stores its values by key, but MPC stores them by index: the parameters of 0.0.2 keep theirs (the
+// sound ones to b_swaydiv's popup flag), M2's follow, and the preset stepper and the browser move up behind them.
+static_assert(P_B_SWAYDIV__OPEN == 97 && P_E_MODE == 98 && P_W_MEMTAP == 159 && P_PRESET == 160,
+              "MPC stores values by index: a parameter moved or added here moves saved projects' values (surface.py)");
 static_assert(PARAM_SPECS[P_E_DIV].hi == static_cast<float>(kNumDelayDivs - 1), "an option for every Echo division");
 
 float paramValue(int id, float n) {

@@ -389,6 +389,9 @@ void testPatchMap() {
     for (int k = 0; echoDivs && k < af::kNumDelayDivs; ++k)
         echoDivs = with(af::P_E_DIV, static_cast<float>(k)).echo.delay.divBeats == af::kDelayDivs[k].beats;
     CHECK(echoDivs && std::string(af::kDelayDivs[12].name) == "1/4." && af::kDelayDivs[12].beats == 1.5);
+    // Every division menu spells the bars alike: "1 Bar" (Echo's, the LFO list's, the strata's bar divisions).
+    CHECK(std::string(af::kDelayDivs[15].name) == "1 Bar" && std::string(af::kLfoDivs[9].name) == "1 Bar" &&
+          std::string(af::kBarDivNames[2]) == "1 Bar" && std::string(af::kLfoDivs[10].name) == "2 Bars");
     // Memory and Echo Div are the two lists that are neither a plain enum nor a Free / Sync pair.
     CHECK(memory && synthLists == static_cast<int>(std::size(lists)) + 2 + 2 * static_cast<int>(std::size(synced)));
     // Whole numbers, the taper, the continuous values in their units.
@@ -438,6 +441,101 @@ void testPatchMap() {
     }
     // The source of Weather is not a knob: no parameter sets weather.memory (the plugin does, with the loader).
     CHECK(!with(af::P_W_MEMTAP, 0.0f).weather.memory && !with(af::P_W_LEVEL, 1.0f).weather.memory);
+}
+
+// MPC stores a project's values by index, so a parameter moved or reordered moves saved projects' values (the state's
+// keys are no help to MPC's own storage). The first 98 (to b_swaydiv's popup flag) are 0.0.2's, in its order: their keys
+// and newlines, FNV-1a-64 (the standard offset basis) over the lot, taken from 0.0.2's params.json; M2's follow them,
+// and the preset stepper and the browser come after those (patch_map.cpp holds the numbers as it compiles).
+void testIndices() {
+    std::printf("== parameter indices\n");
+    uint64_t h = 14695981039346656037ull;
+    for (int i = 0; i < 98; ++i) {
+        for (const char* c = af::PARAM_INFO[i].key; *c; ++c) {
+            h ^= static_cast<unsigned char>(*c);
+            h *= 1099511628211ull;
+        }
+        h ^= '\n';
+        h *= 1099511628211ull;
+    }
+    if (h != 0x5b9e4ab6d140675bull) std::printf("  the first 98 keys fold to %016llx\n", static_cast<unsigned long long>(h));
+    CHECK(h == 0x5b9e4ab6d140675bull);
+    CHECK(af::P_B_SWAYDIV__OPEN == 97 && af::P_E_MODE == 98 && af::P_W_MEMTAP == 159 && af::P_PRESET == 160);
+}
+
+// Each of M2's parameters owns the Patch fields it sets, and nothing else. Every one moved alone, from its default to the
+// end farthest from it, with the rest at their defaults: exactly its fields change (bit for bit) and every other field
+// of the Patch stays as it was. That finds a knob that sets nothing, two that are swapped, and one that moves another's
+// field too, which the defaults (many are alike: 30%, 70%, 0) cannot.
+void testOwnership() {
+    std::printf("== every M2 parameter sets its own Patch fields\n");
+    // key -> the field newFields() calls it (nullptr: none).
+    static const struct {
+        const char* key;
+        const char* field;
+    } owns[] = {
+        {"e_mode", "e.mode"}, {"e_sync", "e.sync"}, {"e_time", "e.timeMs"}, {"e_div", "e.divBeats"},
+        {"e_feedback", "e.feedback"}, {"e_lowcut", "e.lowCutHz"}, {"e_highcut", "e.highCutHz"}, {"e_wow", "e.wow"},
+        {"e_duck", "e.duck"}, {"e_diffuse", "e.diffuse"}, {"e_return", "echoReturn"}, {"e_space", "echoSpace"},
+        {"g_echo", "groundEcho"}, {"b_echo", "bloomEcho"},
+        {"a_listen", "a.listen"}, {"a_mute", "a.mute"}, {"a_level", "a.level"}, {"a_tone", "a.toneHz"},
+        {"a_sound", "a.sound"}, {"a_decay", "a.decayS"}, {"a_density", "a.density"}, {"a_pattern", "a.pattern"},
+        {"a_reg", "a.registerOct"}, {"a_range", "a.rangeOct"}, {"a_gravity", "a.gravity"}, {"a_motif", "a.motif"},
+        {"a_mutate", "a.mutate"}, {"a_loop", "a.loop"}, {"a_looplen", "a.loopS"}, {"a_loopsync", "a.loopBeats"},
+        {"a_loopdiv", nullptr},   // Free: the division waits for Sync (the synced checks in testPatchMap move both)
+        {"a_rubato", "a.rubato"}, {"a_vel", "a.velSens"}, {"a_width", "a.width"}, {"a_space", "airSpace"},
+        {"a_echo", "airEcho"}, {"a_pan", "airPan"}, {"h_split", "split"},
+        {"w_listen", "w.listen"}, {"w_mute", "w.mute"}, {"w_level", "w.level"}, {"w_mode", "w.mode"},
+        {"w_position", "w.position"}, {"w_drift", "w.drift"}, {"w_spray", "w.spray"}, {"w_size", "w.sizeS"},
+        {"w_grains", "w.grains"}, {"w_pitch", "w.pitch"}, {"w_tokey", "w.toKey"}, {"w_reverse", "w.reverse"},
+        {"w_width", "w.width"}, {"w_tilt", "w.tilt"}, {"w_hp", "w.hpHz"}, {"w_duck", "w.duck"},
+        {"w_space", "weatherSpace"}, {"w_echo", "weatherEcho"}, {"w_pan", "weatherPan"}, {"w_memtap", "memoryTap"},
+    };
+    // The fields no knob sets: Echo's Spread, Drive, Mix and Glide (initEcho()'s) and where Weather's source is Memory.
+    static const char* const unexposed[] = {"e.spread", "e.drive", "e.mix", "e.glide", "w.memory"};
+
+    float norm[af::P_COUNT];
+    for (int i = 0; i < af::P_COUNT; ++i) norm[i] = af::PARAM_INFO[i].def;
+    const auto base = newFields(af::patchFromParams(norm));
+    // Every field is some knob's or listed as unexposed, once.
+    bool covered = base.size() == std::size(owns) - 1 + std::size(unexposed);
+    for (const Field& f : base) {
+        int n = 0;
+        for (const auto& o : owns) n += o.field && std::strcmp(o.field, f.name) == 0;
+        for (const char* u : unexposed) n += std::strcmp(u, f.name) == 0;
+        if (n != 1) std::printf("  field %s is claimed %d times\n", f.name, n);
+        covered = covered && n == 1;
+    }
+    CHECK(covered);
+    // Every parameter M2 added has a row, and every row a parameter.
+    int synth = 0, rows = 0;
+    bool listed = true, changed = true;
+    for (int i = af::P_E_MODE; i <= af::P_W_MEMTAP; ++i) {
+        if (af::PARAM_INFO[i].kind != af::Kind::Synth) continue;
+        ++synth;
+        const char* key = af::PARAM_INFO[i].key;
+        const char* want = nullptr;
+        int found = 0;
+        for (const auto& o : owns)
+            if (std::strcmp(o.key, key) == 0) {
+                want = o.field;
+                ++found;
+            }
+        if (found != 1) std::printf("  %s: %d rows\n", key, found);
+        listed = listed && found == 1;
+        rows += found;
+        float n[af::P_COUNT];
+        std::copy(norm, norm + af::P_COUNT, n);
+        n[i] = af::PARAM_INFO[i].def < 0.5f ? 1.0f : 0.0f;
+        const auto now = newFields(af::patchFromParams(n));
+        for (size_t f = 0; f < now.size(); ++f) {
+            const bool owned = want && std::strcmp(want, now[f].name) == 0;
+            if (owned == !sameBits(now[f].v, base[f].v)) continue;
+            std::printf("  %s %s %s (%g, was %g)\n", key, owned ? "does not set" : "also sets", now[f].name, now[f].v, base[f].v);
+            changed = false;
+        }
+    }
+    CHECK(listed && changed && synth == 58 && rows == synth && std::size(owns) == 58);
 }
 
 // The help lines (surface.py "help", shown on the status line after a move): every control a hand moves has one,
@@ -745,7 +843,9 @@ void paramsTests() {
     testFormats();
     testPopups();
     testHelp();
+    testIndices();
     testPatchMap();
+    testOwnership();
     testMacros();
     testExtremes();
     testExtremesM2();
