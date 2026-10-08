@@ -218,6 +218,39 @@ AF_INLINE void mixMono(const float* x, f2 P, f2 dP, f2* bus, int m) {
     }
 }
 
+// The pluck's burst noise, a sample on: white noise (x), then two one-poles at Tone (12 dB an
+// octave), whose output it returns. Every pass over a burst draws its noise here: the strike's pass
+// for the mean and the samples drawn as the burst plays must be the same numbers, or the mean
+// doesn't cancel.
+AF_INLINE float burstNoise(uint32_t& rng, float& lp1, float& lp2, float tone, float& x) {
+    x = randBipolar(rng);
+    lp1 += tone * (x - lp1);
+    lp2 += tone * (lp1 - lp2);
+    return lp2;
+}
+
+// The burst's window comes from a phasor (c, s) turned by (tc, ts) a sample: sin^2 (pi (i + 1/2) /
+// len) = (1 - c) / 2 before the turn.
+AF_INLINE void turnPhasor(float& c, float& s, float tc, float ts) {
+    const float nc = c * tc - s * ts;
+    s = c * ts + s * tc;
+    c = nc;
+}
+
+// The largest |x[i]| over m samples, and over `most`. NEON four at a time: in the loop that draws the
+// samples it took 5 of its 29 instructions a sample.
+AF_INLINE float peakOf(const float* x, int m, float most) {
+    int i = 0;
+#if AF_NEON
+    f4 mx = vdupq_n_f32(0.0f);
+    for (; i + 4 <= m; i += 4) mx = vmaxq_f32(mx, vabsq_f32(vld1q_f32(x + i)));
+    const float32x2_t h = vpmax_f32(vget_low_f32(mx), vget_high_f32(mx));
+    most = std::max(most, vget_lane_f32(vpmax_f32(h, h), 0));
+#endif
+    for (; i < m; ++i) most = std::max(most, std::fabs(x[i]));
+    return most;
+}
+
 // The pluck's loop state, as locals while a step runs (members could alias the buffers).
 struct Pluck {
     float* line;
@@ -227,31 +260,47 @@ struct Pluck {
 
 // The pluck's loop: the line read whole samples back, the allpass for the fraction (transposed, so
 // one state: y = eta x + s, s = x - eta y), the low-pass, the loop gain, plus the burst while it
-// lasts. The output is what goes into the line. Returns the sum of the output's squares.
-template <bool Burst>
-float pluckLoop(Pluck& k, const float* burst, f2 P, f2 dP, f2* bus, int m) {
+// lasts. The output is what goes into the line. Returns the sum of the output's squares. Wrap: the
+// read or the write runs past the line's end in this step, so each index is masked as it moves.
+template <bool Burst, bool Wrap>
+float pluckRun(Pluck& k, const float* burst, f2 P, f2 dP, f2* bus, int m) {
     float* const line = k.line;
-    const int delay = k.delay, mask = k.mask;
+    const int mask = k.mask;
     const float eta = k.eta, a = k.a, g = k.g;
-    int w = k.w;
+    int w = k.w, rd = (k.w - k.delay) & mask;
     float ap = k.ap, s = k.lp, e = 0.0f;
     for (int i = 0; i < m; ++i) {
-        const float r = line[(w - delay) & mask];
+        const float r = line[rd];
         const float y = eta * r + ap;
         ap = r - eta * y;
         s += a * (y - s);
         float x = g * s;
         if constexpr (Burst) x += burst[i];
         line[w] = x;
-        w = (w + 1) & mask;
+        if constexpr (Wrap) {
+            rd = (rd + 1) & mask;
+            w = (w + 1) & mask;
+        } else {
+            ++rd;
+            ++w;
+        }
         e += x * x;
         P = P + dP;
         bus[i] = panIn(bus[i], P, x);
     }
-    k.w = w;
+    k.w = w & mask;
     k.ap = ap;
     k.lp = s;
     return e;
+}
+
+// A step of the loop. Neither index wraps in most steps (each does once in kLine / m of them), and
+// those run without the masks (3.4k ARM instructions a block fewer with six plucks ringing).
+template <bool Burst>
+float pluckLoop(Pluck& k, const float* burst, f2 P, f2 dP, f2* bus, int m) {
+    const int last = k.mask + 1 - m, rd = (k.w - k.delay) & k.mask;
+    return k.w <= last && rd <= last ? pluckRun<Burst, false>(k, burst, P, dP, bus, m)
+                                     : pluckRun<Burst, true>(k, burst, P, dP, bus, m);
 }
 
 } // namespace
@@ -454,7 +503,8 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
         // Its mean is needed from its first sample, so the strike draws the whole noise once for it
         // (the statistics alone, nothing stored), and the samples are drawn again, the same, as they
         // go in. Built whole at the strike, the 1349 samples of note 24 took 72k instructions in its
-        // block, 52 a sample; this pass takes 25 a sample, and building them as they play 14.
+        // block, 52 a sample; this pass takes 21 a sample, and drawing them as they play costs 15 a
+        // sample more than the ring.
         //
         // Its level doesn't wait for the noise's fold: the burst goes in at the sound's scale over the
         // RMS the windowed noise has on average when folded onto a period, not the one it turns out to
@@ -465,21 +515,25 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
         // 0.3 at 48, 0.55 at 71, on top of the spread the filtered noise has anyway (0.1 to 0.9 dB
         // at Tone 16000, more at a darker Tone). Accepted to keep the strike's pass lean: the measured
         // RMS needs the noise folded onto a period, a load and a store a sample and a pass more.
+        //
+        // The weights ride on the window's phasor: started at half and turned by p^-1 as well, it
+        // gives the weighted window, h - c with h = p^-i / 2, as it turns (2.7k fewer at note 24).
+        // Two samples a pass let the state go from one set of registers to the other and back,
+        // where one a pass copied three of them every sample (2.7k fewer again; the draw as the burst
+        // plays gains nothing from it).
         Noise& z = v.noise;
         z.rng = rng_;
         uint32_t rng = rng_;
-        float lp1 = 0.0f, lp2 = 0.0f, sum = 0.0f, wsum = 0.0f, pc = c0, ps = s0, q = 1.0f;
+        float lp1 = 0.0f, lp2 = 0.0f, x, sum = 0.0f, wsum = 0.0f, pc = 0.5f * c0, ps = 0.5f * s0, h = 0.5f;
+        const float tcq = tc * dcTurn, tsq = ts * dcTurn;
+#pragma GCC unroll 2
         for (int i = 0; i < len; ++i) {
-            const float x = randBipolar(rng);
-            lp1 += tone * (x - lp1);
-            lp2 += tone * (lp1 - lp2);
-            const float win = 0.5f - 0.5f * pc, nc = pc * tc - ps * ts;
-            ps = pc * ts + ps * tc;
-            pc = nc;
-            const float wq = win * q;
-            sum += lp2 * wq;
+            const float u = burstNoise(rng, lp1, lp2, tone, x);
+            const float wq = h - pc;
+            turnPhasor(pc, ps, tcq, tsq);
+            h *= dcTurn;
+            sum += u * wq;
             wsum += wq;
-            q *= dcTurn;
         }
         rng_ = rng;
         z.lp1 = 0.0f;
@@ -503,9 +557,9 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
         return;
     }
 
-    // A short burst (2 ms, note 72 and up) is built at the strike: kBurst samples, the strike 4.6k to
-    // 7k instructions with the tuning. Its level: what rings is the burst folded onto one period (over
-    // note 84 it makes more than two passes, and gathers in the loop as it goes in), so the raw
+    // A short burst (2 ms, note 72 and up) is built at the strike: kBurst samples, the strike 6.4k
+    // to 6.6k instructions with the tuning. Its level: what rings is the burst folded onto one period
+    // (over note 84 it makes more than two passes, and gathers in the loop as it goes in), so the raw
     // windowed noise folded so is what sets it: the burst goes in at the sound's scale over that
     // fold's RMS. Every strike then rings about as loud at every pitch, where the noise's own luck
     // put up to 8 dB between two strikes at the top of the keyboard; a darker Tone takes its share
@@ -515,15 +569,12 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
     v.noise.made = len;
     std::fill(v.line, v.line + fold, 0.0f);
     uint32_t rng = rng_;
-    float lp1 = 0.0f, lp2 = 0.0f, sum = 0.0f, wsum = 0.0f, pc = c0, ps = s0, q = 1.0f;
+    float lp1 = 0.0f, lp2 = 0.0f, x, sum = 0.0f, wsum = 0.0f, pc = c0, ps = s0, q = 1.0f;
     for (int i = 0, j = 0; i < len; ++i) {
-        const float x = randBipolar(rng);
-        lp1 += tone * (x - lp1);
-        lp2 += tone * (lp1 - lp2);
-        const float win = 0.5f - 0.5f * pc, nc = pc * tc - ps * ts;
-        ps = pc * ts + ps * tc;
-        pc = nc;
-        v.burst[i] = lp2 * win;
+        const float u = burstNoise(rng, lp1, lp2, tone, x);
+        const float win = 0.5f - 0.5f * pc;
+        turnPhasor(pc, ps, tc, ts);
+        v.burst[i] = u * win;
         sum += v.burst[i] * q;
         wsum += win * q;
         q *= dcTurn;
@@ -535,47 +586,40 @@ void AirVoices::beginPluck(Voice& v, const Strike& s, double hz) {
     for (int j = 0; j < fold; ++j) energy += v.line[j] * v.line[j];
     const float rms = std::sqrt(energy / static_cast<float>(fold));
     const float mean = sum / wsum, scale = rms > 0.0f ? kScale[AS_KALIMBA] / rms : 0.0f;
-    float pk = 0.0f;
     pc = c0;
     ps = s0;
     for (int i = 0; i < len; ++i) {
-        const float win = 0.5f - 0.5f * pc, nc = pc * tc - ps * ts;
-        ps = pc * ts + ps * tc;
-        pc = nc;
+        const float win = 0.5f - 0.5f * pc;
+        turnPhasor(pc, ps, tc, ts);
         v.burst[i] = (v.burst[i] - mean * win) * scale;
-        pk = std::max(pk, std::fabs(v.burst[i]));
     }
     std::fill(v.burst + len, v.burst + len + kChunk, 0.0f);   // a step running past the end reads zeros
     // The line: only what the loop reads before writing it needs clearing.
     for (int k = kLine - whole; k < kLine; ++k) v.line[k] = 0.0f;
-    v.env = pk;
+    v.env = peakOf(v.burst, len, 0.0f);
     v.level = v.env * v.vel;
 }
 
-// m samples of a long burst into out, as the strike's statistics pass drew them, the mean out and at
-// its scale. Returns the sum of their squares; the noise's peak so far in z.peak.
+// m samples of a long burst into out, as the strike's pass for the mean drew them, the mean out and at
+// its scale. Returns the sum of their squares; the burst's peak so far in z.peak.
 float AirVoices::drawBurst(Noise& z, float* out, int m) {
     uint32_t rng = z.rng;
     const float tone = z.tone, tc = z.tc, ts = z.ts, mean = z.mean, scale = z.scale;
-    float lp1 = z.lp1, lp2 = z.lp2, pc = z.c, ps = z.s, pk = z.peak, e = 0.0f;
+    float lp1 = z.lp1, lp2 = z.lp2, x, pc = z.c, ps = z.s, e = 0.0f;
     for (int i = 0; i < m; ++i) {
-        const float x = randBipolar(rng);
-        lp1 += tone * (x - lp1);
-        lp2 += tone * (lp1 - lp2);
-        const float win = 0.5f - 0.5f * pc, nc = pc * tc - ps * ts;
-        ps = pc * ts + ps * tc;
-        pc = nc;
-        const float y = (lp2 * win - mean * win) * scale;
+        const float u = burstNoise(rng, lp1, lp2, tone, x);
+        const float win = 0.5f - 0.5f * pc;
+        turnPhasor(pc, ps, tc, ts);
+        const float y = (u * win - mean * win) * scale;
         out[i] = y;
         e += y * y;
-        pk = std::max(pk, std::fabs(y));
     }
     z.rng = rng;
     z.lp1 = lp1;
     z.lp2 = lp2;
     z.c = pc;
     z.s = ps;
-    z.peak = pk;
+    z.peak = peakOf(out, m, z.peak);
     z.made += m;
     return e;
 }
@@ -775,6 +819,10 @@ AirVoices::VoiceView AirVoices::voice(int i) const {
     if (v.now.sound == AS_KALIMBA) {
         w.burst = v.noise.made;
         w.burstLen = v.burstLen;
+        w.loopDelay = v.delay;
+        w.loopEta = v.eta;
+        w.loopA = v.lpA;
+        w.loopG = v.loopG;
     }
     return w;
 }
