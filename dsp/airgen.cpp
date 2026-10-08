@@ -171,13 +171,13 @@ int AirGen::fold(int note) const {
 }
 
 // The candidate nearest `note`, the lower on a tie, that repeats none of `keep` (keep[0..nNear) the
-// notes next to it, the rest those two away), giving way a step at a time (the header's list for
-// moved notes): allowed, then any candidate, keeping all of them out; the same keeping out only the
-// next ones; then the nearest allowed.
+// notes next to it, the rest those two away), giving way a step at a time as a draw does, Gravity
+// before the rule (the header's list for moved notes): allowed, keeping all of them out, then only
+// the next ones; any candidate, the same two ways; then the nearest allowed.
 int AirGen::nearestAllowed(int note, const int* keep, int nNear, int nKeep) const {
     for (int level = 0; level < 5; ++level) {
-        const bool any = level == 1 || level == 3;
-        const int out = level < 2 ? nKeep : level < 4 ? nNear : 0;   // how many of keep kept out
+        const bool any = level == 2 || level == 3;
+        const int out = level == 0 || level == 2 ? nKeep : level < 4 ? nNear : 0;   // how many of keep kept out
         int best = -1;
         for (int i = 0; i < nCand_; ++i) {
             const int c = cand_[i];
@@ -218,7 +218,7 @@ int AirGen::pick(const int* idx, int n, const int* ex, int nEx, double u) const 
         }
         return lastOk;   // rounding at the top end
     }
-    return cand_[idx[0]];   // never: level 5 keeps nothing out, and the tonic is always a candidate
+    return cand_[idx[0]];   // never: the last level keeps nothing out, and the tonic is always a candidate
 }
 
 void AirGen::remember(int note) {
@@ -511,18 +511,20 @@ int AirGen::replayBase(const Recorded& e) const {
 }
 
 // The recording's event `i` as it replays: replayBase(), except that a generated note that would
-// repeat the note before it (the recording coming round, its last note then its first; or two notes
-// brought together by a change) goes to the nearest that keeps the rule against the note before and
-// the recorded one after (so the move doesn't make the next one repeat it in turn), and the one
-// before that. A loop of one note replays it as it is: a pass apart, it is the loop's pulse. Then
-// into kChordLowest..kChordHighest (Air's voices' range) by octaves: the player's notes can be
+// repeat either of the last two notes (the recording coming round, a b c a b replaying a b | a b; or
+// notes brought together by a change) goes to the nearest that keeps the rule against them and the
+// two recorded after it, the note before and the next first (so the move doesn't make the next ones
+// repeat it in turn). A loop of two keeps only the note before out: going round, each of its notes
+// is two from itself. A loop of one note replays it as it is: a pass apart, it is the loop's pulse.
+// Then into kChordLowest..kChordHighest (Air's voices' range) by octaves: the player's notes can be
 // anywhere.
 int AirGen::replayNote(int i) const {
     const Recorded& e = rec_[i];
     int note = replayBase(e);
-    if (!e.played && note == last_ && nRec_ > 1) {
-        const int keep[3] = {last_, replayBase(rec_[i + 1 < nRec_ ? i + 1 : 0]), last2_};
-        note = nearestAllowed(note, keep, 2, 3);
+    if (!e.played && ((nRec_ > 1 && note == last_) || (nRec_ > 2 && note == last2_))) {
+        const int next = i + 1 < nRec_ ? i + 1 : 0, next2 = next + 1 < nRec_ ? next + 1 : 0;
+        const int keep[4] = {last_, replayBase(rec_[next]), last2_, replayBase(rec_[next2])};
+        note = nearestAllowed(note, keep, 2, nRec_ > 2 ? 4 : 2);
     }
     while (note < kChordLowest) note += 12;
     while (note > kChordHighest) note -= 12;

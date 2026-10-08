@@ -43,17 +43,20 @@
 // A note that is moved rather than drawn (a motif's after a change, a loop's replay that would
 // repeat) goes to the nearest candidate, the lower on a tie, that keeps the rule against the notes
 // around it: for a motif's note its neighbours within two, round the motif, the two next to it
-// first; for a replay the last two notes and the loop's next, the note before and that one first.
-// It gives way a step at a time too, but the rule comes before Gravity here: a motif or a loop plays
-// its notes again pass after pass, so a repeat moved into it would come back every pass.
+// first; for a replay the last two notes and the loop's next two, the note before and the next
+// first. It gives way a step at a time as a draw does, Gravity before the rule within two (the
+// plan's order: the last two notes are never chosen; if that leaves nothing, only the last one):
 //   1. allowed, repeating none of them;
-//   2. any candidate (of weight 0 too), repeating none of them;
-//   3. allowed, repeating neither next to it;
+//   2. allowed, repeating neither next to it;
+//   3. any candidate (of weight 0 too), repeating none of them;
 //   4. any candidate, repeating neither next to it;
 //   5. the nearest allowed.
-// With three candidates step 4 always finds one. So a chord that leaves one allowed tone in the
-// range (Gravity 1) doesn't make a motif or a loop that tone throughout: the tone goes where the
-// rule lets it, the nearest other candidates around it.
+// With three candidates step 4 always finds one. So Gravity 1 keeps a motif on the chord where the
+// chord has fewer tones in the range than the motif has notes (a triad's four in Range 1 against
+// Motif 5): a tone may then come back two notes on, and is passed over as the motif plays, unless
+// every note left would be (below; Motif 8 against two or three tones), when it plays, as a draw's
+// would. Only a chord that leaves one allowed tone in the range puts other candidates in: that tone
+// can't be next to itself, so a motif or a loop isn't that tone throughout.
 //
 // THE PATTERNS:
 // - Random: each event a draw as above.
@@ -68,32 +71,32 @@
 //   order, one note per event. At the end of each pass, with probability Mutate, one of its notes
 //   (drawn) moves to its neighbour (up or down, drawn): the next allowed candidate, which is the
 //   next scale tone while Gravity < 1 and the next chord tone at 1, so Gravity 1 keeps the motif on
-//   the chord (while the chord has the tones in the range to keep the rule). It moves only if that
-//   keeps "no repeat within two" round the motif; otherwise the other way, then the notes after it
-//   in turn; none can: no change this pass. A Register change moves the whole motif by its octaves,
-//   keeping its shape; then a note still outside the range (Range made smaller, or the key moved
-//   the tonic) folds in by octaves. A key, scale or chord change, or Gravity crossing 1 (where what
-//   is allowed changes), then moves each note no longer allowed; any of these, or a change of the
-//   range, moves a note that found no octave in the range, or that now repeats one within two of
-//   it. Each such note is moved as above, keeping the rule against its neighbours. A Motif change
-//   draws a new motif from the next pass on.
+//   the chord (a chord of one tone in the range aside: above). It moves only if that keeps "no
+//   repeat within two" round the motif; otherwise the other way, then the notes after it in turn;
+//   none can: no change this pass. A Register change moves the whole motif by its octaves, keeping
+//   its shape; then a note still outside the range (Range made smaller, or the key moved the tonic)
+//   folds in by octaves. A key, scale or chord change, or Gravity crossing 1 (where what is allowed
+//   changes), then moves each note no longer allowed; any of these, or a change of the range, moves
+//   a note that found no octave in the range, or that now repeats one within two of it. Each such
+//   note is moved as above, against its neighbours. A Motif change draws a new motif from the next
+//   pass on.
 // - Echo: the motif is the last Motif notes the player gave (played()), each moved by octaves into
 //   the range (a pitch class with no octave in a range under an octave: the nearest allowed note to
-//   its octave nearest the range),
-//   a note repeating either of the two kept before it dropped, round the motif's end too (the rule
-//   applied to the echo: the plan dropped only consecutive repeats), then replayed, mutated and
-//   moved as a Constellation's: so a Register or Range change keeps the player's pitch classes
-//   (62 64 67 at Register 4 are 74 76 79 at 5). A new echo takes over at the start of the pass
-//   after the player gave a note.
+//   its octave nearest the range), a note repeating either of the two kept before it dropped, round
+//   the motif's end too (the rule applied to the echo: the plan dropped only consecutive repeats),
+//   then replayed, mutated and moved as a Constellation's: so a Register or Range change keeps the
+//   player's pitch classes (62 64 67 at Register 4 are 74 76 79 at 5). A new echo takes over at the
+//   start of the pass after the player gave a note.
 //   Until the player's notes leave three after the drops, Echo plays the Constellation's motif: a
 //   figure of one or two notes can't be replayed without repeats.
 // Where the last two notes aren't the motif's own (a new echo, a snap, a pattern switched midway, a
-// loop gone off), or the motif holds a repeat within two (drawn when the weights left too little),
-// its next note may repeat one of them: it is passed over for the next one in the pass that doesn't;
-// none does: the pass ends there and the next pass is looked in; still none: the next that isn't
-// the last note. None at all: a motif drawn one note at a time between another pattern's notes,
-// which its draws can't see, can be one note throughout (60 60 60 in the corner above). Then the
-// note is moved as above, against the last two, and the motif stays as it is.
+// loop gone off), or the motif holds a repeat within two (drawn when the weights left too little,
+// or moved onto a chord with fewer tones in the range than it has notes), its next note may repeat
+// one of them: it is passed over for the next one in the pass that doesn't; none does: the pass
+// ends there and the next pass is looked in; still none: the next that isn't the last note. None at
+// all: a motif drawn one note at a time between another pattern's notes, which its draws can't see,
+// can be one note throughout (60 60 60 in the corner above). Then the note is moved as above,
+// against the last two, and the motif stays as it is.
 //
 // VELOCITY: 0.7 x (1 - 0.5 x Rubato x u), u uniform 0..1. The player's notes keep their own.
 //
@@ -111,21 +114,25 @@
 // - nothing is generated (the clock runs on, silent); the player's notes are added to the
 //   recording (overdub) and replayed from the next pass on; the replays count among the last two
 //   notes, so the first note generated after Loop goes off repeats neither;
-// - a generated note replays in the range as it is now: moved by Register's octaves since it was
-//   recorded, keeping the loop's shape as a motif does, then, still outside the range (Range made
-//   smaller, or the key moved the tonic), folded in by octaves, its pitch class kept (no octave of
-//   it in the range: the nearest allowed to its nearest octave). Recorded before a change of key,
-//   scale or chord, it then goes to the nearest allowed candidate, the lower on a tie. So a loop
-//   recorded before a Register or Range change keeps its pitch classes through a chord change
-//   rather than piling up at the range's edge. The player's notes stay where they were played;
-//   after a change of key, scale or chord each goes to the nearest note whose pitch class is
-//   allowed. Every note moves from what was recorded, so the loop comes back as it was when the
-//   harmony and the range do;
-// - a generated note that would repeat the note before it (where the recording comes round, its
-//   last note then its first, or two notes brought together by a change) is moved as above, the
-//   note before and the loop's next kept out first, so that the next doesn't then repeat it in turn,
-//   and so on round the loop. A loop of one note replays it as it is: a pass apart, it is the loop's
-//   pulse, not a repeat;
+// - a generated note replays in the range as it is now (the author's decision: the loop follows
+//   Register and Range, as a motif does): moved by Register's octaves since it was recorded, keeping
+//   the loop's shape, then, still outside the range (Range made smaller, or the key moved the
+//   tonic), folded in by octaves, its pitch class kept (no octave of it in the range: the nearest
+//   allowed to its nearest octave). Recorded before a change of key, scale or chord, it then goes
+//   to the nearest allowed candidate, the lower on a tie. So a loop recorded before a Register or
+//   Range change keeps its pitch classes through a chord change rather than piling up at the
+//   range's edge. The player's notes stay where they were played, so after a Register change they
+//   can sit octaves from the generated ones; after a change of key, scale or chord each goes to the
+//   nearest note whose pitch class is allowed. Every note moves from what was recorded, so the loop
+//   comes back as it was when the harmony and the range do; and a pass's notes are the first pass's
+//   (the plan's check) only while Register and Range stay put;
+// - a generated note that would repeat either of the last two notes (where the recording comes
+//   round: its last note then its first, or a b c a b replaying a b | a b; or notes brought
+//   together by a change) is moved as above, against the last two and the loop's next two, so that
+//   the next ones don't then repeat it in turn, and so on round the loop. A loop of two keeps out
+//   only the note before: going round, each of its notes is two from itself, and it replays as it
+//   is unless a change brought its two notes together. A loop of one note replays it as it is: a
+//   pass apart, it is the loop's pulse, not a repeat;
 // - every replayed note is moved by octaves into 24..108 (harmony.h's chord range, Air's voices'):
 //   the player's notes can be anywhere.
 // A pass is Loop s long (2..120), free. Synced (loopBeats > 0: 1..256 quarter notes) it is
@@ -152,16 +159,16 @@
 // player gives Air is struck by Air and passed on as played(note, vel, 0): the plugin splits its
 // blocks at every MIDI event, so the note sounds at the next step()'s first sample.
 //
-// COST: the ARM instructions of a 128-sample block, built with the device's flags and counted by an
-// instruction-counting qemu (the difference of 40 000 and 20 000 blocks, over 20 000). step() alone:
-// 133 generating at Density 60 without a loop; 327 at Density 60 with Loop on (16 s, replaying); 384
-// replaying a full loop (64 events every 2 s, synced, Rubato 1). With set() every block, as Air
-// calls it: 319, 512 and 580. These were counted before the review's fixes, which add the range's
-// ends to set() and a fold and a compare to each replayed note (count pending). A Range or Gravity
-// knob turning no longer works the candidates out every block: Range only where an end of the range
-// crosses a semitone, Gravity never. Air's share of the budget is 32k a block
-// (docs/plans/2026-10-07-m2-weather.md): the generator is about 2% of it (count pending). On the
-// device: pending.
+// COST: the ARM instructions of a 128-sample block, built with the device's flags and counted by the
+// insn plugin under the instruction-counting qemu (the ones the Makefile's arm-icount uses): the
+// difference of 40 000 and 20 000 blocks after 20 s, over 20 000. step() alone: 144 generating at
+// Density 60 without a loop; 342 at Density 60 with Loop on (16 s, replaying); 395 replaying a full
+// loop (64 events every 2 s, synced, Rubato 1). With set() every block, as Air calls it: 343, 541 and
+// 604. A knob turning every block costs next to nothing more: Range swept 0.5 to 3, 356 (Density 60);
+// Gravity swept 0 to 0.99, 548 (with the 16 s loop). Counted the same way before the review's fixes,
+// when every change of either worked the candidates out again: 141, 334, 384; 318, 510, 570; the
+// sweeps 3090 and 3572. Air's share of the budget is 32k a block
+// (docs/plans/2026-10-07-m2-weather.md): the generator is under 2% of it. On the device: pending.
 #include "common.h"
 #include "harmony.h"
 
@@ -262,7 +269,7 @@ private:
     bool noneAllowed() const { return !(p_.gravity < 1.0f) && chord_ == 0; }   // no weight above 0: all allowed
     bool allowed(int i) const { return p_.gravity < 1.0f || chord_ == 0 || chordTone(i); }
     int indexOf(int note) const;                       // the candidate's index, or -1
-    int fold(int note) const;                          // into the range by octaves (the header's Echo)
+    int fold(int note) const;                          // into the range by octaves: Echo, moved motifs, replays
     // The candidate nearest `note` that keeps the rule against `keep` as far as it can (the header's
     // list for moved notes); keep[0..nNear) are the notes next to it.
     int nearestAllowed(int note, const int* keep, int nNear, int nKeep) const;
