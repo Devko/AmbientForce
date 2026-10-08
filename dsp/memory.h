@@ -6,9 +6,10 @@
 //
 // Recording (EffectForce's Grain recording, dsp/grain.cpp): write() stages each sample (one not
 // finite, NaN or an infinity, made 0) scaled by 1/2 (6 dB of headroom: the tap may pass 0 dBFS
-// before the limiter) and clamped, and records them kBlock (128) frames at a time: level 0 rounded to the nearest 16-bit
-// value; each pair of frames (even, odd: the ring's own pairs, where Weather's level offsets put
-// them) through the halfband decimator into level 1, each pair of those into level 2, from the
+// before the limiter) and clamped, and records them kBlock (128) frames at a time: level 0 rounded
+// to the nearest 16-bit value; each pair of frames (even, odd: the ring's own pairs, where
+// Weather's level offsets put them) through the halfband decimator into level 1, each pair of
+// those into level 2, from the
 // floats before they were rounded, as grainsrc.cpp makes a file's; the guard frames written as the
 // ring's first frames are. The decimator is halfband.h's FrameDecimator, StereoDecimator's filter
 // over a run of frames as they lie (the same output, measured; half the instructions). Taking 128
