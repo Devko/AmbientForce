@@ -181,9 +181,11 @@ constexpr int kCopyMargin = 48;                   // frames either side of a gra
 constexpr int kCopyStride = Weather::kCopyFrames + 64;
 // A step's reads reach kChunk + 2 staged samples (a group running past the step) at most kLevel1
 // frames a sample (level 0 is read up to 1.26, level 1 up to 1.1, level 2 up to 1 and a hair with
-// Cloud's detune), plus the cubic's taps and the base's frames: 34 x 1.26 + 3 = 45.8 frames from the
-// step's position, inside the margin. A released grain reads at most kModeFade samples more, which fit a copy with that
-// margin either side: 882 x 1.26 + 2 x 48 + 4 = 1211 frames of 1280.
+// Cloud's detune), plus the cubic's taps and the base's frames: 34 x 1.26 + 3 = 45.8 frames from
+// the step's position, inside the margin. A released grain reads at most kModeFade samples more,
+// which fit a copy with that margin either side: 882 x 1.26 + 2 x 48 + 4 = 1211 frames of 1280.
+// kLevel1 bounds every level's rate only while a grain goes no higher than +24 and the detune: a
+// wider pitch range needs both asserts again.
 static_assert((kChunk + 2) * kLevel1 + 3 <= kCopyMargin, "a copy's margin covers a step's reach");
 static_assert(Weather::kModeFade * kLevel1 + 2 * kCopyMargin + 4 <= Weather::kCopyFrames,
               "a copy holds what a released grain has left to read");

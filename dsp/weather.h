@@ -68,7 +68,11 @@
 // the gate opens again, when Stream and Stretch start from the anchor afresh. Grains go on starting
 // while it fades. With nothing to hear (level 0 or muted, the glide down done) there is nothing to
 // fade: turned off then, or reaching it while it fades out, the gate closes at once. The engine
-// may be skipping Weather, and a fade left part done would play out when the level came back.
+// may be skipping Weather, and a fade left part done would play out when the level came back. So a
+// gate turned off and on again while Weather is silent opens from -60 dB: the level coming back
+// fades in over kGateS, not the level's 10 ms. Within one call order counts: gate(false) before
+// set() raising the level keeps Weather silent, set() first plays the gate's fade out (the engine
+// picks one on purpose).
 //
 // Changes: Pitch, To Key, Size, Grains, Spray, Reverse and Width take effect with the next grain. A
 // mode change fades every grain out over 20 ms (EffectForce's mode fade) while the new mode's grains

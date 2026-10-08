@@ -758,15 +758,15 @@ void testReverse() {
 // Backward grains born within a step's reach of a level's first frame: a grain starting part way
 // into a step still reads whole groups of four, past its first step's last sample, and every one
 // of those reads must stay inside the level (ASan watches the frames before it). The anchor 25 to
-// 40 frames in, short reversed grains at rate 1, at 1.26 (+4, the fastest level 0 is read at) and
-// on levels 1 and 2.
+// 40 of the read level's frames in, short reversed grains at rate 1, at 1.26 (+4, the fastest level
+// 0 is read at) and on levels 1 and 2 (+12 and +24, where a level frame is 2 and 4 of the source's).
 void testBackwardsNearTheStart() {
     std::printf("== weather: backward reads near a level's start\n");
     const auto sb = source(whiteNoise(kSec, 0.5f, 95), whiteNoise(kSec, 0.5f, 96));
     const double frames = static_cast<double>(sb->src.frames);
     bool finite = true;
     for (float semis : {0.0f, 4.0f, 12.0f, 24.0f})
-        for (double in = 25.5; in <= 40.0; in += 1.5) {
+        for (double level = semis > 19.0f ? 4.0 : semis > 4.0f ? 2.0 : 1.0, in = 25.5; in <= 40.0; in += 1.5) {
             Weather w;
             w.seed(71);
             af::WeatherPatch p = loud();
@@ -776,7 +776,7 @@ void testBackwardsNearTheStart() {
             p.sizeS = 0.02f;
             p.grains = 16;
             p.pitch = semis;
-            p.position = static_cast<float>(in / frames);
+            p.position = static_cast<float>(in * level / frames);
             w.set(p, af::HarmonyPatch{});
             w.gate(true);
             const Out o = play(w, &sb->src, kSec / 2);
