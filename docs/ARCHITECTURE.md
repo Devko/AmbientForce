@@ -47,6 +47,7 @@ flowchart LR
 | `dsp/harmony.*` | The harmony brain: scales, Input mapping, diatonic chords, voicings, voice leading, the tunings, and the harmony memory (keys and their mapped notes, the current chord, the memory's timer). Also the `Listen` modes every stratum shares |
 | `dsp/ground.*` | Ground, the drone: five partials on one table, beating in Hz, Gravity, the root's octave and Register, the fade, Body, Breath, Tone, Width |
 | `dsp/bloom.*` | Bloom, the chord voices: six voices of coupled oscillators, breath, the SVF, the envelope, unison, allocation and owners, the strum, voice-led moves, the tail handoff |
+| `dsp/airvoices.*` | Air's voices: six that ring once struck. Glass, Bowl, Bar and Bell as six decaying complex one-poles each, four to a vector; Kalimba, a Karplus-Strong pluck (an allpass for the period's fraction, the loop low-pass at Tone, a burst of noise); Felt on the Felt Piano table, Age moving as it fades. Allocation and the steal's fade, pans, sleeping |
 | `dsp/lifeosc.h` | The lifetime oscillator (header-only): the Hermite and linear table reads, frame crossfade and mip choice, `LifeScan` (Age, Sway, Smear), the Couple modes |
 | `dsp/lifetime.*` | The table library: eight life models (additive, every harmonic its own decay, beating and formant path) and four digital waves; `TableSet`, the atomic slots the audio thread reads |
 | `dsp/wavetable.*` | PolyForce's wavetable layout: 11 mip levels of their own lengths, 16-bit samples with a scale per frame, `mipFor`, and the band-limited frame builder (an inverse FFT per level) |
@@ -74,6 +75,7 @@ flowchart LR
 | `presets/Factory/` | Factory presets: `NN_Category/NN_Name.afp`, a folder per browser category |
 | `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
 | `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
 | `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
