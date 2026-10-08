@@ -97,26 +97,29 @@ a little over the shipped build's), µs per block:
 ## Instruction counts
 
 ARM instructions per block, the whole plugin through `VSTPluginMain` (the bench's cases, from
-`make arm-icount`: the plain build of 0.0.2 by Ubuntu 24.04's `arm-linux-gnueabihf-g++` 13.3.0, run
-with its glibc 2.39 and libstdc++, counted by qemu 8.2.2's `insn` plugin; counts compare only with
-counts from the same qemu, compiler, libraries and bench, [Building](BUILDING.md#instruction-counts)
-says why), and each stratum on its own (from the headers in `dsp/`, which give the figures):
+`make arm-icount`: the plain build of 0.0.2 as released, `d037d2d`, by Ubuntu 24.04's
+`arm-linux-gnueabihf-g++` 13.3.0, run with its glibc 2.39 and libstdc++, counted by qemu 8.2.2's
+`insn` plugin; counts compare only with counts from the same qemu, compiler, libraries and bench,
+[Building](BUILDING.md#instruction-counts) says why), and each stratum on its own (from the headers
+in `dsp/`, which give the figures):
 
-| Case | ARM instructions per block | By ~1 ns an instruction | On the device (avg) |
+| Case | ARM instructions per block | By ~1 ns an instruction | On the device (avg, M1.1 `4788a5d`) |
 |---|---|---|---|
-| idle | 1.1k | 0.04% | 0.11% |
-| init chord | 198.0k | 6.8% | 4.20% |
-| drone | 163.0k | 5.6% | 3.42% |
-| bloom 6x2 | 314.3k | 10.8% | 6.68% |
-| worst (its re-strike's block) | 396.1k (413.3k) | 13.6% (14.2%) | 8.95% |
+| idle | 1.2k | 0.04% | 0.11% |
+| init chord | 197.2k | 6.8% | 4.20% |
+| drone | 162.2k | 5.6% | 3.42% |
+| bloom 6x2 | 313.0k | 10.8% | 6.68% |
+| worst (its re-strike's block) | 394.5k (411.7k) | 13.6% (14.2%) | 8.95% |
 
 The worst case's figure is the 512 blocks' average, one re-strike among them. The re-strike's own
-block (the twelve keys' events, six voices taken from their release) counts 413.3k, the 64 blocks
-before it 399.5k a block. Both come from the same main-thread counts, run by hand: the re-strike's
+block (the twelve keys' events, six voices taken from their release) counts 411.7k, the 64 blocks
+before it 397.9k a block. Both come from the same main-thread counts, run by hand: the re-strike's
 keys go in before block 689 after the 2 s (counting from 0), so `afbench <so> --icount worst 690`
 less `689` is that block alone, and `689` less `625`, over 64, the blocks before it. The
-profile-guided build, which the device runs, counts 1–3% either side of these: 195.3k, 158.0k,
-318.0k and 399.9k.
+profile-guided build, which the device runs, counts 1–3% either side of these: 195.0k, 157.6k,
+318.0k and 399.7k (idle 1.1k). The re-review of `8c94203` took 0.8k to 1.6k a block off every case
+(`pullPhase` without `exp` on a full step); the Space fix of 0.0.2 put back 30 instructions a block
+(4 idle).
 
 These figures replace the ones this table had through M1 (init chord 210k, drone 175k, bloom 6x2
 355k, worst 423k, 433k where it re-strikes), which came from another qemu build and ran 7–14% over

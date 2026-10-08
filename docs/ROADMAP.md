@@ -22,8 +22,11 @@ The milestones come from the [concept](CONCEPT.md#14-roadmap); M1's tasks from
   `docs/PROBE.md`.
 - 🔜 **A listening session** on real speakers: every factory preset, Init, the strata's ranges; the
   presets and voicing constants tuned from it.
-- ⬜ **0.0.1**, the first release, from a tag; the release zip installed and played, then a
-  `tested.json` entry and the plugin catalog's.
+- ✅ **0.0.2, the first release** (2026-10-08, tag `v0.0.2`; 0.0.1 was never released): on the
+  Force from a local build of the tag. 🔜 Played, then a `tested.json` entry for CI's release
+  package and the plugin catalog's.
+- 🔜 **M2: Weather**, from [its plan](plans/2026-10-07-m2-weather.md): Tasks 1–5 done (Echo, Air's
+  voices and generator, Weather's grains, as modules not yet in the engine), Task 6 next.
 
 ## M1: First light
 
@@ -46,7 +49,7 @@ Bloom 6×2 with Ground and Space at p99 ≤ 15% of the block.
 | 10 | 16 factory presets, each in its own key, level-matched at −16 LUFS on an ambient phrase (`tools/phrase.h`); `make demos` maps each one | ✅ |
 | 11 | Bench cases (the worst with motion), a PGO trainer for the presets, an offline soak that fails on the guard and watches the limiter | ✅ |
 | 12 | Docs | ✅ |
-| 13 | The device run: installed (a snapshot of m1, 2026-10-07) ✅; `make bench-device` ✅ (all five cases pass, worst p99 10.6%; the tables built in 1.6–1.7 s); playing it, the probe questions, listening 🔜; `tested.json` with the first release ⬜ | 🔜 |
+| 13 | The device run: installed (a snapshot of m1, 2026-10-07; v0.0.2, 2026-10-08) ✅; `make bench-device` ✅ (all five cases pass, worst p99 10.6%; the tables built in 1.6–1.7 s); playing it, the probe questions, listening 🔜; `tested.json` with the first release ⬜ | 🔜 |
 
 Every task was implemented by a subagent and reviewed twice, for the spec and then for code
 quality; each finding was checked against the code and fixed with a check that fails without it
@@ -81,7 +84,7 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 
 | Milestone | Contents | Gate | |
 |---|---|---|---|
-| **M2: Weather** | Air (modal resonators, pluck, patterns, Loop); Weather (procedural fields, your WAVs, Memory, Keep); Echo; 32 presets | Worst case ≤ 15% p99; the 24-hour `soak` passes | ⬜ |
+| **M2: Weather** | Air (modal resonators, pluck, patterns, Loop); Weather (procedural fields, your WAVs, Memory, Keep); Echo; 32 presets | Worst case ≤ 15% p99; the 24-hour `soak` passes | 🔜 Tasks 1–5 of 13 ([plan](plans/2026-10-07-m2-weather.md)) |
 | **M3: Long time** | Drift, Swell, Gust, LFOs, the matrix, macro mappings per preset (the four fixed macros came in 0.0.2: [below](#playability)); Phase; scenes with Evolve and Autopilot; Patina; the Sky view; lifetime import from your WAVs | Hands off for an hour without a dull minute (a listening session) | ⬜ |
 | **M4: v0.1** | 64 presets, 24 tables, 12 fields; the parameter list frozen, append-only from here; a CI release | A `tested.json` entry | ⬜ |
 
