@@ -4,7 +4,7 @@ Releases are built by CI from a `vX.Y.Z` tag (see [Building](docs/BUILDING.md#re
 section for the tag's version becomes the release's notes. While the version is 0.x the parameter list
 may still change between releases.
 
-## 0.0.2 (unreleased)
+## 0.0.2
 
 Playability: after hearing M1 on the device, "a ton of features, but nobody knows what all these
 knobs are doing". So the screen now explains itself, four knobs play the whole instrument, twelve
@@ -65,6 +65,14 @@ the bar.
   preset stepper and its buttons, the browser's tiles, buttons and readouts) moved up by 14 (the
   eleven and the three Divs' popup flags): nothing a project keeps moved, the sound values being
   saved by name and automated by their unchanged indices.
+- **Fixed: old notes coming back out of Space.** Once Space had gone quiet and the plugin stopped
+  running it, its predelay still held the last notes sent to it; turning Pre-Delay up afterwards
+  (the knob, or Horizon toward far) played them again, with no key held, at their level. It took a
+  short Space Decay (near 0.1 s, Room or Plate) and a wait for the tail to end; no factory preset as
+  saved could reach it. Space now forgets what went in before a silence, so nothing from before it
+  comes out again; the presets play bit for bit as before. One case is left, far quieter: at a Decay
+  near 0.1 s with Haze's long lines, Freeze set after the silence can let out a faint ring (under
+  −120 dBFS from Decay 0.33 s, and in Room, Hall, Plate and Abyss at any Decay).
 
 ## 0.0.1 (unreleased)
 
