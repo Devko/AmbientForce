@@ -146,6 +146,7 @@ void tablesTests();      // tables_test.cpp: the table library, the life models,
 void lifeoscTests();     // lifeosc_test.cpp: the lifetime oscillator on its own (read, glide, sway, smear, couple)
 void groundTests();      // ground_test.cpp: Ground on its own (partials, beat, gravity, fade, gains, stability)
 void bloomTests();       // bloom_test.cpp: Bloom on its own (chords, strum, steal, moves, the tail handoff)
+void weatherTests();     // weather_test.cpp: Weather and its sources on their own (pitch, To Key, Stream, Duck)
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
 void paramsTests();      // params_test.cpp: defaults and their text, formats, option lists, the patch map, extremes
 

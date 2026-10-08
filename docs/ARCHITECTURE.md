@@ -51,8 +51,11 @@ flowchart LR
 | `dsp/lifetime.*` | The table library: eight life models (additive, every harmonic its own decay, beating and formant path) and four digital waves; `TableSet`, the atomic slots the audio thread reads |
 | `dsp/wavetable.*` | PolyForce's wavetable layout: 11 mip levels of their own lengths, 16-bit samples with a scale per frame, `mipFor`, and the band-limited frame builder (an inverse FFT per level) |
 | `dsp/space.*` | Space: the Reverb as a send / return (wet only), Rise, `silent()` |
+| `dsp/weather.*` | Weather: EffectForce's grain voices over a fixed source, Cloud, Stretch and Stream, the anchor and its drift, To Key, the gate, Duck, the tilt and high-pass, the copies a source change leaves the fading grains |
+| `dsp/grainsrc.*` | A Weather source: 16-bit stereo at three rates, looping through its guard frames (`GrainSource`, which Memory fills too); `buildSource()` makes one of any signal at load time (the loop's crossfade, the level, the decimated levels) |
+| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels |
 | `dsp/reverb.*`, `pitch.h` | EffectForce's Reverb: predelay, low cut, diffusion, an 8-line feedback delay network with modulation, freeze and shimmer; the Haze and Abyss modes added. The shimmer's pitch shifter |
-| `dsp/svf.h` | Andrew Simper's trapezoidal state-variable filter (Bloom's filter, Ground's Tone and formants) |
+| `dsp/svf.h` | Andrew Simper's trapezoidal state-variable filter (Bloom's filter, Ground's Tone and formants); the tilt shelf the output and Weather share (`TiltShelf`) |
 | `dsp/common.h`, `fastmath.h`, `simd.h` | The rate and the control chunk, `Transport`, smoothing; fast exp2, log2, tan, soft clip and random numbers; four-float vectors (NEON on the Force, GCC's generic vectors on x86, so the tests run the same arithmetic) |
 | `dsp/stages.h` | Stage timers for the profiling build (`-DAF_STAGE_TIMING`): ground, bloom, space, out |
 | `plugin/plugin.cpp` | VST2 glue for an instrument: MIDI with sample offsets, transport, suspend and resume, chunk state, the denormal flush, the CPU meter |
@@ -71,7 +74,7 @@ flowchart LR
 | `surface/fonts/` | Titillium Web (SIL OFL), the skin's font; the layout check measures text with its advance table |
 | `presets/Factory/` | Factory presets: `NN_Category/NN_Name.afp`, a folder per browser category |
 | `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `weather_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
 | `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |

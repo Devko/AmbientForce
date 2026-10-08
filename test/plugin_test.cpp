@@ -707,6 +707,7 @@ int main() {
     groundTests();
     bloomTests();
     reverbTests();
+    weatherTests();
     testBasics();
     testGetters();
     testPlay();
