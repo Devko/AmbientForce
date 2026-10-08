@@ -68,10 +68,13 @@ flowchart LR
 | `plugin/surface.*` | The touchscreen side: parameter values, stepping, popups, the preset browser, pushes to MPC |
 | `plugin/patch_map.*` | 0..1 ↔ real values, display text, parameters → `Patch` (the levels' audio taper), then the four macros bending that `Patch` (`applyMacros`); every option list checked against the engine's names as it compiles |
 | `plugin/tables.*` | The process-wide `TableSet` and its builder thread: started by the first instance, joined at unload, the tables freed only with no instance alive |
+| `plugin/loader.*` | PolyForce's loader for Weather's sources: a worker thread per instance, the 150 ms debounce, the slots' published pointers and the graveyard that frees a replaced source only when no block can still read it (the rule, in the header, as counters: Weather keeps its source between blocks), jobs on the worker (Keep's write); `SourceCache`, the process-wide LRU of sources (48 MB, never one in use, a file's kept with its size and time). Not yet wired into the plugin (M2's source picker) |
+| `plugin/wav.*` | WAVs in and out for the sources: a streaming, bounded reader (PCM 16/24/32 and float, up to 8 channels, 1 to 384 kHz resampled to 44.1: halfband decimation above 96 kHz, then 32 taps) that refuses what it can't trust, and an atomic, fsync'ed 16-bit writer |
+| `plugin/sources.*` | Weather's sources by key (`builtin:`, `memory:`, `plugin:Weather/`, `ssd:AmbientForce/Weather/`, `ssd:AmbientForce/Memories/`): the listing (scanned at most every 2 s), `loadSource`, the loader's source slot, and Keep (`keepMemory`: the remembered 16 s to `Memory NNN.wav`, numbered past the highest ever used) |
 | `plugin/library.*` | The preset library: scan, categories, favorites, recent |
 | `plugin/presets.*` | Factory and user presets, and a preset's description (`about=`) |
 | `plugin/state.*` | The state text shared by projects and preset files |
-| `plugin/paths.*` | Plugin folder, preset roots, data folder, atomic file writes |
+| `plugin/paths.*` | Plugin folder, preset roots, source roots (`AF_SOURCE_ROOTS`), data folder, atomic file writes |
 | `plugin/trace.*` | Device diagnostics while `/tmp/ambientforce.trace` exists: parameter sets, suspends and resumes, MIDI, table build times ([Building](BUILDING.md#diagnostics-on-the-device)) |
 | `plugin/vst2.h` | A hand-written slice of the VST2 ABI (no Steinberg SDK) |
 | `plugin/exports.map`, `exports_stages.map` | Linker version scripts: only `VSTPluginMain` exported (plus `AmbientForceStageTimes` in the profiling build) |
@@ -81,6 +84,7 @@ flowchart LR
 | `presets/Factory/` | Factory presets: `NN_Category/NN_Name.afp`, a folder per browser category |
 | `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
 | `test/harmony_test.cpp`, `airgen_test.cpp`, `engine_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `weather_test.cpp`, `fields_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/sources_test.cpp` | Weather's sources on the plugin side ([Building](BUILDING.md#tests)): WAVs, the loader and its graveyard (a model of its rule over every interleaving), the cache, the keys, Keep |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
 | `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters and the allocation counter (under ASan, one hook for every suite); the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
