@@ -180,8 +180,9 @@ public:
     // `offset`: where in the next step() it sounded (0..n-1; later ones count as its last sample).
     void played(int note, float vel, int offset);
     // MPC's tempo and, while it plays (locked), its position at the next step's first sample: a
-    // synced loop's clock. Not locked, the clock runs on at the tempo.
-    void setTransport(double bpm, double beats, bool locked) { clock_.set(bpm, beats, locked); }
+    // synced loop's clock. Not locked, the clock runs on at the tempo. (The engine hands its strata
+    // one running beat count, locked always: dsp/engine.h.)
+    void setTransport(double bpm, double beats, bool locked) { clock_.set(bpm, locked ? beats : clock_.beats); }
     // Back to the start: the seed's numbers again (the first event's work drawn), no notes played,
     // no motif, Echo's notes and the loop's recording forgotten, the loop (if on) waiting for the
     // first event. The patch, the chord and the clock stay.

@@ -182,6 +182,9 @@ private:
     bool landing_ = false;
 };
 
+// A synced time's length in seconds (the Delay's sync: dsp/delay.cpp).
+inline double divSeconds(double beats, double bpm) { return beats * 60.0 / bpm; }
+
 // --- levels -----------------------------------------------------------------------------------
 
 inline float dbToGain(float db) { return exp2Fast(db * 0.166096404744f); }   // log2(10) / 20
