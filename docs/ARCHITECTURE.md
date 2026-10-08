@@ -55,7 +55,9 @@ flowchart LR
 | `dsp/space.*` | Space: the Reverb as a send / return (wet only), Rise, `silent()` |
 | `dsp/weather.*` | Weather: EffectForce's grain voices over a fixed source, Cloud, Stretch and Stream, the anchor and its drift, To Key, the gate, Duck, the tilt and high-pass, the copies a source change leaves the fading grains |
 | `dsp/grainsrc.*` | A Weather source: 16-bit stereo at three rates, looping through its guard frames (`GrainSource`, which Memory fills too); `buildSource()` makes one of any signal at load time (the loop's crossfade, the level, the decimated levels) |
-| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels |
+| `dsp/fields.*` | Weather's eight procedural fields (Rain on Roof, Light Rain, Wind High, Wind Low, Surf, Stream, Embers, Night), each rendered on the loader thread into a source: a 12 s loop, decorrelated stereo, its pitched parts on C, its peaks under a soft knee |
+| `dsp/memory.*` | Memory: the last 16 s recorded at the grains' three levels into one of two rings; Remember makes that ring Weather's source (its seam faded, its guard written) and records on in the other; pins for Keep |
+| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels; `FrameDecimator`, the same filter over a run of frames, for Memory's recording |
 | `dsp/reverb.*`, `pitch.h` | EffectForce's Reverb: predelay, low cut, diffusion, an 8-line feedback delay network with modulation, freeze and shimmer; the Haze and Abyss modes added. The shimmer's pitch shifter |
 | `dsp/echo.*` | Echo: the Delay as a send / return (wet only), ducking under the send, `silent()`, its defaults (`initEcho()`). Not in the signal path until M2's engine task |
 | `dsp/delay.*` | EffectForce's Delay: two lines read at free or synced times (Tape glides or Fade crossfades), Stereo, Ping-Pong and Mono, the cuts, drive and limiter in the loop, wow and flutter, ducking; Diffuse added (four allpasses a side in the loop, blended in by the amount) |
@@ -78,12 +80,9 @@ flowchart LR
 | `surface/fonts/` | Titillium Web (SIL OFL), the skin's font; the layout check measures text with its advance table |
 | `presets/Factory/` | Factory presets: `NN_Category/NN_Name.afp`, a folder per browser category |
 | `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `airgen_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `weather_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `airgen_test.cpp`, `engine_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `weather_test.cpp`, `fields_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
-| `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
+| `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters and the allocation counter (under ASan, one hook for every suite); the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
 | `tools/pgo_train.cpp` | The trainer for the profile-guided build (runs under `qemu-arm`): every mode, then every factory preset |
 | `tools/phrase.h` | The demo phrase (two held chords and their release, in each preset's own key) and the loudness the presets are matched by; `demos` and `test/preset_test.cpp` share it |

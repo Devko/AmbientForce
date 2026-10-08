@@ -14,14 +14,6 @@
 #include <limits>
 #include <vector>
 
-#if defined(__SANITIZE_ADDRESS__)
-// The sanitizer runtime's (sanitizer/allocator_interface.h, which GCC doesn't install): hooks its
-// allocator calls on every allocation and free.
-extern "C" int __sanitizer_install_malloc_and_free_hooks(void (*malloc_hook)(const volatile void*, size_t),
-                                                         void (*free_hook)(const volatile void*));
-#define BLOOM_COUNTS_ALLOCS 1
-#endif
-
 namespace aft {
 namespace {
 
@@ -1013,22 +1005,11 @@ void testDeterminism() {
     CHECK(allFinite(a) && rms(a) > 0.01);
 }
 
-#if BLOOM_COUNTS_ALLOCS
-// ASan's allocator calls these for every allocation; only the test's own thread counts.
-thread_local bool t_counting = false;
-int g_allocs = 0;
-void onMalloc(const volatile void*, size_t) {
-    if (t_counting) ++g_allocs;
-}
-void onFree(const volatile void*) {}
-#endif
-
 // Nothing in play, moveTo, release, set or render allocates.
 void testNoAllocation() {
     std::printf("== bloom: no allocation\n");
-#if BLOOM_COUNTS_ALLOCS
-    static const bool hooked = __sanitizer_install_malloc_and_free_hooks(onMalloc, onFree) != 0;
-    CHECK(hooked);
+#if AFT_COUNTS_ALLOCS
+    CHECK(hookAllocations());
     tables();
     Bloom b;
     b.seed(12);
@@ -1040,8 +1021,7 @@ void testNoAllocation() {
     p.blend = 0.3f;
     af::HarmonyPatch h;
     h.strumS = 0.1f;
-    t_counting = true;
-    g_allocs = 0;
+    countAllocations();
     b.set(p, h);
     b.play(chordOf({48, 52, 55, 59, 62, 66}), 48, 0.8f);
     for (int i = 0; i < 100; ++i) b.render(tables(), L, R, SL, SR, 0.5f, kBlk);
@@ -1056,9 +1036,9 @@ void testNoAllocation() {
     b.play(chordOf({60}), 60, 1.0f);
     for (int i = 0; i < 400; ++i) b.render(tables(), L, R, SL, SR, 0.5f, kBlk);
     b.reset();
-    t_counting = false;
-    std::printf("  %d allocations\n", g_allocs);
-    CHECK(g_allocs == 0);
+    const int allocs = allocationsCounted();
+    std::printf("  %d allocations\n", allocs);
+    CHECK(allocs == 0);
 #else
     std::printf("  (counted under ASan: make test)\n");
 #endif
