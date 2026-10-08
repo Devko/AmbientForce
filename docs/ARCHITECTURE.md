@@ -184,22 +184,33 @@ of 32, so MPC's 128-sample blocks never cut one; only a MIDI event does, at its 
 events play the same samples whatever the block size.
 
 Ground and Bloom are rendered a control step at a time. Before each piece the engine gives them
-MPC's tempo and its position at the piece's first sample (the block's, moved on by the samples
-since); each keeps a `BeatClock` (`dsp/common.h`) that takes that position while the transport
-plays and runs on at the tempo while it is stopped, and moves it on by each step's samples. A synced
-cycle (Ground's Breath, a sway: `breathBeats`, `LifePos::swayBeats`) takes its target phase from
-that clock (a Bloom voice's plus its stagger, voice i at i / 6 of a cycle), so it sits on the bar
-whatever the blocks; a free one's target is its own phase, which
-moves on at its rate all the time, as it always did. The phase used is never set, only pulled
-toward the target (`pullPhase`, 50 ms, the short way round, landing exactly within 1e-9): a lock,
-a locate, a loop or Free <-> Sync glides instead of stepping, a locked cycle is exactly the
-clock's, and a free one exactly its own, bit for bit as before Sync existed. A division faster than
-4 Hz (a sway) or 8 Hz (a breath) at the tempo doubles. Each step they read their table pointers
-(`TableSet::get`), step their `LifeScan` positions, envelopes, glides, fades and filter targets;
-every gain then moves in a straight line across the step and the filters' coefficients glide per
-sample (the cutoffs evenly in octaves), so nothing steps. Bloom also ends a step where a strummed
-note's start falls, so each note starts on its own sample. Space runs the Reverb in its own
-32-sample chunks.
+MPC's tempo and its one beat count at the piece's first sample (`Engine::clockStrata`): MPC's
+position while the transport plays (the block's, moved on by the samples since), and on from where
+it was at the tempo while it is stopped. The count runs on the sample count, asleep or awake, and
+every piece gives both strata the same one, rendered or not, so they keep to one grid; each sets its
+`BeatClock` (`dsp/common.h`) to it and moves it on by each step's samples.
+
+A synced cycle (Ground's Breath, a sway: `breathBeats`, `LifePos::swayBeats`) takes its target
+phase from that clock (a Bloom voice's plus its stagger, voice i at i / 6 of a cycle), so it sits on
+the bar whatever the blocks; a free one's target is its own phase, which moves on at its rate
+whenever the cycle is stepped, as it always did. Both kinds are one `PulledCycle` (`dsp/common.h`),
+each caller moving its own phase on in its own arithmetic. The phase used is never set while it is
+heard, only pulled toward the target (`pullPhase`: a 50 ms time constant, the short way round,
+landing exactly within 1e-9, about a second after a jump of half a cycle): a lock, a locate, a loop
+or Free <-> Sync glides instead of stepping (at Breath 100% a jump moves the gain at most about
+0.2 dB a step: 0.16 dB at 120 BPM, 0.20 at 300), a locked cycle is exactly the clock's, and a free
+one exactly its own, bit for bit as before Sync existed. A cycle nobody steps stands still (a Ground
+the engine skips, a Bloom voice not in use), so the first step from silence (Ground's gain at 0, a
+note starting afresh in a voice) lands on the target at once instead of gliding from where it
+stood. A free cycle starting from silence has no place to be on but its own phase, which paused
+with it: it goes on from there. A division faster than 4 Hz (a sway) or 8 Hz (a breath) at the
+tempo doubles.
+
+Each step the strata read their table pointers (`TableSet::get`), step their `LifeScan` positions,
+envelopes, glides, fades and filter targets; every gain then moves in a straight line across the
+step and the filters' coefficients glide per sample (the cutoffs evenly in octaves), so nothing
+steps. Bloom also ends a step where a strummed note's start falls, so each note starts on its own
+sample. Space runs the Reverb in its own 32-sample chunks.
 
 **Idle.** Asleep, or awake with nothing to hear (Ground not audible, Bloom with no voice in use)
 and Space `silent()`, `render()` writes zeros and runs no DSP. Space can stay unsilent for minutes

@@ -18,12 +18,16 @@ long long (*Surface::clock)() = nullptr;
 
 namespace {
 
-constexpr int kMaxAutomatePerBlock = 48;   // spread big refreshes over a few blocks
-constexpr int kTextEveryBlocks     = 4;    // at most one UpdateDisplay per ~12 ms
-constexpr float kQuant             = 0.0015f;   // MPC rounds values to 1/1000
-constexpr long long kGestureMs     = 300;   // sends closer than this belong to one gesture
-constexpr float kFirstMoveMax      = 0.16f; // a gesture's first event is a turn, not a jump
-constexpr float kMoved            = 0.0006f;   // a set moves a control only past this: MPC rounds what it sends to 1/1000
+constexpr int kMaxAutomatePerBlock = 48;        // spread big refreshes over a few blocks
+constexpr int kTextEveryBlocks     = 4;         // at most one UpdateDisplay per ~12 ms
+constexpr long long kGestureMs     = 300;       // sends closer than this belong to one gesture
+constexpr float kFirstMoveMax      = 0.16f;     // a gesture's first event is a turn, not a jump
+// MPC rounds the values it sends to 1/1000, so two tolerances, for two questions. A tap on an option
+// lands within kQuant of the option's exact value: its rounding, with room to spare. A set moves a
+// control only past kMoved: over a rounding (at most 0.0005: a value echoed back rounded is no move)
+// and under MPC's smallest move (0.001, which is one).
+constexpr float kQuant             = 0.0015f;
+constexpr float kMoved             = 0.0006f;
 
 // The status line's clock: the engine's rate (MPC OS always runs 44.1 kHz).
 uint64_t samplesOf(double s) { return static_cast<uint64_t>(s * static_cast<double>(af::kRate)); }

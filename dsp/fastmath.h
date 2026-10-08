@@ -84,14 +84,15 @@ inline float sinCycle(float x) {
 }
 
 // floor() without the library call (ARMv7 has no rounding instruction): through an int32, the
-// library only for |x| >= 2^31 or NaN (a host's wild song position).
+// library only for |x| >= 2^31 or NaN (a host's wild song position). One test on |x|: the range
+// as two comparisons cost 6 more ARM instructions a call.
 inline double floorFast(double x) {
-    if (!(x > -2147483648.0 && x < 2147483648.0)) return std::floor(x);
+    if (!(std::fabs(x) < 2147483648.0)) return std::floor(x);
     const double t = static_cast<double>(static_cast<int32_t>(x));
     return t > x ? t - 1.0 : t;
 }
 inline float floorFast(float x) {
-    if (!(x > -2147483648.0f && x < 2147483648.0f)) return std::floor(x);
+    if (!(std::fabs(x) < 2147483648.0f)) return std::floor(x);
     const float t = static_cast<float>(static_cast<int32_t>(x));
     return t > x ? t - 1.0f : t;
 }

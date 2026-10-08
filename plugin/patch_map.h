@@ -30,6 +30,9 @@ struct Macros {
     float glow = 0.0f;      // dark .. bright
     float density = 0.0f;   // sparse .. thick
 };
+// A bipolar control (a macro, Tilt) nearer 0 than this shows "0%", and a macro there is 0: one
+// number for both, so the knob never reads 0% while the macro bends the preset, nor the other way.
+constexpr float kBipolarZero = 0.005f;
 Macros macrosFromParams(const float* norm);
 void applyMacros(Patch& p, const Macros& m);
 

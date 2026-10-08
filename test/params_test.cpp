@@ -430,6 +430,59 @@ void testMacros() {
         CHECK(others && monotonic && inRange && allMove);
     }
 
+    // Bloom Tone moves with Glow and Horizon only on a low-pass: on a band-pass or a high-pass its cutoff picks a band
+    // (Overtone Choir's whistle), and stays bit for bit where the preset has it at either end of either macro.
+    for (int mode : {af::FM_LP, af::FM_BP, af::FM_HP}) {
+        af::Patch knobs;
+        knobs.bloom.filterMode = mode;
+        knobs.bloom.cutoffHz = 1200.0f;
+        bool still = true;
+        for (int id : {af::P_M_GLOW, af::P_M_HORIZON})
+            for (float x : {-1.0f, 1.0f}) {
+                af::Patch p = knobs;
+                af::applyMacros(p, only(id, x));
+                still = still && sameBits(p.bloom.cutoffHz, knobs.bloom.cutoffHz);
+            }
+        if (still != (mode != af::FM_LP)) std::printf("  Bloom Tone on %s: %s\n", af::kFilterModeNames[mode], still ? "still" : "moved");
+        CHECK(still == (mode != af::FM_LP));
+    }
+
+    // Under half a percent a macro is 0 (kBipolarZero), as its knob reads: at 0.501 of its range (+0.2%) the patch is
+    // the knobs' bit for bit, at 0.503 (+0.6%) it moves. And over every float from 0.497 to 0.503 (Glow's; the four
+    // share the code), the knob shows "0%" exactly where the macro is 0.
+    {
+        Host d;
+        std::vector<float> norm(af::P_COUNT);
+        for (int i = 0; i < af::P_COUNT; ++i) norm[static_cast<size_t>(i)] = d.get(i);
+        const auto same = [&norm]() {
+            const auto a = fields(af::patchFromParams(norm.data())), b = fields(af::patchFromKnobs(norm.data()));
+            for (size_t f = 0; f < a.size(); ++f)
+                if (!sameBits(a[f].v, b[f].v)) return false;
+            return true;
+        };
+        bool dead = true, alive = true, agree = true;
+        for (int id : {af::P_M_HORIZON, af::P_M_MOTION, af::P_M_GLOW, af::P_M_DENSITY}) {
+            float& n = norm[static_cast<size_t>(id)];
+            n = 0.501f;
+            dead = dead && same();
+            n = 0.503f;
+            alive = alive && !same();
+            for (n = 0.497f; id == af::P_M_GLOW && n <= 0.503f; n = std::nextafter(n, 1.0f)) {
+                const af::Macros m = af::macrosFromParams(norm.data());
+                const float v = id == af::P_M_HORIZON ? m.horizon : id == af::P_M_MOTION ? m.motion
+                                : id == af::P_M_GLOW ? m.glow : m.density;
+                if ((af::paramDisplay(id, n) == "0%") != (v == 0.0f)) {
+                    std::printf("  %s at %.9g: shows %s, the macro %g\n", af::PARAM_INFO[id].name, n,
+                                af::paramDisplay(id, n).c_str(), v);
+                    agree = false;
+                    break;
+                }
+            }
+            n = 0.5f;
+        }
+        CHECK(dead && alive && agree);
+    }
+
     // Through the plugin: a macro bends the sound, not the knobs. The parameters it bends read and show as they were.
     Host h;
     const float cutoff = h.get(af::P_B_CUTOFF);

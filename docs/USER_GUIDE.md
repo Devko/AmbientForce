@@ -143,8 +143,9 @@ it) each move several controls at once in one musical direction. They bend the s
 knobs make without moving those knobs: with Glow up, Bloom Tone still reads 5.00 kHz, and sounds
 brighter. Each runs from −100% to +100%, and at **0 the preset plays exactly as saved** (under
 0.5% either way counts as 0, as the knob reads). They are saved with the sound like any other
-control; the factory presets keep them at 0, and loading a preset sets them back to 0 with every
-other control, because a preset is a complete sound.
+control. Loading a preset sets every control to what the preset holds, the macros too, because a
+preset is a complete sound: 0 unless it was saved with a macro moved (a preset you saved with Glow
+at +50% loads at +50%). The factory presets keep them at 0.
 
 | Macro | −100% | +100% |
 |---|---|---|
@@ -168,8 +169,11 @@ What each one moves (h, m, g, d: the macro from −1 to +1):
 - Two macros can move one control (Horizon and Glow both move the Tones and Space Damp); each adds
   its share. Bloom Tone moves only on Bloom Filter LP: on BP or HP it picks a band (Overtone Choir's
   whistle), and the macros leave it there.
-- The level stays near the preset's: far is a few LU quieter (the dry steps back), dark and thick are
-  trimmed by the volume. No macro at either end drives a factory preset into the limiter.
+- The level stays near the preset's: at either end of a macro a preset moves by a few LU at most
+  (far is up to about 4 LU quieter, the dry stepping back; dark and thick are trimmed by the
+  volume), except where Horizon meets a preset that is nearly all reverb: Frozen Sky drops 8.0 LU
+  near (its sends down) and 7.1 LU far. No macro at either end drives a factory preset into the
+  limiter.
 - Nothing that would jump is touched: not Unison, the chord, the voicing or the tables.
 
 ## The harmony
@@ -433,9 +437,15 @@ runs one cycle per **Div** instead: 1/4 (a quarter note), 1/2, 1 Bar and on to 6
   says, after a loop, a jump or a tempo change too. A synced breath is at its top on each
   division's downbeat: Breath Div 1/4 throbs on every beat.
 - While it is stopped, a synced cycle runs on at the tempo from where it was, and locks back to the
-  bar when MPC plays again.
-- A cycle never jumps: whenever its place changes at once (MPC starting, locating or looping off the
-  beat, Free to Sync and back) it glides there, over about 50 ms, and then stays exactly on it.
+  bar when MPC plays again. Both strata run on one count, sounding or silent, so they stay on one
+  grid: a chord after a long silence sways where the drone's breath says the bar is.
+- A cycle never jumps while you hear it: whenever its place changes at once (MPC starting, locating
+  or looping off the beat, Free to Sync and back) it glides there, most of the way within about
+  50 ms and exactly onto it within about a second. At Breath 100% even a jump of half a cycle moves
+  the level at most about 0.2 dB a control step (0.16 dB at 120 BPM, 0.20 dB at 300).
+- A cycle that starts from silence starts on its place, with nothing to glide: a chord after a
+  silence, the drone starting or unmuted. A free cycle pauses while it is idle (a Bloom voice not
+  in use, the drone off or muted) and goes on from where it was, as it always has.
 - Synced, Bloom's six voices sway staggered on the bar: each a sixth of a cycle after the one
   before, in the same place from note to note, so a synced chord still shimmers and stays locked.
   Ground's breath is one pulse. Each voice keeps its own free phase meanwhile, and back on Free they

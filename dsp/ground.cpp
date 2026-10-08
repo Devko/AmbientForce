@@ -150,7 +150,7 @@ void Ground::reset() {
     xorshift(r);
     scan_.seed(seed_);
     for (TableOscLinear& o : osc_) o.reset(lifeosc::rand01(r));   // Sub, Root, Fifth, Octave, Color
-    breathPhase_ = breathOwn_ = lifeosc::rand01(r);
+    breathCycle_.reset(lifeosc::rand01(r));
     target_ = -1;
     std::fill(curL_, curL_ + kParts, 0.0f);
     std::fill(curR_, curR_ + kParts, 0.0f);
@@ -196,7 +196,7 @@ void Ground::render(const TableSet& tables, float* outL, float* outR, float* sen
 // the root on its goal (no glide from wherever it was last). s.fromSilence: the output's gain ended
 // the last step at 0 (a start, a dip's bottom, a mute or level 0 lifted), so nothing that jumps in
 // this step can be heard doing it: the partials' gains, Body's share, its formants and the table go
-// straight to where they are aimed.
+// straight to where they are aimed, and the breath and the sway land on their places (control()).
 void Ground::chunk(const Wavetable& want, float* outL, float* outR, float* sendL, float* sendR, float spaceSend, int n) {
     const Step s = control(spaceSend, n);
     if (s.g0 == 0.0f && s.g1 == 0.0f) {
@@ -240,19 +240,21 @@ Ground::Step Ground::control(float spaceSend, int n) {
     }
 
     // Breath: +-3 dB and +-1 octave of cutoff at 1. The Tone's coefficients for this step. Its own
-    // phase moves on at breathHz all the while; it breathes on that (Free) or on the clock's at this
-    // step's end, a quarter cycle on (Sync: the top on the downbeat; the division doubled past
-    // kMaxSyncBreathHz), pulled there (pullPhase): a lock, a jump or a switch glides.
-    clock_.advance(n);
-    breathOwn_ += static_cast<double>(breathHz_ * dt);
-    breathOwn_ -= floorFast(breathOwn_);
-    if (breathBeats_ > 0.0f) {
-        const double beats = clock_.cycleBeats(static_cast<double>(breathBeats_), kMaxSyncBreathHz);
-        breathPhase_ = pullPhase(breathPhase_, clock_.cycles(beats, dt), clock_.phase(beats, 0.25), dt);
-    } else {
-        breathPhase_ = pullPhase(breathPhase_, static_cast<double>(breathHz_ * dt), breathOwn_, dt);
+    // phase moves on at breathHz every step (in floats, as Free always has); it breathes on that
+    // (Free) or on the clock's at this step's end, a quarter cycle on (Sync: the top on the downbeat;
+    // the division doubled past kMaxSyncBreathHz), pulled there (PulledCycle): a lock, a jump or a
+    // switch glides. From silence (a start, a mute or level 0 lifted, a dip's bottom: nothing was
+    // heard, and a Ground not rendered stood still) the breath and the sway land on their places.
+    s.g0 = gain_;
+    s.fromSilence = s.g0 == 0.0f;
+    if (s.fromSilence) {
+        breathCycle_.land();
+        scan_.land();
     }
-    const float b = breath_ > 0.0f ? breath_ * sinCycle(static_cast<float>(breathPhase_)) : 0.0f;
+    clock_.advance(n);
+    const double phase = breathCycle_.step(static_cast<double>(breathHz_ * dt), dt, clock_,
+                                           static_cast<double>(breathBeats_), kMaxSyncBreathHz, 0.25);
+    const float b = breath_ > 0.0f ? breath_ * sinCycle(static_cast<float>(phase)) : 0.0f;
     const float cutoff = clampf(cutoff_ * exp2Fast(kBreathOct * b), 20.0f, 0.45f * kRate);
     if (cutoff != toneHz_) {
         const float g = svfG(cutoff), jump = exp2Fast(kToneJump);
@@ -266,12 +268,10 @@ Ground::Step Ground::control(float spaceSend, int n) {
         toneUpdate_ = SvfUpdate::of(splat2(g), splat2(kToneK));
     }
 
-    s.pos = scan_.step(pos_, dt, &clock_);
+    s.pos = scan_.step(pos_, dt, clock_);
 
-    // The output's gain and the send's, ramped across the step from where the last one ended.
-    s.g0 = gain_;
+    // The output's gain and the send's, ramped across the step from where the last one ended (s.g0).
     s.g1 = mute_ || s.ending ? 0.0f : level_ * dbToGain(fadeDb_) * dbToGain(kBreathDb * b) * dip_;
-    s.fromSilence = s.g0 == 0.0f;
     s.s0 = s.fromSilence ? spaceSend : send_;
     s.s1 = spaceSend;
     gain_ = s.g1;

@@ -46,10 +46,12 @@
 // - Breath: a sine LFO at breathHz moves the level by +-3 dB and the cutoff by +-1 octave, both
 //   times breath. Synced (breathBeats > 0) it breathes once every breathBeats quarter notes on
 //   the stratum's BeatClock instead, at its top on each division's downbeat: on the bar while MPC
-//   plays, at the tempo while it is stopped (setTransport); a division that would breathe faster
-//   than kMaxSyncBreathHz doubles. The phase it breathes on is pulled to its target over about
-//   50 ms (pullPhase), never set: MPC starting, locating or looping, or Free <-> Sync, glides
-//   instead of stepping the level. The sway syncs the same way (LifePos swayBeats).
+//   plays, at the tempo while it is stopped (setTransport, the engine's one count); a division
+//   that would breathe faster than kMaxSyncBreathHz doubles. The phase it breathes on is pulled to
+//   its target (common.h PulledCycle: close in about 50 ms, exactly on it within about a second),
+//   never set while it is heard: MPC starting, locating or looping, or Free <-> Sync, glides
+//   instead of stepping the level. From silence (fromSilence below) it lands on its place at once.
+//   The sway syncs the same way (LifePos swayBeats).
 // - Width: partial i is panned to width * kPan[i], equal power (unity in the middle, as
 //   PolyForce pans): Sub in the middle, Root and Octave to the left, Fifth and Color to the right.
 // - A new table (another one chosen, or the slot's table published over the sine it played
@@ -65,9 +67,10 @@
 // Mute: render() may be skipped while !audible() (the engine's idle gate); Ground then stands
 // still, its fades, glides and scans paused where they were. audible() stays true after a mute or
 // a level of 0 until the gain has ramped down (the next step), so a skipped Ground has always
-// reached silence first, and unmuted it ramps up from there: no click either way. Rendered while
-// muted it is cheap too (nothing is read: the oscillators are skipped along), and its fades,
-// glides and scans keep running, so unmuted it is where it would have been.
+// reached silence first, and unmuted it ramps up from there: no click either way. Its synced
+// cycles then land on the clock's places at the first step (their free ones go on from where they
+// stood). Rendered while muted it is cheap too (nothing is read: the oscillators are skipped
+// along), and its fades, glides and scans keep running, so unmuted it is where it would have been.
 //
 // Control rate: once per control step of kChunk samples the glide, fade, dip, LifeScan, breath,
 // Tone, Body and the partials' pitches take one step; the gains ramp across the step and Body's
@@ -140,9 +143,10 @@ public:
     void setTarget(int rootNote);
     // Silent, no target, every phase back to where the seed puts it. The patch stays.
     void reset();
-    // MPC's tempo and, while it plays (locked), its position at the next render's first sample: the
-    // synced Breath's and sway's clock. Not locked, the clock runs on at the tempo.
-    void setTransport(double bpm, double beats, bool locked) { clock_.set(bpm, beats, locked); }
+    // MPC's tempo, and the beat count at the next render's first sample: the synced Breath's and
+    // sway's clock. The engine gives every stratum its one count (MPC's position while it plays, on at
+    // the tempo while it is stopped); without it the clock runs on from 0 by the steps rendered.
+    void setTransport(double bpm, double beats) { clock_.set(bpm, beats); }
     // Adds into outL/outR, and adds the send into sendL/sendR at `spaceSend` (a gain, 0..1). n <= 128
     // (any n works; it is cut into control steps). Off: returns at once. It may be skipped while
     // !audible() (see Mute above).
@@ -221,8 +225,7 @@ private:
     bool fresh_ = true;                  // the drone starts from off: its first step puts the root on its goal
     float fadeDb_ = -60.0f;
     float dip_ = 1.0f;                   // a Register change's gain: 1 none, 0 the bottom
-    double breathPhase_ = 0.0;           // cycles, 0..1: the phase it breathes on
-    double breathOwn_ = 0.0;             // its own phase, at breathHz (Free's target)
+    PulledCycle breathCycle_;            // the phase it breathes on, and its own at breathHz (Free's target)
     BeatClock clock_;                    // the synced cycles' beats (setTransport)
     float gain_ = 0.0f, send_ = 0.0f;    // the output's gain and the send's, as the last step ended
     float wet_ = 0.0f;                   // Body's share (0..1) as the last step ended

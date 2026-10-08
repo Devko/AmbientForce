@@ -25,11 +25,11 @@
 // help line (surface.py "help"); for kAboutS after a preset loads, its name and description. A
 // move is a set from MPC that changes the control's value by more than MPC's own rounding to
 // 1/1000 (MPC echoing a value back, even rounded, changes nothing; preset loads and project states
-// write through setValue, not set). The UI thread only
-// notes the last move and counts the loads (atomics); notify() times them on the audio thread's
-// sample count, decides which line shows (another control takes the line only once the one shown
-// has had kHoldS, so automation moving several at once doesn't flicker) and pushes
-// audioMasterUpdateDisplay when it changes. statusLine() reads what it decided.
+// write through setValue, not set). The UI thread only notes the last move and counts the loads
+// (atomics); notify() times them on the audio thread's sample count, decides which line shows
+// (another control takes the line only once the one shown has had kHoldS, so automation moving
+// several at once doesn't flicker) and pushes audioMasterUpdateDisplay when it changes.
+// statusLine() reads what it decided.
 #include "library.h"
 #include "param_ids.h"
 

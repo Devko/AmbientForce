@@ -711,7 +711,10 @@ void testBreath() {
 // A synced Breath (1/4 at 120 BPM, Breath 1: +-3 dB, two breaths a second) never steps the level: across MPC
 // pressing Play, a locate, Free -> Sync and a loop that wraps off the beat, the output's gain moves at most 0.5 dB
 // from one control step to the next (set to the clock's phase at once, a half-cycle jump stepped it 6 dB). And it
-// gets there: 0.4 s after each, the breath is on the clock's phase again.
+// gets there: 0.4 s after each, the breath is on the clock's phase again. The worst of it, a jump of just under half a
+// cycle forward from every place in the cycle (the one that lands at the breath's steepest point): what the docs say a
+// step moves at most, at 120 and 300 BPM. The clock here is the engine's count (Engine::clockStrata): MPC's position
+// while it plays, on at the tempo while it is stopped.
 void testBreathSync() {
     std::printf("== ground: a synced Breath glides to the bar\n");
     af::GroundPatch p = steady(af::TB_SINE, 1.0f, 0.0f);
@@ -722,16 +725,15 @@ void testBreathSync() {
     g.set(p, af::HarmonyPatch{});
     g.setTarget(48);
     float buf[4][af::kChunk];
-    double beats = 0.0, worst = 0.0;
-    bool playing = false;
+    double beats = 0.0, worst = 0.0, bpm = 120.0;
     float was = 0.0f;
-    // `steps` control steps, MPC's position moving on while it plays; the largest step of the gain after the first.
+    // `steps` control steps, the count moving on at the tempo; the largest step of the gain after the first.
     auto run = [&](int steps) {
         for (int k = 0; k < steps; ++k) {
             std::fill(&buf[0][0], &buf[0][0] + 4 * af::kChunk, 0.0f);
-            g.setTransport(120.0, beats, playing);
+            g.setTransport(bpm, beats);
             g.render(tables(), buf[0], buf[1], buf[2], buf[3], 0.0f, af::kChunk);
-            if (playing) beats += af::kChunk * 2.0 / af::kRate;
+            beats += af::kChunk * bpm / 60.0 / af::kRate;
             const float now = g.outputGain();
             if (was > 0.0f && now > 0.0f) worst = std::max(worst, std::fabs(20.0 * std::log10(now / was)));
             was = now;
@@ -749,8 +751,7 @@ void testBreathSync() {
     worst = 0.0;
     run(kSec / af::kChunk / 2);
     const double freeToSync = worst;
-    playing = true;                                   // Play pressed at beat 7.4: the clock jumps there
-    beats = 7.4;
+    beats = 7.4;                                      // Play pressed at beat 7.4: the clock jumps there
     worst = 0.0;
     run(kSec / af::kChunk * 2 / 5);
     const double play = worst;
@@ -768,6 +769,58 @@ void testBreathSync() {
                 freeToSync, play, locate, loop, locked && relocked && onBeat() ? "again each time" : "NOT");
     CHECK(freeToSync <= 0.5 && play <= 0.5 && locate <= 0.5 && loop <= 0.5);
     CHECK(locked && relocked && onBeat());
+    // The worst locate: 0.4999 of a cycle on, from 48 places spread over the cycle, each after half a second on it.
+    double worstAt[2] = {};
+    for (int t = 0; t < 2; ++t) {
+        bpm = t == 0 ? 120.0 : 300.0;   // 1/4: 2 and 5 breaths a second
+        for (int i = 0; i < 48; ++i) {
+            beats = 1000.0 + i / 48.0;
+            run(kSec / af::kChunk / 2);
+            beats += 0.4999;
+            worst = 0.0;
+            run(4);
+            worstAt[t] = std::max(worstAt[t], worst);
+        }
+    }
+    std::printf("  a jump of 0.4999 cycle, the worst step: %.3f dB at 120 BPM, %.3f at 300\n", worstAt[0], worstAt[1]);
+    CHECK(worstAt[0] > 0.1 && worstAt[0] <= 0.5 && worstAt[1] <= 0.5);
+}
+
+// A synced cycle's division doubles where it would run faster than its cap at the tempo: a breath past 8 Hz
+// (kMaxSyncBreathHz; Breath Rate's free top is 8.96 Hz). At 600 BPM a breath at 1/4 would run 10 Hz: it runs 5, one
+// a half note; at 470 BPM, 7.83 Hz, under the cap, it stays one a beat. The rate measured from the gain's swing.
+void testBreathCap() {
+    std::printf("== ground: a synced Breath's division doubles past 8 Hz\n");
+    const auto rate = [](double bpm) {
+        af::GroundPatch p = steady(af::TB_SINE, 1.0f, 0.0f);
+        p.breath = 1.0f;
+        p.breathBeats = 1.0f;   // 1/4
+        af::Ground g;
+        g.seed(43);
+        g.set(p, af::HarmonyPatch{});
+        g.setTarget(48);
+        float buf[4][af::kChunk];
+        double beats = 0.0, prev = 0.0, first = -1.0, last = -1.0;
+        int ups = 0;
+        for (int k = 0; k < 3 * kSec / af::kChunk; ++k) {
+            std::fill(&buf[0][0], &buf[0][0] + 4 * af::kChunk, 0.0f);
+            g.setTransport(bpm, beats);
+            g.render(tables(), buf[0], buf[1], buf[2], buf[3], 0.0f, af::kChunk);
+            beats += af::kChunk * bpm / 60.0 / af::kRate;
+            const double d = 20.0 * std::log10(g.outputGain());   // the breath's swing, +-3 dB around 0
+            if (k > kSec / af::kChunk && prev < 0.0 && d >= 0.0) {   // after a second: an upward crossing
+                const double at = (k - d / (d - prev)) * af::kChunk / af::kRate;
+                if (first < 0.0) first = at;
+                last = at;
+                ++ups;
+            }
+            prev = d;
+        }
+        return ups > 1 ? (ups - 1) / (last - first) : 0.0;
+    };
+    const double fast = rate(600.0), under = rate(470.0);
+    std::printf("  1/4 at 600 BPM: %.3f Hz (doubled once from 10); at 470 BPM: %.3f Hz (7.833: not doubled)\n", fast, under);
+    CHECK(std::fabs(fast - 5.0) < 0.01 && std::fabs(under - 470.0 / 60.0) < 0.01);
 }
 
 // Width: at 0, L and R are the same, sample for sample; at 1 each partial sits where kPan puts it,
@@ -1302,6 +1355,7 @@ void groundTests() {
     testBody();
     testBreath();
     testBreathSync();
+    testBreathCap();
     testWidth();
     testTone();
     testOddParameters();
