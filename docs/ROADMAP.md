@@ -25,8 +25,13 @@ The milestones come from the [concept](CONCEPT.md#14-roadmap); M1's tasks from
 - ✅ **0.0.2, the first release** (2026-10-08, tag `v0.0.2`; 0.0.1 was never released): on the
   Force from a local build of the tag. 🔜 Played, then a `tested.json` entry for CI's release
   package and the plugin catalog's.
-- 🔜 **M2: Weather**, from [its plan](plans/2026-10-07-m2-weather.md): Tasks 1–5 done (Echo, Air's
-  voices and generator, Weather's grains, as modules not yet in the engine), Task 6 next.
+- 🔜 **M2: Weather**, from [its plan](plans/2026-10-07-m2-weather.md), on branch `m2`:
+  - **Done:** Tasks 1–9 and 11 (2026-10-08). Air, Weather, Echo and Memory are in the engine, with
+    their pages and the macros.
+  - **Task 10** (the source picker, Remember, Keep): on `m2-task10`, its re-review pending.
+  - **Task 12's 24 presets:** approved
+    ([proposal](plans/2026-10-08-m2-presets-proposal.md)).
+  - **Task 13** comes last. Where it stands: [Handover](HANDOVER.md).
 
 ## M1: First light
 
@@ -84,7 +89,7 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 
 | Milestone | Contents | Gate | |
 |---|---|---|---|
-| **M2: Weather** | Air (modal resonators, pluck, patterns, Loop); Weather (procedural fields, your WAVs, Memory, Keep); Echo; 32 presets | Worst case ≤ 15% p99; the 24-hour `soak` passes | 🔜 Tasks 1–5 of 13 ([plan](plans/2026-10-07-m2-weather.md)) |
+| **M2: Weather** | Air (modal resonators, pluck, patterns, Loop); Weather (procedural fields, your WAVs, Memory, Keep); Echo; 32 presets | Worst case ≤ 15% p99; the 24-hour `soak` passes | 🔜 Tasks 1–9 and 11 of 13; 10 in review ([plan](plans/2026-10-07-m2-weather.md)) |
 | **M3: Long time** | Drift, Swell, Gust, LFOs, the matrix, macro mappings per preset (the four fixed macros came in 0.0.2: [below](#playability)); Phase; scenes with Evolve and Autopilot; Patina; the Sky view; lifetime import from your WAVs | Hands off for an hour without a dull minute (a listening session) | ⬜ |
 | **M4: v0.1** | 64 presets, 24 tables, 12 fields; the parameter list frozen, append-only from here; a CI release | A `tested.json` entry | ⬜ |
 
