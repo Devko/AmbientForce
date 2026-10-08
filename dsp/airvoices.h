@@ -129,8 +129,9 @@
 // blocks until their bursts have gone in. The dearest blocks, with their render: note-24 plucks
 // struck in them, one 37.3k, six 216k, twelve 402k: about 1, 5.8 and 10.8 points (device: pending),
 // well under a block's time but over Air's share. Air's generator plays from C4 up (a pluck there
-// costs 5.8k a strike), so only notes played to Air go that low. Task 8's bench should count a low
-// chord's strike.
+// costs 5.8k a strike), so only notes played to Air go that low. The bench's `air strike` (Task 8)
+// counts one through the engine: six plucks struck from C1 (24 to 33) cost 210.6k in their block
+// and 10.2k a block for the ten blocks their bursts take.
 //
 // Real-time rules: everything is fixed-size (the pluck's line, 8 KB a voice, and its burst's 120
 // samples). Nothing allocates, locks or throws after the constructor.

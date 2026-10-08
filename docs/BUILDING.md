@@ -151,7 +151,7 @@ turn, `aft::Turn`), so stepping never depends on the machine's speed. The suites
 | File | Covers |
 |---|---|
 | `test/harmony_test.cpp` | The scales; Snap and Degrees (ties, black keys, two keys on one note); diatonic chords in every scale, parallel chords off the scale; the voicings and their range; voice leading (it keeps the voicing); the tunings (Just and Pythagorean ratios exact); the memory (Forever, bars at a tempo, Off, versions, held keys) |
-| `test/engine_test.cpp` | Listen routing in every mode; the keys, the pedal, Hold and a full harmony; Stop (Keep, Fade, Cut, a suspend and resume, a long suspend); the mix and Space's decay hold; tilt, volume, the limiter at −1 dBFS (Abyss at Decay 30 too) and its release; the guard; the clock near 2³² samples; the synced cycles on the engine's one count, playing and stopped (a chord after a silence on its staggered places, the breath unmuted on the beat, both strata on one grid after 3 s stopped with Bloom silent); idling; a CPU smoke test |
+| `test/engine_test.cpp` | Listen routing in every mode; the keys, the pedal, Hold and a full harmony; Stop (Keep, Fade, Cut, a suspend and resume, a long suspend); the mix and Space's decay hold; tilt, volume, the limiter at −1 dBFS (Abyss at Decay 30 too) and its release; the guard; the clock near 2³² samples; the synced cycles on the engine's one count, playing and stopped (a chord after a silence on its staggered places, the breath unmuted on the beat, both strata on one grid after 3 s stopped with Bloom silent); idling; a CPU smoke test. M2's strata: off is off (10 s of Init, bit for bit 0.0.2's: its fingerprint, x86 and ARM); Air by Listen (Harmony generating on after the release with memory Forever and stopping with Off, Notes the keys alone at their velocity through Vel, Free the tonic chord from the first note, pans within Width); Split (a key above it Air's alone, panned by its pitch, folded into Air's range; nothing in the harmony, Bloom or Weather's notes; under it Bloom and not Air); Air's and Weather's level (exactly), mute, pan and Space send (none with Space's return at 0); Weather's gate by Listen (Notes with a finger and the pedal, Harmony with Memory 1 bar, Free) and To Key Chord on each Listen's pitch classes; Echo (a repeat at its time at the dry's level, awake while it rings and idle after, never run with every send at 0 or with nobody to hear it); Echo told how long it was skipped (a quiet note after a loud burst and 5 s of silence ducked as a fresh engine's, within 0.5 dB); Remember into Weather (kept through `reset()` and the guard), and again while Weather plays Memory (on to the new ring at once, without a step), and twice under a cloud reading the ring's first frames (no step: the Remember before Weather renders, Memory writing last); the plugin's source handed over and let go (`holdsSource()` for the loader's graveyard, the old source freed when it allows, never read again); Duck under Bloom; Weather's gate before its level within one patch; everything on with the same samples at blocks of 128, 64 and 32 to 256 (events cutting the pieces, a Remember among them) and finite at 1, 33, 77, 100; the limiter and the guard with everything on (a NaN in Echo's return); `reset()` and the guard silencing Air, Weather and Echo |
 | `test/airgen_test.cpp` | Air's generator (CONCEPT §13's `air` test): the same seed gives the same events, and no setting shifts the sequence (Density only moves it in time, a loop on and off leaves it as it was); Gravity 1 only chord tones in every pattern (Rise and Fall walking the chord tones), and a motif kept on a triad's four tones at Range 1 through Gravity's crossing and a chord change, and on two tones at Range 0.5 for every Motif, Gravity 0 their share; no repeat within two in every pattern, the Echo of figures with repeats, and the fallbacks when the weights leave too little (one chord tone: it every other note, never the note before; three candidates at least in every scale; a chord that leaves one allowed tone, and a motif drawn between Random's notes, still without repeats); Density's rate at 6, 12 and 60 a minute (one seed within ±10%, many within ±3%, counted in steps of 4096 once they are seen to give the events steps of 128 give), the gaps exponential, a change at once, 0 stopping it; the range at every Register; Rise and Fall a candidate or two at a time, wrapping; Constellation repeating, Mutate moving one note a scale step, the motif following a chord or key change and moving whole with Register; Echo learning the player's notes into the range, and keeping them through a Register change; the Loop free and synced (replays within the Rubato jitter, on the bar through a locate and a tempo change, the 120 s halving, overdubs, the 64-event recording, replays of the player's notes marked and moved into 24..108, a note at a pass's end coming back in order at Rubato 1, an empty first pass, Off forgetting, no repeat of the replays when it goes off, no room in a step, a key change and back; through Register, Range and chord changes keeping its pitch classes; where it comes round (its last note its first, or a b c a b), never the note before and, with candidates enough, neither of the two before; loops of one note and of two replaying as they are); Notes off; odd input; a Range or Gravity knob turning without working the candidates out every block |
 | `test/tables_test.cpp` | Names; the band limits of every frame at every mip level; equal RMS across a life; the life curves (Felt Piano darkening, Sine Bloom brightening); size; determinism; the builder thread's handoff, its cancel, and its release at unload or exit, with and without instances alive |
 | `test/lifeosc_test.cpp` | Pitch; aliasing over the keyboard (Hermite and linear reads); the position glide and the mip level's crossfade; every read against a plain model of it; Sway's reflection, a synced Sway pulled onto its clock (on the bar exactly, scans together or staggered by their offset, a locate gliding, a clock moved on only by the steps; back on Free each scan its own way again, landing on its own phase bit for bit), the division doubled past 4 Hz (1/4 at 300 BPM runs 2.5 Hz, at 239 BPM 3.98 Hz), the pulled cycle (most of a jump made up in 50 ms, landed exactly in about a second; `land()` at once; Free on its own phase every step), Smear; the Couple modes (FM against Bessel's partials, Ring, AM, Mix); `skip()`; the phase over a long run; odd and NaN input |
@@ -190,7 +190,7 @@ Copies the plugin, its profiling build and the bench (`afbench`) to `/tmp` on th
 pinned to core 1 while MPC keeps running (MPC's audio workers own cores 2–3), then deletes them.
 The bench `dlopen()`s the `.so` like MPC and times every 128-frame block with the thread's CPU
 clock; the profiling build also reports each block's time in the engine's stages (ground, bloom,
-space, out). It reads no user folders, saves nothing (it looks for the [trace](#diagnostics-on-the-device)'s
+air, weather, echo, space, out). It reads no user folders, saves nothing (it looks for the [trace](#diagnostics-on-the-device)'s
 flag file in a folder that doesn't exist, so a trace left on stays out of the cases), sets
 `AF_FIXED_SEED`, and fails if any case fails (p99 over 15% or max over 50% of the block; up to
 35% / 80% it warns).
@@ -206,6 +206,21 @@ by `plugin/patch_map.cpp`, which the bench links), played 2 s untimed and then t
 | bloom 6x2 | Bloom only (Ground muted): Chord Off and six keys, unison 2, Couple FM |
 | worst | Six keys let go for six others every 2 s (every voice taken from its release), unison 2, FM; Ground at full (every partial, Body, Breath); Sway at full depth and 2 Hz on both strata, Bloom's Smear and Breath at full (the read position crossing frames all the time: the dearest read); Space in Abyss with Shimmer 100%, Freeze off; Tilt on |
 
+M2's cases play the engine itself, linked into `afbench`, not the plugin, until the plugin maps Air,
+Weather and Echo to parameters (M2's Task 9) and loads Weather's sources (Task 10): the plugin's
+patch for their parameters (`patchFromParams`) with M2's fields set on it, their keys straight into
+the engine at the block's first sample, the tables their patch reads built first. What the plugin
+adds around the engine isn't in them: `worst engine` plays `worst` that way to measure it.
+
+| Case | Load |
+|---|---|
+| air | Air alone (Ground and Bloom muted, Init's Space): Felt at Decay 20, Free at Density 60 with Loop on, six keys over Split 72 struck at the start, so six voices ring from the first block and every generated note steals one |
+| weather | Weather alone: 16 grains, Cloud, +12, To Key Chord, high-pass 200 Hz, tilt +0.3, Duck 0.5, Free, on 12 s of noise made a source |
+| worst engine | `worst`, through the engine |
+| worst m2 | `worst engine`, with Air and Weather as above (both on Harmony, panned; Air's six keys struck again with each re-strike), every Echo send open into Echo at Ping-Pong, wow 1, Diffuse 1, duck 1, feedback 0.9, its return into the mix and Space, Memory recording, a Remember with every re-strike |
+| air strike | A low chord struck on Air every 2 s: Kalimba on the notes, six keys from C1 (Air's spikes: bursts of a period) |
+| echo resume | A 0.25 s phrase on Bloom every 2 s into Echo at the worst's settings but 100 ms and feedback 0.3: Echo falls silent between the phrases and starts afresh with each |
+
 Before the cases, the bench opens an instance and waits until the table builder it starts has
 published every table (it watches the process's threads in `/proc/self/task`), and says how long
 that took: every case then reads real tables, not the sine fallback, and the builder isn't timed
@@ -220,13 +235,14 @@ make arm-icount
 
 Prints each bench case's ARM instructions per 128-frame block, in thousands, exact and the same on
 every run: the measure of a change between device runs. A task that adds DSP states its count from it;
-the figures are in [Performance](PERFORMANCE.md#instruction-counts). It takes about 3 minutes.
+the figures are in [Performance](PERFORMANCE.md#instruction-counts). It takes about 5 minutes.
 
 - **The plugin** is `build/arm-plain/ambientforce.so`: the device's flags without the profile, which
   was trained on the code as it was before the change being measured. The shipped `.so` isn't touched.
 - **`afbench <so> --icount <case> <blocks>`** (the bench, built by `arm-bench`) sets the case up as the
   bench does (a fresh instance, its parameters by index, 2 s played) and plays `<blocks>` more blocks,
-  untimed; the timed bench plays a case the same way, through the same function. It runs under
+  untimed; the timed bench plays a case the same way, through the same function (an engine case:
+  its engine, its tables and Weather's source made by the helper below, the `.so` not loaded). It runs under
   `ICOUNT_QEMU` with `ICOUNT_PLUGIN`, qemu's `insn` plugin, which counts instructions per vCPU index,
   modulo 8, and prints them when the program exits (`cpu 0 insns: N`). In user mode every thread is
   a vCPU, and a new one takes the index after the highest alive, so cpu 0 is the main thread's alone

@@ -108,6 +108,10 @@ public:
     // before can come out again, and the duck still knows how loud the input has just been
     // (Echo's fresh start after a silence, dsp/echo.h).
     void clear();
+    // The duck's envelope as `samples` more of silence at the input would have left it, falling at
+    // its 250 ms release, and the wet's gain at once where that puts it: Echo's rest(), for the time
+    // the engine didn't run it. Nothing else moves (AmbientForce's).
+    void rest(double samples);
     void set(const Params& p, const Transport& t);
     void process(float* L, float* R, int n);
     int tailSamples() const { return tail_; }

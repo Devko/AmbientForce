@@ -78,7 +78,7 @@ a little over the shipped build's), µs per block:
   the bench waits for the table builder to finish, so no case plays the sine fallback or times the
   builder.
 - **Stage timing**: the profiling build (`-DAF_STAGE_TIMING`, `make arm-bench-stages`) laps a clock
-  between the engine's stages: ground, bloom, space and out.
+  between the engine's stages: ground, bloom, air, weather, echo, space and out.
 - **Profile-guided**: the shipped `.so` is built with a profile from `tools/pgo_train.cpp`, which
   plays an ambient phrase through every Space mode, Couple mode, Listen pair, tuning, chord type and
   voicing, Hold and the pedal, Stop and a suspend, then every factory preset, under `qemu-arm`.
@@ -125,6 +125,27 @@ These figures replace the ones this table had through M1 (init chord 210k, drone
 355k, worst 423k, 433k where it re-strikes), which came from another qemu build and ran 7–14% over
 `arm-icount`'s for the same code: the commit they were taken at (`9183bd8`) counts 196.7k, 161.7k,
 312.5k and 392.3k here. Today's code counts under 1% over that, for the synced breath and sways.
+**With M2's engine** (Task 8: Air, Weather, Echo and Memory wired in, all off in these cases), the
+same cases count 5.8k a block more: Memory recording the output (3.6k) and the new routing. M2's
+own cases play the engine itself, linked into the bench, until the plugin maps their parameters
+(`worst engine`, the `worst` case played so, counts 0.4k under the plugin's):
+
+| Case (M2's engine) | ARM instructions per block | Its spike, counted by hand |
+|---|---|---|
+| init chord / drone / bloom 6x2 | 203.0k / 168.0k / 318.8k | |
+| worst | 400.3k | its re-strike's block 418.2k |
+| air | 149.0k | |
+| weather | 181.4k | |
+| worst m2 | 531.9k | its re-strike's block 570.0k (a Remember's 23k in it) |
+| air strike | 149.8k | the strike's block 359.8k, the ten after it 159.4k |
+| echo resume | 142.2k | the phrase's first block 216.1k, the 34 after it 200.3k, the silence 115.9k |
+
+M2's worst case, part by part (the case less each part): Weather 60.5k, Air 38.4k, Echo 32.8k with
+its sends, and the 5.8k above; 137.4k over 0.0.2's worst, where the plan budgeted 128k. At the
+plan's 0.0268 points of p99 a thousand, 531.9k is **14.25%** (device: pending), under the 14.5% at
+which the plan's caps start. The spikes are a block or ten in 2 s: `afbench <so> --icount <case>
+690` less `689` is the re-strike's (or the strike's, or the phrase's) block alone.
+
 The strata's figures below and the oscillator's were counted before `arm-icount` too: compare them
 with each other, not with the table above.
 

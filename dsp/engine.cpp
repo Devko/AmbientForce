@@ -134,7 +134,11 @@ Engine::Engine(const TableSet& tables) : tables_(tables) {
 void Engine::seed(uint32_t s) {
     ground_.seed(s);   // a reset of Ground: it is given its target again
     bloom_.seed(s * 0x9E3779B1u + 0x7F4A7C15u);   // not Ground's sequence
+    air_.seed(s * 0x85EBCA6Bu + 0xC2B2AE35u);     // nor either's
+    weather_.seed(s * 0x27D4EB2Fu + 0x165667B1u);
     groundWant_ = -2;
+    weatherGate_ = false;   // Weather's reset closed it: the route opens it again if it should be
+    airSync_ = true;
     route();
 }
 
@@ -148,12 +152,22 @@ void Engine::setPatch(const Patch& in) {
     p.bloomSpace = clampParam(p.bloomSpace, 0.0f, 1.0f, 0.0f);
     p.spaceReturn = clampParam(p.spaceReturn, 0.0f, 1.0f, 0.0f);
     p.harmony.key = std::min(std::max(p.harmony.key, 0), 11);
+    p.air.listen = std::min(std::max(p.air.listen, 0), LI_COUNT - 1);
+    p.weather.listen = std::min(std::max(p.weather.listen, 0), LI_COUNT - 1);
+    for (float* s : {&p.groundEcho, &p.bloomEcho, &p.airSpace, &p.airEcho, &p.weatherSpace, &p.weatherEcho,
+                     &p.echoReturn, &p.echoSpace})
+        *s = clampParam(*s, 0.0f, 1.0f, 0.0f);
+    p.memoryTap = std::min(std::max(p.memoryTap, 0), MT_COUNT - 1);
+    if (p.split < 0 || p.split > 127) p.split = -1;
     const Patch was = p_;
     p_ = p;
 
     harmony_.set(p.harmony);
     ground_.set(p.ground, p.harmony);
     bloom_.set(p.bloom, p.harmony);
+    air_.set(p.air, p.harmony);
+    echo_.set(p.echo, transport_);
+    echoBpm_ = transport_.bpm;
 
     // Space: the tail's hold. Abyss rings four times its Decay, so a quarter of the Release does.
     spaceParams_ = p.space;
@@ -168,9 +182,22 @@ void Engine::setPatch(const Patch& in) {
     // a tail (a frozen reverb takes no input: there Bloom releases as Tail Voice).
     groundSend_ = p.spaceReturn > 0.0f ? p.groundSpace : 0.0f;
     bloomSend_ = p.spaceReturn > 0.0f && !p.space.reverb.freeze ? p.bloomSpace : 0.0f;
+    airSend_ = p.spaceReturn > 0.0f ? p.airSpace : 0.0f;
+    weatherSend_ = p.spaceReturn > 0.0f ? p.weatherSpace : 0.0f;
     ret_.target = p.spaceReturn;
     panGains(p.groundPan, gPanL_.target, gPanR_.target);
     panGains(p.bloomPan, bPanL_.target, bPanR_.target);
+    panGains(p.airPan, aPanL_.target, aPanR_.target);
+    panGains(p.weatherPan, wPanL_.target, wPanR_.target);
+    // Echo: the strata's sends only where its return is heard, in the mix or through Space; its own
+    // send into Space only where Space's return is.
+    const bool echoHeard = p.echoReturn > 0.0f || (p.echoSpace > 0.0f && p.spaceReturn > 0.0f);
+    gEcho_.target = echoHeard ? p.groundEcho : 0.0f;
+    bEcho_.target = echoHeard ? p.bloomEcho : 0.0f;
+    aEcho_.target = echoHeard ? p.airEcho : 0.0f;
+    wEcho_.target = echoHeard ? p.weatherEcho : 0.0f;
+    echoRet_.target = p.echoReturn;
+    echoSpace_.target = p.spaceReturn > 0.0f ? p.echoSpace : 0.0f;
     volume_.target = volumeGain(p.volumeDb) * kMakeUp;
     tilt_ = p.tilt;
 
@@ -180,6 +207,12 @@ void Engine::setPatch(const Patch& in) {
     freeChord_ = buildChord(tonic, kTonicNote + p.harmony.key);
 
     changed(was);
+    // Weather's gate before its set(), on purpose: a patch that closes the gate (Listen on the notes
+    // with no key held, a Hold let go) and raises the level at once (a preset loaded) leaves Weather
+    // silent, where set() first would play the gate's fade out of a cloud its Listen doesn't want
+    // (weather.h: within one call order counts).
+    routeWeather();
+    weather_.set(p.weather, p.harmony);
     route();
     if (fading_ && p.onStop == OS_CUT) reset();
 }
@@ -232,9 +265,23 @@ void Engine::noteOn(int note, int velocity) {
     const int mapped = mapInput(p_.harmony, note);
     if (mapped < 0) return;
     const float vel = static_cast<float>(std::min(velocity, 127)) / 127.0f;
-    lastVel_ = vel;
     awake_ = true;
     fading_ = false;   // a fade under way turns round
+
+    // Air takes the player's notes only while it can be heard (its level above 0, not muted): an Air
+    // that is off isn't rendered, and notes struck into it would ring on from where they stood when
+    // it was turned up, long after they were played (and keep the meter's voices up meanwhile).
+    const bool airOn = !p_.air.mute && p_.air.level > 0.0f;
+
+    // Split: a key at or above it plays Air alone (its mapped note), whatever Air's Listen. It wakes
+    // the engine, as any note does (Free strata start), but enters nothing else: not the harmony,
+    // Bloom, Ground or Weather's notes. It is never held, so its note-off finds nothing to let go.
+    if (p_.split >= 0 && note >= p_.split) {
+        if (airOn) air_.play(mapped, vel);
+        route();
+        return;
+    }
+    lastVel_ = vel;
 
     // Hold: a note-on with no other finger on a key starts a new chord, and the keys Hold latched go
     // once it has started (play() before release(): the notes the two share carry on). With a
@@ -256,8 +303,11 @@ void Engine::noteOn(int note, int velocity) {
     mapped_[note] = mapped;
     keyVel_[note] = vel;
     keyAge_[note] = ++keysPressed_;
+    keysDirty_ = true;
 
     if (p_.bloom.listen == LI_NOTES) playKey(note, again);
+    // Air on the notes plays every key, unless Split is on: then only the keys above it (above).
+    if (airOn && p_.air.listen == LI_NOTES && p_.split < 0) air_.play(mapped, vel);
     if (fresh) releaseLatched(note);
     route();
 }
@@ -309,6 +359,7 @@ void Engine::letGo(int key) {
     bloom_.release(key);   // in Harmony and Free modes Bloom has no notes of a key's: nothing
     harmony_.noteOff(key);
     key_[key] = K_UP;
+    keysDirty_ = true;
 }
 
 void Engine::sustain(bool down) {
@@ -340,6 +391,8 @@ void Engine::route() {
         groundWant_ = g;
         ground_.setTarget(g);
     }
+    routeAir();
+    routeWeather();
     if (!awake_) return;
     if (p_.bloom.listen == LI_HARMONY) {
         if (bloomSync_ || harmony_.version() != bloomVersion_) {
@@ -357,6 +410,86 @@ void Engine::route() {
     }
 }
 
+// Air's chord and whether it generates. Notes: the harmony's chord (what a loop's replays move to),
+// no generating; Air plays the keys themselves. Harmony: the harmony's chord, generating while there
+// is one (a forgotten harmony: AirGen keeps its tones, and stops). Free: the tonic chord, generating
+// from the first note. Asleep: nothing. Given again only when it changes, and only while Air can be
+// heard (its level above 0, not muted): every chord change works the generator's candidates and
+// motifs out again (a re-strike of six keys under Chord Off is twelve of them), for nothing while
+// Air is off, as in Init. Turned up, it is given the chord there is then, if that isn't the one it
+// was last given.
+void Engine::routeAir() {
+    if (p_.air.mute || !(p_.air.level > 0.0f)) return;
+    Chord c;
+    bool gen = false;
+    if (awake_) {
+        switch (p_.air.listen) {
+            case LI_NOTES: c = harmony_.current(); break;
+            case LI_HARMONY:
+                c = harmony_.current();
+                gen = c.root >= 0;
+                break;
+            default:
+                c = freeChord_;
+                gen = true;
+                break;
+        }
+    }
+    if (airSync_ || gen != airGenerate_ || c.root != airChord_.root || c.pcs != airChord_.pcs || !sameNotes(c, airChord_)) {
+        airSync_ = false;
+        airChord_ = c;
+        airGenerate_ = gen;
+        air_.setChord(c, gen);
+    }
+}
+
+// Weather's gate and To Key's chord. Notes: open while any key is held (a finger, the pedal or Hold;
+// not a key above Split, which is Air's), on the held notes' pitch classes. Harmony: open while the
+// harmony has a chord, on its pitch classes. Free: open from the first note until Stop puts the
+// engine to sleep, on the tonic chord's. Shut, Weather keeps the chord it had while its gate fades.
+// The gate is given only when it changes: a gate(false) on a silent Weather closes it at once
+// (weather.h), and the engine keeps Weather's own state.
+void Engine::routeWeather() {
+    bool want = false;
+    uint16_t pcs = weatherPcs_;
+    if (awake_) {
+        switch (p_.weather.listen) {
+            case LI_NOTES:
+                if (keysDirty_) {
+                    keysDirty_ = false;
+                    heldPcs_ = 0;
+                    anyHeld_ = false;
+                    for (int k = 0; k < 128; ++k)
+                        if (key_[k] != K_UP) {
+                            anyHeld_ = true;
+                            heldPcs_ = static_cast<uint16_t>(heldPcs_ | 1u << (mapped_[k] % 12));
+                        }
+                }
+                want = anyHeld_;
+                pcs = heldPcs_;
+                break;
+            case LI_HARMONY: {
+                const Chord& c = harmony_.current();
+                want = c.root >= 0;
+                if (want) pcs = c.pcs;
+                break;
+            }
+            default:
+                want = true;
+                pcs = freeChord_.pcs;
+                break;
+        }
+    }
+    if (want && pcs != weatherPcs_) {
+        weatherPcs_ = pcs;
+        weather_.setChord(pcs);
+    }
+    if (want != weatherGate_) {
+        weatherGate_ = want;
+        weather_.gate(want);
+    }
+}
+
 // --- Stop, suspend, reset -----------------------------------------------------------------------
 
 void Engine::setTransport(double bpm, double beats, bool playing, bool beatsValid) {
@@ -371,6 +504,10 @@ void Engine::setTransport(double bpm, double beats, bool playing, bool beatsVali
     transport_.playing = playing;
     if (transport_.playing && transport_.valid) beats_ = transport_.beats;
     space_.set(spaceParams_, transport_);
+    if (transport_.bpm != echoBpm_) {   // of the transport the Delay reads only the tempo
+        echo_.set(p_.echo, transport_);
+        echoBpm_ = transport_.bpm;
+    }
     if (was && !playing) stop();
     else if (!was && playing) fading_ = false;   // playing again: a fade turns round
 }
@@ -390,9 +527,16 @@ void Engine::resume(double awayS) {
     else reset();   // NaN too
 }
 
+// Every DSP state silent and empty: the strata, Echo, Space, the output's filters. Memory's ring
+// recording starts afresh; what it remembered stays (plan decision 10: only a new Remember replaces
+// it).
 void Engine::clearDsp() {
     ground_.reset();
     bloom_.reset();
+    air_.reset();
+    weather_.reset();
+    echo_.reset();
+    memory_.reset();
     space_.reset();
     tiltS_[0] = tiltS_[1] = 0.0f;
     limitD_ = 0.0f;
@@ -400,6 +544,8 @@ void Engine::clearDsp() {
     groundWant_ = -2;   // nothing given: the next route() gives Ground its target again
     bloomSync_ = true;
     freePlayed_ = Chord{};
+    airSync_ = true;
+    weatherGate_ = false;   // Weather's reset closed it: the next route() opens it if Listen wants it
 }
 
 // The output's state where it settles with nothing to hear: the glides at their targets, the
@@ -408,13 +554,16 @@ void Engine::settle() {
     tiltS_[0] = tiltS_[1] = 0.0f;
     limitD_ = 0.0f;
     limiting_ = false;
-    for (Glide* g : {&volume_, &ret_, &gPanL_, &gPanR_, &bPanL_, &bPanR_, &fade_}) g->land();
+    for (Glide* g : {&volume_, &ret_, &gPanL_, &gPanR_, &bPanL_, &bPanR_, &aPanL_, &aPanR_, &wPanL_, &wPanR_, &gEcho_,
+                     &bEcho_, &aEcho_, &wEcho_, &echoRet_, &echoSpace_, &fade_})
+        g->land();
 }
 
 void Engine::reset() {
     clearDsp();
     harmony_.clear();
     std::fill(key_, key_ + 128, K_UP);
+    keysDirty_ = true;
     pedal_ = false;
     prev_ = Chord{};
     awake_ = false;
@@ -440,7 +589,20 @@ void Engine::tiltFor(float t) {
     tiltG_ = s.G;
 }
 
+// Memory's ring recording becomes the remembered source. Weather, if it reads Memory, sees the new
+// source at its next render(), before Memory writes into the ring it leaves (the old remembered
+// one): its fading grains copy what they still read from it there (weather.h).
+void Engine::applyRemember() {
+    rememberAsked_ = false;
+    memory_.remember();
+}
+
 void Engine::control() {
+    // Remember at the control step's start, before the piece's strata: Weather (on Memory) renders
+    // next, sees the new source and copies what its fading grains still read from the old ring; only
+    // then does Memory write (last in piece()), recording over that ring. Applied after Weather had
+    // rendered, the copies could be taken from frames already recorded over: a click (memory.h).
+    if (rememberAsked_) applyRemember();
     harmony_.advance(static_cast<double>(kChunk) / kRate, transport_.bpm);
     route();
     if (fading_) {
@@ -454,7 +616,9 @@ void Engine::control() {
     }
     fade_.target = fadeDb_ < 0.0f ? dbToGain(fadeDb_) : 1.0f;
     fade_.aim(kChunk);
-    for (Glide* g : {&volume_, &ret_, &gPanL_, &gPanR_, &bPanL_, &bPanR_}) g->aim(kGlideSamples);
+    for (Glide* g : {&volume_, &ret_, &gPanL_, &gPanR_, &bPanL_, &bPanR_, &aPanL_, &aPanR_, &wPanL_, &wPanR_, &gEcho_,
+                     &bEcho_, &aEcho_, &wEcho_, &echoRet_, &echoSpace_})
+        g->aim(kGlideSamples);
     if (tiltNow_ != tilt_) {
         tiltNow_ = std::fabs(tilt_ - tiltNow_) <= kTiltStep ? tilt_ : tiltNow_ + std::copysign(kTiltStep, tilt_ - tiltNow_);
         tiltFor(tiltNow_);
@@ -466,6 +630,8 @@ void Engine::control() {
 // sample, and the same events play the same samples whatever the block size.
 void Engine::render(float* outL, float* outR, int n) {
     if (n <= 0) return;
+    // Asleep no control step runs, and nothing is recorded: a Remember applies at once.
+    if (rememberAsked_ && !awake_) applyRemember();
     int o = 0;
     while (awake_ && o < n) {
         const int phase = static_cast<int>((samples_ + static_cast<uint64_t>(o)) % kChunk);
@@ -475,7 +641,7 @@ void Engine::render(float* outL, float* outR, int n) {
         }
         const int m = std::min(n - o, kChunk - phase);
         clockStrata(samples_ + static_cast<uint64_t>(o));
-        if (!piece(outL + o, outR + o, m)) {
+        if (!piece(outL + o, outR + o, m, samples_ + static_cast<uint64_t>(o))) {
             // Not finite: the whole call is zeros and the DSP starts afresh.
             ++guards_;
             g_guardTrips.fetch_add(1, std::memory_order_relaxed);
@@ -508,17 +674,28 @@ void Engine::clockStrata(uint64_t at) {
     const double beats = beatsAt(at);
     ground_.setTransport(transport_.bpm, beats);
     bloom_.setTransport(transport_.bpm, beats);
+    air_.setTransport(transport_.bpm, beats, true);   // the one count, locked always (airgen.h)
 }
 
-// One piece of n <= kChunk samples, all within one control step: the strata into the dry bus and
-// the sends, Space, the output. False if a sample came out that isn't finite.
-bool Engine::piece(float* L, float* R, int n) {
+// One piece of n <= kChunk samples from sample `at`, all within one control step: the strata into
+// the dry bus, the Space sends and the Echo bus; Echo; Space; Memory's tap; the output. False if a
+// sample came out that isn't finite.
+bool Engine::piece(float* L, float* R, int n, uint64_t at) {
+    // What may sound: Air while a voice rings or its generator may strike; Echo while a stratum
+    // that may sound sends to it, or it isn't silent; Space while anything sends to it. Air's send
+    // and Echo's into Space are looked at once they have run (below): Air's generator may strike
+    // nothing, and Space needn't run for it.
+    const auto sending = [](const Glide& s) { return !(s.still() && s.now == 0.0f); };
     const bool g = ground_.audible(), b = bloom_.active() > 0;
-    const bool wet = (g && groundSend_ > 0.0f) || (b && bloomSend_ > 0.0f) || !space_.silent() || poison_;
+    const bool a = air_.audible() || air_.generating(), w = weather_.audible();
+    const bool echo = (g && sending(gEcho_)) || (b && sending(bEcho_)) || (a && sending(aEcho_)) ||
+                      (w && sending(wEcho_)) || !echo_.silent() || poisonEcho_;
+    const bool spaceIn = (g && groundSend_ > 0.0f) || (b && bloomSend_ > 0.0f) || (w && weatherSend_ > 0.0f) ||
+                         !space_.silent() || poison_;
     const size_t bytes = sizeof(float) * static_cast<size_t>(n);
     std::memset(L, 0, bytes);
     std::memset(R, 0, bytes);
-    if (!g && !b && !wet) {   // nothing to hear: no DSP
+    if (!g && !b && !a && !w && !echo && !spaceIn) {   // nothing to hear: no DSP
         idle_ = true;
         settle();
         return true;
@@ -528,31 +705,145 @@ bool Engine::piece(float* L, float* R, int n) {
     std::memset(sendL_, 0, bytes);
     std::memset(sendR_, 0, bytes);
 
-    // A stratum in the middle renders straight into the bus; panned, into its own buffer first.
-    // One not rendered has its pan where it goes.
-    const auto pan = [n, bytes, L, R](bool on, Glide& pl, Glide& pr, float* xl, float* xr, auto&& draw) {
+    // A stratum in the middle that sends nothing to Echo renders straight into the bus. Panned,
+    // sending to Echo, or wanted apart (Bloom's dry for Weather's Duck), it renders into its own
+    // buffer first: then into the bus at its pan, and into the Echo bus at its send (the dry before
+    // its pan, decision 2). One not rendered has its pan and send where they go. draw() says whether
+    // anything sounded (Air's generator may strike nothing): only a sounding stratum wakes Echo.
+    // Gains standing still are taken whole, a loop the compiler can vectorise; gliding, a sample at
+    // a time. Ground's and Bloom's pans (`exact`) keep 0.0.2's loop, a sample at a time, so their
+    // panned dry is bit for bit what it was wherever the compiler would fuse the other differently.
+    bool echoBus = false, echoIn = false;   // the Echo bus zeroed this piece; something sent into it
+    const auto mix = [&](bool on, Glide& pl, Glide& pr, Glide& es, float* xl, float* xr, bool apart, bool exact,
+                         auto&& draw) {
         if (!on) {
             pl.land();
             pr.land();
-        } else if (pl.still() && pr.still() && pl.now == 1.0f && pr.now == 1.0f) {
-            draw(L, R);
+            es.land();
+            return false;
+        }
+        const bool toEcho = sending(es);
+        const bool still = pl.still() && pr.still(), centred = still && pl.now == 1.0f && pr.now == 1.0f;
+        if (!toEcho && !apart && centred) return draw(L, R);
+        std::memset(xl, 0, bytes);
+        std::memset(xr, 0, bytes);
+        const bool sounded = draw(xl, xr);
+        if (centred) {   // what a gain of 1 gives, bit for bit
+            for (int i = 0; i < n; ++i) {
+                L[i] += xl[i];
+                R[i] += xr[i];
+            }
+        } else if (still && !exact) {
+            const float gl = pl.now, gr = pr.now;
+            for (int i = 0; i < n; ++i) {
+                L[i] += xl[i] * gl;
+                R[i] += xr[i] * gr;
+            }
         } else {
-            std::memset(xl, 0, bytes);
-            std::memset(xr, 0, bytes);
-            draw(xl, xr);
             for (int i = 0; i < n; ++i) {
                 L[i] += xl[i] * pl.next();
                 R[i] += xr[i] * pr.next();
             }
         }
+        if (!toEcho) return sounded;
+        if (!echoBus) {
+            std::memset(echoL_, 0, bytes);
+            std::memset(echoR_, 0, bytes);
+            echoBus = true;
+        }
+        if (es.still()) {
+            const float e = es.now;
+            for (int i = 0; i < n; ++i) {
+                echoL_[i] += xl[i] * e;
+                echoR_[i] += xr[i] * e;
+            }
+        } else {
+            for (int i = 0; i < n; ++i) {
+                const float e = es.next();
+                echoL_[i] += xl[i] * e;
+                echoR_[i] += xr[i] * e;
+            }
+        }
+        echoIn = echoIn || sounded;
+        return sounded;
     };
-    pan(g, gPanL_, gPanR_, gL_, gR_,
-        [&](float* xl, float* xr) { ground_.render(tables_, xl, xr, sendL_, sendR_, groundSend_, n); });
+    mix(g, gPanL_, gPanR_, gEcho_, gL_, gR_, false, true, [&](float* xl, float* xr) {
+        ground_.render(tables_, xl, xr, sendL_, sendR_, groundSend_, n);
+        return true;
+    });
     clock.lap(STG_GROUND);
-    pan(b, bPanL_, bPanR_, bL_, bR_,
-        [&](float* xl, float* xr) { bloom_.render(tables_, xl, xr, sendL_, sendR_, bloomSend_, n); });
+    const bool duck = w && p_.weather.duck > 0.0f;   // Weather hears Bloom's dry peak
+    mix(b, bPanL_, bPanR_, bEcho_, bL_, bR_, duck, true, [&](float* xl, float* xr) {
+        bloom_.render(tables_, xl, xr, sendL_, sendR_, bloomSend_, n);
+        return true;
+    });
+    float bloomPeak = 0.0f;
+    if (duck && b)
+        for (int i = 0; i < n; ++i) bloomPeak = std::max(bloomPeak, std::max(std::fabs(bL_[i]), std::fabs(bR_[i])));
     clock.lap(STG_BLOOM);
+    const bool airSounded = mix(a, aPanL_, aPanR_, aEcho_, aL_, aR_, false, false, [&](float* xl, float* xr) {
+        const bool was = air_.audible();
+        air_.render(tables_, xl, xr, sendL_, sendR_, airSend_, n);
+        return was || air_.audible();
+    });
+    clock.lap(STG_AIR);
+    // Weather reads Memory's remembered 16 s, or the plugin's source (holdsSource()).
+    const GrainSource* src = p_.weather.memory ? memory_.remembered() : weatherSrc_;
+    if (w) weatherHolds_ = !p_.weather.memory && src && src->ready();
+    mix(w, wPanL_, wPanR_, wEcho_, wL_, wR_, false, false, [&](float* xl, float* xr) {
+        weather_.render(src, bloomPeak, xl, xr, sendL_, sendR_, weatherSend_, n);
+        return true;
+    });
+    clock.lap(STG_WEATHER);
+    // Memory's tap, kept until the guard has looked (Memory never sees a sample that isn't finite):
+    // the strata's dry here, or the dry and the returns before the tilt (below).
+    const bool strataTap = p_.memoryTap == MT_STRATA;
+    if (strataTap) {
+        std::memcpy(tapL_, L, bytes);
+        std::memcpy(tapR_, R, bytes);
+    }
 
+    // Echo: its return into the mix and into Space's send. Skipped (silent, nothing sent), it is told
+    // for how long when it runs again, so its duck falls as far as it would have (echo.h).
+    bool echoToSpace = false;
+    if (echoIn || !echo_.silent() || poisonEcho_) {
+        if (!echoBus) {
+            std::memset(echoL_, 0, bytes);
+            std::memset(echoR_, 0, bytes);
+        }
+        if (at > echoTo_) echo_.rest(at - echoTo_);
+        echo_.process(echoL_, echoR_, echoL_, echoR_, n);   // the wet, over the bus
+        echoTo_ = at + static_cast<uint64_t>(n);
+        ++echoRuns_;
+        if (poisonEcho_) {
+            echoL_[0] = std::numeric_limits<float>::quiet_NaN();
+            poisonEcho_ = false;
+        }
+        const auto add = [n](Glide& gain, const float* xl, const float* xr, float* l, float* r) {
+            if (gain.still()) {
+                const float g = gain.now;
+                for (int i = 0; i < n; ++i) {
+                    l[i] += g * xl[i];
+                    r[i] += g * xr[i];
+                }
+            } else {
+                for (int i = 0; i < n; ++i) {
+                    const float g = gain.next();
+                    l[i] += g * xl[i];
+                    r[i] += g * xr[i];
+                }
+            }
+        };
+        add(echoRet_, echoL_, echoR_, L, R);
+        echoToSpace = sending(echoSpace_);
+        if (echoToSpace) add(echoSpace_, echoL_, echoR_, sendL_, sendR_);
+    } else {
+        echoRet_.land();   // no wet to glide over
+        echoSpace_.land();
+    }
+    clock.lap(STG_ECHO);
+
+    const bool wet = spaceIn || (airSounded && airSend_ > 0.0f) || echoToSpace;
     if (wet) {
         space_.process(sendL_, sendR_, sendL_, sendR_, n);   // the wet, over the sends
         if (poison_) {
@@ -568,7 +859,14 @@ bool Engine::piece(float* L, float* R, int n) {
         ret_.land();   // no wet to glide over
     }
     clock.lap(STG_SPACE);
+    if (!strataTap) {
+        std::memcpy(tapL_, L, bytes);
+        std::memcpy(tapR_, R, bytes);
+    }
     const bool finite = output(L, R, n);
+    // Memory last: after Weather has rendered (and taken its copies of the old ring, if a Remember
+    // came at this step's start), and after the guard has looked.
+    if (finite) memory_.write(tapL_, tapR_, n);
     clock.lap(STG_OUT);
     return finite;
 }
@@ -630,7 +928,9 @@ bool Engine::output(float* L, float* R, int n) {
 
 // --- what the tests and the meter see ----------------------------------------------------------
 
-int Engine::activeVoices() const { return bloom_.active() + (ground_.audible() ? 1 : 0); }
+int Engine::activeVoices() const {
+    return bloom_.active() + air_.voices().active() + (ground_.audible() ? 1 : 0);
+}
 
 Engine::Info Engine::info() const {
     Info i;
@@ -648,8 +948,20 @@ Engine::Info Engine::info() const {
     i.samples = samples_;
     i.limiterGain = 1.0f - limitD_;
     i.limiting = limiting_;
-    i.gliding = !(volume_.still() && ret_.still() && gPanL_.still() && gPanR_.still() && bPanL_.still() && bPanR_.still());
+    i.gliding = false;
+    for (const Glide* g : {&volume_, &ret_, &gPanL_, &gPanR_, &bPanL_, &bPanR_, &aPanL_, &aPanR_, &wPanL_, &wPanR_,
+                           &gEcho_, &bEcho_, &aEcho_, &wEcho_, &echoRet_, &echoSpace_})
+        i.gliding = i.gliding || !g->still();
     i.spaceDecayS = spaceParams_.reverb.decayS;
+    i.airActive = air_.voices().active();
+    i.airStrikes = air_.strikes();
+    i.weatherAudible = weather_.audible();
+    i.weatherGate = weatherGate_;
+    i.echoRuns = echoRuns_;
+    i.echoSilent = echo_.silent();
+    i.remembered = memory_.remembered() != nullptr;
+    i.memoryFill = memory_.fill();
+    i.memoryGeneration = memory_.generation();
     return i;
 }
 
