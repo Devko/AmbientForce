@@ -240,11 +240,15 @@ void Weather::set(const WeatherPatch& p, const HarmonyPatch& h) {
     const int key = ((h.key % 12) + 12) % 12, scale = std::min(std::max(h.scale, 0), SC_COUNT - 1);
     nKeyPcs_ = scaleSize(scale);
     for (int d = 0; d < nKeyPcs_; ++d) keyPcs_[d] = (key + scaleStep(scale, d)) % 12;
-    if (closed_) {   // nothing to hear: everything where it is aimed
+    // Nothing to hear (closed, or the level or the mute at 0 and the gain already down there):
+    // everything where it is aimed, so no render() can glide it back up (only set() or gate() makes
+    // it audible again), and no grain or source kept (silence()).
+    if (!audible()) {
         levelNow_ = levelTo_ = mute_ ? 0.0f : level_;
         levelStep_ = 0.0f;
         tiltNow_ = tilt_;
         hpNow_ = hpHz_;
+        silence();
     }
 }
 
@@ -270,7 +274,7 @@ void Weather::reset() {
     if (r == 0) r = 0x7F4A7C15u;   // xorshift's one stuck state
     xorshift(r);
     rng_ = r;
-    stopAll();
+    silence();
     now_ = 0;
     begin();
     dropAll_ = false;
@@ -288,13 +292,21 @@ void Weather::reset() {
     tiltNow_ = tilt_;
     hpNow_ = hpHz_;
     tiltFor_ = hpFor_ = -1.0f;   // worked out afresh at the first step
-    src_ = GrainSource{};
-    hasSrc_ = false;
 }
 
-void Weather::stopAll() {
-    for (Voice& v : voice_) v.on = false;
+// Nothing more to hear (the gate closed, the level or the mute glided to 0, a reset): every grain
+// stops and the source is forgotten. The engine may skip Weather from here on, and the loader or a
+// Remember may free the source meanwhile, so nothing may keep a pointer into it: a grain still
+// reading it would be copied from it at the next source change. The next render() with something
+// to hear takes its source afresh (changeSource: the modes from the anchor, a grain at once).
+void Weather::silence() {
+    for (Voice& v : voice_) {
+        v.on = false;
+        v.data = nullptr;
+    }
     tiltS_[0] = tiltS_[1] = hpS_[0] = hpS_[1] = 0.0f;
+    src_ = GrainSource{};
+    hasSrc_ = false;
 }
 
 // Stream and Stretch start from the anchor afresh from here, and the next grain comes at once.
@@ -362,8 +374,12 @@ void Weather::changeSource(const GrainSource* src) {
 void Weather::render(const GrainSource* src, float duckPeak, float* outL, float* outR, float* sendL, float* sendR,
                      float spaceSend, int n) {
     if (n <= 0) return;
-    const bool ready = src && src->ready() && src->frames >= 4;
-    if (ready != hasSrc_ || (ready && !sameSource(*src, src_))) changeSource(ready ? src : nullptr);
+    // The source is looked at only with something to hear: silent, Weather holds none (silence()),
+    // and no grain starts.
+    if (audible()) {
+        const bool ready = src && src->ready() && src->frames >= 4;
+        if (ready != hasSrc_ || (ready && !sameSource(*src, src_))) changeSource(ready ? src : nullptr);
+    }
     if (closed_) return;
     spaceSend_ = clampParam(spaceSend, 0.0f, 1.0f, 0.0f);
     if (dropAll_) {
@@ -387,12 +403,14 @@ void Weather::render(const GrainSource* src, float duckPeak, float* outL, float*
         step(m, d0 + dStep * static_cast<float>(o), dStep, outL + o, outR + o, sendL + o, sendR + o);
         now_ += static_cast<uint64_t>(m);
         if (ending_) {   // the gate's bottom: every grain stops
-            stopAll();
+            silence();
             closed_ = true;
             ending_ = false;
             gain_ = gain0_ = 0.0f;
             levelNow_ = levelTo_ = mute_ ? 0.0f : level_;
             levelStep_ = 0.0f;
+        } else if (!audible()) {   // the level or the mute has glided to 0: the same
+            silence();
         }
     }
 }
@@ -580,8 +598,8 @@ void Weather::spawn(int k, double pos, float semis, bool back, int length, float
 
 // One step of m samples: the grains due, every grain into acc_, then the tilt, the high-pass and the
 // gains (the step's ramp times Duck's, d0 at the step's start, dStep a sample) into the dry and the
-// send. A step with nothing to hear reads nothing: the grains move on unread and the filters start
-// afresh.
+// send. A step with nothing to hear reads nothing: any grain moves on unread and the filters start
+// afresh (once nothing more can be heard, render() stops every grain: silence()).
 void Weather::step(int m, float d0, float dStep, float* outL, float* outR, float* sendL, float* sendR) {
     startGrains(m);
     const bool heard = gain0_ > 0.0f || gain_ > 0.0f;

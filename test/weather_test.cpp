@@ -2,8 +2,9 @@
 // slower levels; silence without a source; pitch to the cent and no aliasing two octaves up; To Key's
 // pitch classes; the level across grain counts; Stream's seamless joins and its level drifting or
 // transposed; the gate's fade; Duck; a source or mode change mid-cloud (the old source scribbled
-// over under it); origin; the window against the Hann; mute; a call cut into the engine's pieces;
-// determinism, stability, and nothing allocating. Needs no plugin: make test-module M=weather.
+// over under it); origin; the window against the Hann; mute; a source freed while Weather is
+// silent; a call cut into the engine's pieces; determinism, stability, and nothing allocating.
+// Needs no plugin: make test-module M=weather.
 #include "check.h"
 #include "signal.h"
 #include "../dsp/grainsrc.h"
@@ -620,6 +621,54 @@ void testMute() {
     CHECK(half);
 }
 
+// With nothing to hear (level 0 or muted, the glide down done) the engine may skip Weather, and the
+// loader or a Remember may free its source meanwhile. Once audible() is false every grain has
+// stopped and the source is forgotten, so the level coming back over another source reads nothing
+// of the freed one (ASan would report it). Rendered on while silent, no grain starts.
+void testFreedWhileSilent() {
+    std::printf("== weather: a source freed while silent\n");
+    const auto b = source(whiteNoise(4 * kSec, 0.5f, 93));
+    for (bool mute : {false, true}) {
+        auto a = source(whiteNoise(4 * kSec, 0.5f, 91), whiteNoise(4 * kSec, 0.5f, 92));
+        Weather w;
+        w.seed(67);
+        Spawns s;
+        w.setSpawnHook(record, &s);
+        af::WeatherPatch p = dense();
+        w.set(p, af::HarmonyPatch{});
+        w.gate(true);
+        play(w, &a->src, 3 * kSec);
+        const int on = w.grainsOn();
+        CHECK(on > 2);
+        p.mute = mute;
+        p.level = mute ? 1.0f : 0.0f;
+        w.set(p, af::HarmonyPatch{});
+        int blocks = 0;
+        while (w.audible() && blocks < kSec / kBlk) {
+            play(w, &a->src, kBlk);
+            ++blocks;
+        }
+        std::printf("  %s: %d grains, silent after %d blocks with %d left\n", mute ? "muted" : "level 0", on,
+                    blocks, w.grainsOn());
+        CHECK(!w.audible() && w.grainsOn() == 0);
+        // An engine that renders it anyway: nothing starts, nothing is added.
+        const size_t spawned = s.semis.size();
+        const Out idle = play(w, &a->src, kSec);
+        CHECK(s.semis.size() == spawned && w.grainsOn() == 0);
+        CHECK(peak(idle.L) == 0.0f && peak(idle.R) == 0.0f && peak(idle.sendL) == 0.0f);
+        a.reset();   // freed while Weather is silent
+        p.mute = false;
+        p.level = 1.0f;
+        w.set(p, af::HarmonyPatch{});
+        CHECK(w.audible());
+        const Out o = play(w, &b->src, 2 * kSec);
+        const double lvl = dbRms(o, at(1.0));
+        std::printf("  back over another source: %d grains, %.2f dBFS RMS\n", w.grainsOn(), lvl);
+        CHECK(w.grainsOn() > 2);
+        CHECK(std::fabs(lvl - af::kSourceRmsDb) <= 1.5);
+    }
+}
+
 // A call is cut into control steps of 32 from its start, as Ground's: a block of 128 plays what four calls of
 // 32 do (the engine's pieces). Its steps are what the engine makes them, so the engine's own grid keeps
 // MPC's block size out of the sound.
@@ -785,6 +834,7 @@ void weatherTests() {
     testOrigin();
     testWindow();
     testMute();
+    testFreedWhileSilent();
     testBlocks();
     testDeterminismAndStability();
     testNoAllocation();
