@@ -5,7 +5,8 @@
 // input, block sizes, reset, the tail). Then AmbientForce's own: Diffuse (0 is EffectForce's Delay
 // bit for bit, the smear, what a pass loses, the comb a long tail narrows to, no growth, Mono,
 // clicks, block sizes, odd values, the tail) and dsp/echo.h (wet only, silent() within the Delay's
-// reach, nothing old when it runs again after a silence).
+// reach, nothing old when it runs again after a silence, however the silence began, and the duck's
+// envelope kept across it).
 #include "signal.h"
 #include "../dsp/delay.h"
 #include "../dsp/echo.h"
@@ -1708,46 +1709,144 @@ void silence() {
 // a send brings something or silent() turns false. A longer time turns it false (the reach grows
 // past the quiet so far) while the lines still hold the burst of two seconds before, at ages the
 // longer time reads: without a fresh start it came back at about -50 dBFS. Here: a 0.3 s burst at
-// 200 ms, run until silent(), then skipped while the time is set to 2 s, then run again: nothing
-// comes out of 3 s of silence and the first 2 s after an impulse (not 1e-15), and the impulse's
-// repeat comes at the new time. Every mode, with Diffuse 0.3 and without.
+// 200 ms, run until silent(), then skipped while the time is set to 2 s, then run again with an
+// impulse 3 s on, or in the very first sample (the block that starts afresh takes it in): nothing
+// comes out before the impulse's repeat (not 1e-15), which comes at the new time. Woken by the time
+// alone, Echo is silent again after its first block. Every mode, with Diffuse 0.3 and without.
 void resume() {
     std::printf("  echo: back after silent(), a 2 s time, the loudest before the new repeat:");
     for (float diffuse : {0.3f, 0.0f}) {
         for (int mode = 0; mode < Delay::kModes; ++mode) {
-            af::Echo e;
-            af::Echo::Params p = af::initEcho();
-            p.delay.sync = false;
-            p.delay.timeMs = 200.0f;
-            p.delay.feedback = 0.3f;
-            p.delay.mode = mode;
-            p.delay.diffuse = diffuse;
-            const size_t burst = static_cast<size_t>(0.3 * kSr);
-            Buf x = whiteNoise(10 * kSr, 0.5f, 97), y = whiteNoise(10 * kSr, 0.5f, 98);
-            std::fill(x.begin() + static_cast<std::ptrdiff_t>(burst), x.end(), 0.0f);
-            std::fill(y.begin() + static_cast<std::ptrdiff_t>(burst), y.end(), 0.0f);
-            for (size_t pos = 0; pos < x.size() && !(pos > burst && e.silent()); pos += 128) {
-                e.set(p, tempo(120.0));
-                e.process(&x[pos], &y[pos], &x[pos], &y[pos], 128);
+            for (size_t later : {3 * static_cast<size_t>(kSr), size_t{0}}) {
+                af::Echo e;
+                af::Echo::Params p = af::initEcho();
+                p.delay.sync = false;
+                p.delay.timeMs = 200.0f;
+                p.delay.feedback = 0.3f;
+                p.delay.mode = mode;
+                p.delay.diffuse = diffuse;
+                const size_t burst = static_cast<size_t>(0.3 * kSr);
+                Buf x = whiteNoise(10 * kSr, 0.5f, 97), y = whiteNoise(10 * kSr, 0.5f, 98);
+                std::fill(x.begin() + static_cast<std::ptrdiff_t>(burst), x.end(), 0.0f);
+                std::fill(y.begin() + static_cast<std::ptrdiff_t>(burst), y.end(), 0.0f);
+                for (size_t pos = 0; pos < x.size() && !(pos > burst && e.silent()); pos += 128) {
+                    e.set(p, tempo(120.0));
+                    e.process(&x[pos], &y[pos], &x[pos], &y[pos], 128);
+                }
+                CHECK(e.silent());
+
+                p.delay.timeMs = 2000.0f;   // skipped: set() goes on, process() doesn't
+                for (int b = 0; b < 100; ++b) e.set(p, tempo(120.0));
+                CHECK(!e.silent());
+
+                const size_t time = 88200, depth = 43;   // wow 0.3: 42.3 samples
+                Buf L(later + time + 2000, 0.0f);
+                L[later] = 1.0f;
+                const Return o = runEcho(e, p, L, L, tempo(120.0));
+                const size_t before = later + time - depth - 2;
+                const float old = std::max(peak(o.L, 0, before), peak(o.R, 0, before));
+                std::printf(" %.3g", static_cast<double>(old));
+                CHECK(old < 1e-15f);
+                CHECK(std::max(peak(o.L, before, o.L.size()), peak(o.R, before, o.R.size())) > 0.05f);
+                if (later > 0) CHECK(o.silent[0]);
             }
-            CHECK(e.silent());
-
-            p.delay.timeMs = 2000.0f;   // skipped: set() goes on, process() doesn't
-            for (int b = 0; b < 100; ++b) e.set(p, tempo(120.0));
-            CHECK(!e.silent());
-
-            const size_t later = 3 * static_cast<size_t>(kSr), time = 88200, depth = 43;   // wow 0.3: 42.3 samples
-            Buf L(later + time + 2000, 0.0f);
-            L[later] = 1.0f;
-            const Return o = runEcho(e, p, L, L, tempo(120.0));
-            const size_t before = later + time - depth - 2;
-            const float old = std::max(peak(o.L, 0, before), peak(o.R, 0, before));
-            std::printf(" %.3g", static_cast<double>(old));
-            CHECK(old < 1e-15f);
-            CHECK(std::max(peak(o.L, before, o.L.size()), peak(o.R, before, o.R.size())) > 0.05f);
         }
     }
     std::printf("\n");
+}
+
+// The same when the skipping starts at a set(), Echo run the engine's way: set() every block, then
+// process() only while the send is up or silent() is false. 1 s, feedback 0, Diffuse 0, a 0.3 s
+// burst; just after its repeat the time goes to 20 ms. The heads glide down, and each set() works
+// the reach out again from where the last process() left them, so here a set() makes silent()
+// true and the engine stops, with no process() having ended silent. At 4 s the time goes to 2 s:
+// Echo runs one block, nothing old in it (without a fresh start the burst came back at -3 dBFS),
+// and is silent again.
+void resumeAfterSet() {
+    af::Echo e;
+    af::Echo::Params p = af::initEcho();
+    p.delay.sync = false;
+    p.delay.timeMs = 1000.0f;
+    p.delay.feedback = 0.0f;
+    p.delay.diffuse = 0.0f;
+    const size_t burst = static_cast<size_t>(0.3 * kSr);
+    const Buf x = whiteNoise(static_cast<int>(burst), 0.5f, 99), y = whiteNoise(static_cast<int>(burst), 0.5f, 100);
+    const int down = 690, up = 4 * kSr / 128, end = up + 3 * kSr / 128;   // 2.003 s, 4 s, 7 s
+    bool skipped = false, atSet = false;
+    int ran = 0;
+    float old = 0.0f, l[128], r[128];
+    for (int b = 0; b < end; ++b) {
+        if (b == down) p.delay.timeMs = 20.0f;
+        if (b == up) p.delay.timeMs = 2000.0f;
+        const bool was = e.silent();
+        e.set(p, tempo(120.0));
+        const size_t pos = static_cast<size_t>(b) * 128;
+        if (pos < burst || !e.silent()) {
+            for (size_t k = 0; k < 128; ++k) {
+                l[k] = pos + k < burst ? x[pos + k] : 0.0f;
+                r[k] = pos + k < burst ? y[pos + k] : 0.0f;
+            }
+            e.process(l, r, l, r, 128);
+            if (b >= up) {
+                ++ran;
+                for (size_t k = 0; k < 128; ++k) old = std::max({old, std::fabs(l[k]), std::fabs(r[k])});
+            }
+        } else if (!skipped && b < up) {
+            skipped = true;
+            atSet = !was;
+        }
+    }
+    std::printf("  echo: skipped from a set() %s, woken by the time: %d block(s) run, the loudest %.3g\n",
+                atSet ? "yes" : "no", ran, static_cast<double>(old));
+    CHECK(skipped && atSet);   // the case this is about
+    CHECK(ran == 1);
+    CHECK(old < 1e-15f);
+}
+
+// The fresh start keeps the duck's envelope: it follows the send, quiet since before the silence,
+// so it has fallen on its own, and it still says how loud the send has just been. A loud burst at
+// 20 ms (feedback 0, wow 0, duck 1, and Diffuse 0, whose ring would keep Echo from silence until
+// the envelope had all but gone), run until silent() 54 ms after the burst, one block more (the
+// fresh start), then a quiet phrase: its first repeat is ducked as a Delay that ran on all along
+// ducks it, within 0.5 dB (from an emptied envelope it came through 15 dB louder).
+void resumeDuck() {
+    af::Echo e;
+    af::Echo::Params p = af::initEcho();
+    p.delay.sync = false;
+    p.delay.timeMs = 20.0f;
+    p.delay.feedback = 0.0f;
+    p.delay.wow = 0.0f;
+    p.delay.duck = 1.0f;
+    p.delay.diffuse = 0.0f;
+    P dp = p.delay;
+    dp.mix = 1.0f;
+    Delay d;
+    const size_t burst = static_cast<size_t>(0.3 * kSr), n = 2 * static_cast<size_t>(kSr);
+    Buf x = whiteNoise(static_cast<int>(n), 0.5f, 101), y = whiteNoise(static_cast<int>(n), 0.5f, 102);
+    std::fill(x.begin() + static_cast<std::ptrdiff_t>(burst), x.end(), 0.0f);
+    std::fill(y.begin() + static_cast<std::ptrdiff_t>(burst), y.end(), 0.0f);
+    size_t start = 0;   // the quiet phrase: from the block after the fresh start
+    Buf eL = x, eR = y, dL = x, dR = y;
+    for (size_t pos = 0; pos < n; pos += 128) {
+        if (start == 0 && pos > burst && e.silent()) {
+            start = pos + 128;
+            const Buf ql = whiteNoise(static_cast<int>(n - start), 0.01f, 103), qr = whiteNoise(static_cast<int>(n - start), 0.01f, 104);
+            for (size_t i = start; i < n; ++i) {
+                eL[i] = dL[i] = ql[i - start];
+                eR[i] = dR[i] = qr[i - start];
+            }
+        }
+        const int m = static_cast<int>(std::min<size_t>(128, n - pos));
+        e.set(p, tempo(120.0));
+        e.process(&eL[pos], &eR[pos], &eL[pos], &eR[pos], m);
+        d.set(dp, tempo(120.0));
+        d.process(&dL[pos], &dR[pos], m);
+    }
+    const size_t from = start + 882, to = from + 441;   // the repeat's first 10 ms
+    const double off = db((rms(eL, from, to) + rms(eR, from, to)) / (rms(dL, from, to) + rms(dR, from, to)));
+    std::printf("  echo: the duck after a fresh start, against a Delay run on: %+.2f dB\n", off);
+    CHECK(start > burst && start < burst + static_cast<size_t>(kSr / 10));   // the envelope still up
+    CHECK(near(off, 0.0, 0.5));
 }
 
 } // namespace
@@ -1794,6 +1893,8 @@ void echoTests() {
     wetOnly();
     silence();
     resume();
+    resumeAfterSet();
+    resumeDuck();
 }
 
 } // namespace aft

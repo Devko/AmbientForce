@@ -82,16 +82,23 @@ void Echo::set(const Params& p, const Transport& t) {
     t_ = t;
     delay_.set(dp_, t_);
     jump_ = false;
+    // The reach is worked out again here, from the heads as the last process() left them: a time
+    // gliding down, or Diffuse landing on 0, can make silent() true here, and the engine skip
+    // Echo from this block, without a process() having ended silent.
+    asleep_ = asleep_ || (held_ && silent());
 }
 
 void Echo::process(const float* sendL, const float* sendR, float* outL, float* outR, int n) {
-    // The last call ended silent(), and something had been through the Delay since it last started
-    // afresh: its lines still hold that, at ages a longer time (set while the engine skipped this)
-    // would read. It starts afresh now, once, and jumps to what it was last given (echo.h).
+    // silent() since something last went through the Delay (at the end of the last call, or at a
+    // set() since): its lines still hold that, at ages a longer time (set while the engine skipped
+    // this) would read. It starts afresh now, once, keeping the duck's envelope, and jumps to what
+    // it was last given (echo.h). The quiet count is full again, as after reset(): woken by a
+    // setting alone, Echo is silent again at the end of this call unless something comes in.
     if (asleep_) {
-        delay_.reset();
+        delay_.clear();
         held_ = asleep_ = false;
         jump_ = true;
+        quiet_ = kQuietMax;
     }
     if (jump_) {   // reset() and no set() since, or a fresh start: the Delay jumps to its targets
         delay_.set(dp_, t_);

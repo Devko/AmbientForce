@@ -249,20 +249,34 @@ double wholeIfClose(double t) {
     return std::fabs(t - r) < 1e-6 ? r : t;
 }
 
+// Positions s..e of a line zeroed, with the copies past its end of those among its first kGuard.
+// std::fill, a vector loop here: libc's memset counted more ARM instructions for these few dozen.
+void zeroSpan(float* line, int s, int e) {
+    std::fill(line + s, line + e + 1, 0.0f);
+    if (s < kGuard) std::fill(line + kLen + s, line + kLen + std::min(e, kGuard - 1) + 1, 0.0f);
+}
+
 // Until a line has been written all the way round since reset(), it still holds what came before.
 // Before a run of n samples at times te + d .. te + n d, zero what of that its taps can reach
-// (ages past `written`; those written since stay): a few dozen samples, and only the first time
-// round, instead of 1.4 MB at once or a check on every tap.
+// (ages past `written`; those written since stay): a few dozen samples, and only until the lines
+// have been written past the reach (run() and diffuseRun() stop calling it there: no tap reads
+// further back), instead of 1.4 MB at once or a check on every tap. Ages from..to sit at positions
+// w - to .. w - from, across the line's end at most once (ages run 1 .. kLen - 1): one fill or two.
 void hideOld(float* line, int w, int written, double te, double d, int n) {
     const double lo = std::min(te + d, te + n * d), hi = std::max(te + d, te + n * d);
     // At sample k a tap of age a reads what is k samples younger now; ages under 1 are written
     // in the run before they're read.
     const int from = std::max({written + 1, std::clamp(static_cast<int>(lo), 2, kMaxAge) - n, 1});
     const int to = std::clamp(static_cast<int>(hi), 2, kMaxAge) + 2;
-    for (int a = from; a <= to; ++a) {
-        const int j = w - a < 0 ? w - a + kLen : w - a;
-        line[j] = 0.0f;
-        if (j < kGuard) line[kLen + j] = 0.0f;
+    if (from > to) return;
+    const int s = w - to, e = w - from;
+    if (s >= 0) {
+        zeroSpan(line, s, e);
+    } else if (e < 0) {
+        zeroSpan(line, s + kLen, e + kLen);
+    } else {
+        zeroSpan(line, 0, e);
+        zeroSpan(line, s + kLen, kLen - 1);
     }
 }
 
@@ -388,11 +402,15 @@ Delay::Delay()
 }
 
 void Delay::reset() {
+    env_ = 0.0f;
+    clear();
+}
+
+void Delay::clear() {
     w_ = 0;
     written_ = 0;
     lpL_ = lpR_ = hpL_ = hpR_ = 0.0f;
     gainL_ = gainR_ = 1.0f;
-    env_ = 0.0f;
     phWow_ = phFlutL_ = phFlutR_ = 0.0f;
     segLeft_ = 0;
     fadeL_ = fadeR_ = -1;
@@ -593,7 +611,8 @@ void Delay::process(float* L, float* R, int n) {
         moving = moving || tgt_[k] != cur_[k];
     }
     // The diffusers run while Diffuse is above 0 or on its way to or from it. Starting again they
-    // start empty: what they held is from before the reset, or from before Diffuse sat at 0.
+    // start empty: what they held is from before a reset() or clear(), or before Diffuse sat at 0.
+    // (std::fill: libc's memset counted more ARM instructions for these 23 KB.)
     const bool diffusing = cur_[DIFFUSE] != 0.0f || tgt_[DIFFUSE] != 0.0f;
     if (diffusing && apStale_) {
         std::fill(ap_.begin(), ap_.end(), 0.0f);
@@ -645,7 +664,7 @@ void Delay::run(float* L, float* R, int n) {
     const double dbl = teBStepL_, dbr = teBStepR_;
     Lr gainA = {gain_[0], gain_[1]}, gainB = {gain_[2], gain_[3]};
     const Lr sGainA = {gainStep_[0], gainStep_[1]}, sGainB = {gainStep_[2], gainStep_[3]};
-    if (written < kLen) {
+    if (written < std::min(kLen, reach_)) {   // hideOld(): past the reach no tap sees old samples
         hideOld(bl, w, written, teL, dl, n);
         hideOld(br, w, written, teR, dr, n);
         if (Fading) {
@@ -774,7 +793,7 @@ void Delay::diffuseRun(float* L, float* R, int n) {
     const double dbl = teBStepL_, dbr = teBStepR_;
     Lr gainA = {gain_[0], gain_[1]}, gainB = {gain_[2], gain_[3]};
     const Lr sGainA = {gainStep_[0], gainStep_[1]}, sGainB = {gainStep_[2], gainStep_[3]};
-    if (written < kLen) {
+    if (written < std::min(kLen, reach_)) {   // hideOld(): past the reach no tap sees old samples
         hideOld(bl, w, written, teL, dl, n);
         hideOld(br, w, written, teR, dr, n);
         if (Fading) {

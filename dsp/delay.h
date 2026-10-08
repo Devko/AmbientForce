@@ -53,10 +53,10 @@
 // Diffused energy comes the allpasses' lengths later on average (60 ms on L, 64 ms on R, a pass):
 // heavily diffused repeats trail the beat. Mono's R takes L's diffusion. At Diffuse 0 none of it
 // runs, and the Delay is EffectForce's bit for bit; a change glides across the chunk like the other
-// ramps, and diffusers that start again (after reset() or after Diffuse sat at 0) start empty, so
-// nothing old comes back out of them. The allpasses run four samples at a time (diffuseRun() in
-// delay.cpp says how): about 4k ARM instructions a 128-sample block on top of the Delay's own 24k
-// (dsp/echo.h has the counts).
+// ramps, and diffusers that start again (after reset() or clear(), or after Diffuse sat at 0) start
+// empty, so nothing old comes back out of them. The allpasses run four samples at a time
+// (diffuseRun() in delay.cpp says how): about 4k ARM instructions a 128-sample block on top of the
+// Delay's own 25k (dsp/echo.h has the counts).
 //
 // Wow: a 0.5 Hz wow (+-3 ms at wow 1) and a 6 Hz flutter (+-0.2 ms) move the read times; R's
 // wow runs a quarter cycle ahead of L's and its flutter at 6.6 Hz. Under 12 ms the depth shrinks to
@@ -68,9 +68,12 @@
 // Only the wet ducks, not the loop, so the repeats bloom in the gaps.
 //
 // reset() is cheap (EffectForce's rack called it on the audio thread when the module came back on;
-// here the engine's reset and its guard do, and Echo when it runs again after a silence): the lines
-// aren't cleared. Until they have been written all the way round, each run of samples first zeroes
-// the few old samples its taps can reach, so nothing from before ever comes out.
+// here the engine's reset and its guard do, and Echo its clear() when it runs again after a
+// silence): the lines aren't cleared. Until they have been written past the reach (reachSamples()),
+// each run of samples first zeroes the few old samples its taps can reach, in one or two fills, so
+// nothing from before ever comes out: past it no tap reads anything older than the restart, until
+// a set() moves the reach further, and then the zeroing goes on (at most until the lines have been
+// written all the way round, 8 s).
 #include "common.h"
 
 #include <vector>
@@ -101,6 +104,10 @@ public:
 
     Delay();   // allocates the lines, 2.8 MB, and the diffusers, 23 KB (UI thread)
     void reset();
+    // reset() but for the duck's envelope, which goes on from where it is: nothing that came in
+    // before can come out again, and the duck still knows how loud the input has just been
+    // (Echo's fresh start after a silence, dsp/echo.h).
+    void clear();
     void set(const Params& p, const Transport& t);
     void process(float* L, float* R, int n);
     int tailSamples() const { return tail_; }
@@ -110,7 +117,8 @@ public:
     // diffusers run, the longer side's allpasses. In and out both quiet for this long: nothing in
     // the Delay can come out at these settings (Echo's silent()). It isn't empty: the lines keep
     // what went in until it is written over, 8 s on, where a longer reach would read it, until
-    // reset() hides it (Echo resets the Delay when it runs again after a silence).
+    // reset() or clear() hides it (Echo clears the Delay when it runs again after a silence). No
+    // read goes further back than this, so reset()'s zeroing stops here too.
     int reachSamples() const { return reach_; }
     // The wet's gain now (the duck's), so Echo can tell a quiet wet from a ducked one.
     float duckGain() const { return duck_; }
