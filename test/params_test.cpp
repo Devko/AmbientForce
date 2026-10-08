@@ -585,16 +585,23 @@ std::vector<MacroSpec> macroSpecs() {
                        {"b.level", -1, 0, 1}, {"r.decayS", 1, lo(P_S_DECAY), hi(P_S_DECAY)},
                        {"r.predelayMs", 1, lo(P_S_PREDELAY), hi(P_S_PREDELAY)}, {"g.cutoffHz", -1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)},
                        {"b.cutoffHz", -1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)}, {"r.dampHz", -1, lo(P_S_DAMP), hi(P_S_DAMP)},
-                       {"rise", 1, 0, 1}}},
+                       {"rise", 1, 0, 1},
+                       // M2: the sends of Air, Weather and Echo, and their levels (far steps the dry back)
+                       {"airSpace", 1, 0, 1}, {"weatherSpace", 1, 0, 1}, {"groundEcho", 1, 0, 1}, {"bloomEcho", 1, 0, 1},
+                       {"airEcho", 1, 0, 1}, {"weatherEcho", 1, 0, 1}, {"a.level", -1, 0, 1}, {"w.level", -1, 0, 1}}},
         {P_M_MOTION, {{"g.sway", 1, 0, 1}, {"b.sway", 1, 0, 1}, {"g.swayHz", 1, lo(P_G_SWAYRATE), hi(P_G_SWAYRATE)},
                       {"b.swayHz", 1, lo(P_B_SWAYRATE), hi(P_B_SWAYRATE)}, {"b.smear", 1, 0, 1}, {"g.breath", 1, 0, 1},
-                      {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}, {"g.breathHz", 1, lo(P_G_BREATHRATE), hi(P_G_BREATHRATE)}}},
+                      {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}, {"g.breathHz", 1, lo(P_G_BREATHRATE), hi(P_G_BREATHRATE)},
+                      {"a.rubato", 1, 0, 1}, {"a.mutate", 1, 0, 1}, {"w.drift", 1, 0, 1}, {"e.wow", 1, 0, 1}}},
         {P_M_GLOW, {{"g.cutoffHz", 1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)}, {"b.cutoffHz", 1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)},
                     {"tilt", 1, lo(P_O_TILT), hi(P_O_TILT)}, {"r.dampHz", 1, lo(P_S_DAMP), hi(P_S_DAMP)},
-                    {"r.shimmer", 1, 0, 1}, {"g.body", -1, 0, 1}, {"volumeDb", 1, lo(P_VOLUME), hi(P_VOLUME)}}},
+                    {"r.shimmer", 1, 0, 1}, {"g.body", -1, 0, 1}, {"volumeDb", 1, lo(P_VOLUME), hi(P_VOLUME)},
+                    {"a.toneHz", 1, lo(P_A_TONE), hi(P_A_TONE)}, {"w.tilt", 1, lo(P_W_TILT), hi(P_W_TILT)},
+                    {"e.highCutHz", 1, lo(P_E_HIGHCUT), hi(P_E_HIGHCUT)}}},
         {P_M_DENSITY, {{"g.sub", 1, 0, 1}, {"g.octave", 1, 0, 1}, {"g.color", 1, 0, 1},
                        {"b.detuneCents", 1, lo(P_B_DETUNE), hi(P_B_DETUNE)}, {"b.breath", 1, 0, 1},
-                       {"strumS", -1, lo(P_H_STRUM), hi(P_H_STRUM)}, {"volumeDb", -1, lo(P_VOLUME), hi(P_VOLUME)}}},
+                       {"strumS", -1, lo(P_H_STRUM), hi(P_H_STRUM)}, {"volumeDb", -1, lo(P_VOLUME), hi(P_VOLUME)},
+                       {"a.density", 1, lo(P_A_DENSITY), hi(P_A_DENSITY)}, {"w.grains", 1, lo(P_W_GRAINS), hi(P_W_GRAINS)}}},
     };
 }
 
@@ -602,6 +609,32 @@ af::Macros only(int id, float x) {
     af::Macros m;
     (id == af::P_M_HORIZON ? m.horizon : id == af::P_M_MOTION ? m.motion : id == af::P_M_GLOW ? m.glow : m.density) = x;
     return m;
+}
+
+// Three presets with Air, Weather and Echo sounding, for the macros' checks to bend: the factory presets have them
+// off (levels and sends at 0, which a macro leaves at 0), so on them the new fields never move. In the middle of the
+// ranges, at the top (every bend meets its clamp from below) and near the bottom (from above); the knobs' real values.
+std::vector<std::vector<float>> strataOn() {
+    const struct {
+        int id;
+        float mid, top, low;
+    } values[] = {
+        {af::P_A_LEVEL, 0.6f, 1.0f, 0.1f}, {af::P_W_LEVEL, 0.6f, 1.0f, 0.1f}, {af::P_A_SPACE, 0.5f, 1.0f, 0.1f},
+        {af::P_W_SPACE, 0.3f, 1.0f, 0.1f}, {af::P_G_ECHO, 0.5f, 1.0f, 0.1f}, {af::P_B_ECHO, 0.5f, 1.0f, 0.1f},
+        {af::P_A_ECHO, 0.5f, 1.0f, 0.1f}, {af::P_W_ECHO, 0.5f, 1.0f, 0.1f}, {af::P_A_TONE, 3000.0f, 16000.0f, 200.0f},
+        {af::P_A_DENSITY, 20.0f, 60.0f, 0.5f}, {af::P_A_RUBATO, 0.3f, 1.0f, 0.0f}, {af::P_A_MUTATE, 0.4f, 1.0f, 0.0f},
+        {af::P_W_DRIFT, 0.4f, 1.0f, 0.0f}, {af::P_W_GRAINS, 6.0f, 16.0f, 1.0f}, {af::P_W_TILT, -0.2f, 1.0f, -1.0f},
+        {af::P_E_HIGHCUT, 4500.0f, 20000.0f, 500.0f}, {af::P_E_WOW, 0.3f, 1.0f, 0.0f},
+    };
+    std::vector<std::vector<float>> out;
+    for (int which = 0; which < 3; ++which) {
+        std::vector<float> norm(af::P_COUNT);
+        for (int i = 0; i < af::P_COUNT; ++i) norm[static_cast<size_t>(i)] = af::PARAM_INFO[i].def;
+        for (const auto& v : values)
+            norm[static_cast<size_t>(v.id)] = af::paramNorm(v.id, which == 0 ? v.mid : which == 1 ? v.top : v.low);
+        out.push_back(std::move(norm));
+    }
+    return out;
 }
 
 void testMacros() {
@@ -659,8 +692,51 @@ void testMacros() {
     CHECK(golden == 0x6c3af5238ae84bbaull);
 #endif
 
-    // Each macro swept from -1 to +1 on every factory preset: its own fields each one way, inside their range;
-    // nothing else moves (bit for bit); and each field it owns moves on some preset.
+    // Air, Weather and Echo are off in every factory preset, and a macro brings none of them in: what a preset has at 0 and
+    // a macro scales stays 0 (exactly) under every macro, alone at five positions each and in the 16 corners of all four.
+    // On the factory presets that is Air's and Weather's levels and the four Echo sends. On the three presets with the new
+    // strata on (below) it is Air Space, Wthr Space and Air Density, which those presets are then given at 0. With a
+    // value open the same macros do move it (the sweep below).
+    const std::vector<std::vector<float>> on = strataOn();
+    {
+        std::vector<af::Macros> tries;
+        for (int id : {af::P_M_HORIZON, af::P_M_MOTION, af::P_M_GLOW, af::P_M_DENSITY})
+            for (float x : {-1.0f, -0.5f, 0.25f, 0.5f, 1.0f}) tries.push_back(only(id, x));
+        for (int corner = 0; corner < 16; ++corner) {
+            af::Macros m;
+            m.horizon = corner & 1 ? 1.0f : -1.0f;
+            m.motion = corner & 2 ? 1.0f : -1.0f;
+            m.glow = corner & 4 ? 1.0f : -1.0f;
+            m.density = corner & 8 ? 1.0f : -1.0f;
+            tries.push_back(m);
+        }
+        bool stays = true, staysOn = true;
+        for (const auto& norm : presets) {
+            const af::Patch knobs = af::patchFromKnobs(norm.data());
+            for (const af::Macros& m : tries) {
+                af::Patch p = knobs;
+                af::applyMacros(p, m);
+                stays = stays && p.air.level == 0.0f && p.weather.level == 0.0f && p.groundEcho == 0.0f &&
+                        p.bloomEcho == 0.0f && p.airEcho == 0.0f && p.weatherEcho == 0.0f;
+            }
+        }
+        for (std::vector<float> norm : on) {
+            for (int id : {af::P_A_SPACE, af::P_W_SPACE, af::P_A_DENSITY}) norm[static_cast<size_t>(id)] = af::paramNorm(id, 0.0f);
+            const af::Patch knobs = af::patchFromKnobs(norm.data());
+            staysOn = staysOn && knobs.airSpace == 0.0f && knobs.weatherSpace == 0.0f && knobs.air.gen.density == 0.0f;
+            for (const af::Macros& m : tries) {
+                af::Patch p = knobs;
+                af::applyMacros(p, m);
+                staysOn = staysOn && p.airSpace == 0.0f && p.weatherSpace == 0.0f && p.air.gen.density == 0.0f;
+            }
+        }
+        CHECK(stays && staysOn);
+    }
+    for (const auto& norm : on) presets.push_back(norm);   // after the factory presets: the sweep takes them too
+
+    // Each macro swept from -1 to +1 on every factory preset and on the three presets with the new strata on: its own
+    // fields each one way, inside their range; nothing else moves (bit for bit); and each field it owns moves on some
+    // preset.
     for (const MacroSpec& spec : macroSpecs()) {
         std::vector<int> movedOn(spec.owned.size(), 0);
         bool others = true, monotonic = true, inRange = true;
@@ -706,6 +782,155 @@ void testMacros() {
         CHECK(others && monotonic && inRange && allMove);
     }
 
+    // The amounts, on the middle one of the presets with the new strata on (Air Level 0.6, Tone 3 kHz, Density 20 a
+    // minute, Grains 6, every send at 0.5, Wow 0.3, Rubato 0.3, Mutate 0.4, Drift 0.4, Weather Tilt -0.2, Echo High Cut
+    // 4.5 kHz): the numbers of the plan's Task 11, each at the ends (Density also at -50%).
+    {
+        const af::Patch mid = af::patchFromKnobs(on[0].data());
+        const auto bent = [&mid](int id, float x) {
+            af::Patch p = mid;
+            af::applyMacros(p, only(id, x));
+            return p;
+        };
+        const af::Patch hFar = bent(af::P_M_HORIZON, 1.0f), hNear = bent(af::P_M_HORIZON, -1.0f);
+        const float s = mid.groundEcho;   // 0.25: every send at 0.5, a gain
+        CHECK(near(mid.airEcho, 0.25f) && near(mid.air.level, 0.36f) && near(mid.airSpace, 0.25f));
+        // Sends: x 2^(0.5 h) far, x 2^h near; the four Echo sends and both Space sends alike. Levels: x 2^(-0.5 h) far only.
+        CHECK(near(hFar.airSpace, s * std::sqrt(2.0f)) && near(hFar.groundEcho, s * std::sqrt(2.0f)) &&
+              near(hFar.bloomEcho, s * std::sqrt(2.0f)) && near(hFar.airEcho, s * std::sqrt(2.0f)) &&
+              near(hFar.weatherEcho, s * std::sqrt(2.0f)) && near(hFar.weatherSpace, mid.weatherSpace * std::sqrt(2.0f)));
+        CHECK(near(hNear.airSpace, s * 0.5f) && near(hNear.groundEcho, s * 0.5f) && near(hNear.bloomEcho, s * 0.5f) &&
+              near(hNear.airEcho, s * 0.5f) && near(hNear.weatherEcho, s * 0.5f) && near(hNear.weatherSpace, mid.weatherSpace * 0.5f));
+        CHECK(near(hFar.air.level, mid.air.level / std::sqrt(2.0f)) && near(hFar.weather.level, mid.weather.level / std::sqrt(2.0f)) &&
+              hNear.air.level == mid.air.level && hNear.weather.level == mid.weather.level);
+        // Echo's own return and its Space send are not sends into it: Horizon leaves them.
+        CHECK(hFar.echoReturn == mid.echoReturn && hFar.echoSpace == mid.echoSpace && hNear.echoReturn == mid.echoReturn &&
+              hNear.echoSpace == mid.echoSpace);
+        // Motion: toward 1 by 60%, 50%, 70%, 50%; toward 0 at still, all the way.
+        const af::Patch mMove = bent(af::P_M_MOTION, 1.0f), mStill = bent(af::P_M_MOTION, -1.0f);
+        CHECK(near(mMove.air.gen.rubato, 0.3f + 0.7f * 0.6f) && near(mMove.air.gen.mutate, 0.4f + 0.6f * 0.5f) &&
+              near(mMove.weather.drift, 0.4f + 0.6f * 0.7f) && near(mMove.echo.delay.wow, 0.3f + 0.7f * 0.5f));
+        CHECK(mStill.air.gen.rubato == 0.0f && mStill.air.gen.mutate == 0.0f && mStill.weather.drift == 0.0f &&
+              mStill.echo.delay.wow == 0.0f);
+        // Glow: Air Tone x 2^(2 g), Weather Tilt + 0.3 g, Echo High Cut x 2^g.
+        const af::Patch gBright = bent(af::P_M_GLOW, 1.0f), gDark = bent(af::P_M_GLOW, -1.0f);
+        CHECK(near(gBright.air.voice.toneHz, 12000.0f) && near(gBright.weather.tilt, 0.1f) && near(gBright.echo.delay.highCutHz, 9000.0f));
+        CHECK(near(gDark.air.voice.toneHz, 750.0f) && near(gDark.weather.tilt, -0.5f) && near(gDark.echo.delay.highCutHz, 2250.0f));
+        // Density: Air Density and Grains x 2^d thick, x (1 + d) sparse, Grains rounded and never under 1.
+        const af::Patch dThick = bent(af::P_M_DENSITY, 1.0f), dHalf = bent(af::P_M_DENSITY, -0.5f), dSparse = bent(af::P_M_DENSITY, -1.0f);
+        CHECK(near(dThick.air.gen.density, 40.0f) && dThick.weather.grains == 12 && near(dHalf.air.gen.density, 10.0f) &&
+              dHalf.weather.grains == 3 && dSparse.air.gen.density == 0.0f && dSparse.weather.grains == 1);
+        // Grains are rounded to the nearest: 6 x 2^0.4 = 7.92 is 8 (a cut-off makes 7), 6 x (1 - 0.3) = 4.2 is 4 (a
+        // ceiling makes 5).
+        CHECK(bent(af::P_M_DENSITY, 0.4f).weather.grains == 8 && bent(af::P_M_DENSITY, -0.3f).weather.grains == 4);
+        // Under the knob's "off" mark Air Density is off, as the knob reads: Init's 12 a minute at -99.8% would be 0.024 a
+        // minute, a note every 40 minutes that keeps Air awake; at -99% it is still 0.12.
+        {
+            std::vector<float> init(af::P_COUNT);
+            for (int i = 0; i < af::P_COUNT; ++i) init[static_cast<size_t>(i)] = af::PARAM_INFO[i].def;
+            af::Patch p = af::patchFromKnobs(init.data());
+            af::applyMacros(p, only(af::P_M_DENSITY, -0.998f));
+            const bool snapped = p.air.gen.density == 0.0f;
+            p = af::patchFromKnobs(init.data());
+            af::applyMacros(p, only(af::P_M_DENSITY, -0.99f));
+            CHECK(snapped && near(p.air.gen.density, 0.12f));
+        }
+        // Motion from nothing: a preset with Rubato, Mutate, Drift and Wow at 0 gets 0.6, 0.5, 0.7 and 0.5 at +100%
+        // (they are depths, not levels, and move up from 0 as the Sways do).
+        {
+            af::Patch p = af::patchFromKnobs(on[2].data());
+            const bool zero = p.air.gen.rubato == 0.0f && p.air.gen.mutate == 0.0f && p.weather.drift == 0.0f && p.echo.delay.wow == 0.0f;
+            af::applyMacros(p, only(af::P_M_MOTION, 1.0f));
+            CHECK(zero && p.air.gen.rubato == 0.6f && p.air.gen.mutate == 0.5f && p.weather.drift == 0.7f && p.echo.delay.wow == 0.5f);
+        }
+        // At the top of its range Air Density stays 60 and Grains 16 (thick), and Tone 16 kHz, Weather Tilt 1, High
+        // Cut 20 kHz (bright): capped, not wrapped or overshot.
+        af::Patch top = af::patchFromKnobs(on[1].data());
+        af::applyMacros(top, af::Macros{0.0f, 0.0f, 1.0f, 1.0f});
+        CHECK(top.air.gen.density == 60.0f && top.weather.grains == 16 && top.air.voice.toneHz == 16000.0f &&
+              top.weather.tilt == 1.0f && top.echo.delay.highCutHz == 20000.0f);
+        // And at the bottom, dark and sparse: Tone 200 Hz, Weather Tilt -1, High Cut 500 Hz, Grains 1.
+        af::Patch low = af::patchFromKnobs(on[2].data());
+        af::applyMacros(low, af::Macros{0.0f, 0.0f, -1.0f, -1.0f});
+        CHECK(low.air.voice.toneHz == 200.0f && low.weather.tilt == -1.0f && low.echo.delay.highCutHz == 500.0f &&
+              low.weather.grains == 1 && low.air.gen.density == 0.0f);
+    }
+
+    // Off is off under the macros, heard. Air, Weather and Echo are off in every factory preset, and the new bends move
+    // their other fields all the same (Air Tone, Rubato and Mutate, Weather Drift and Tilt, Echo Wow and High Cut, the
+    // Space sends of a silent Air, Grains): none of it may be heard. A chord, two seconds through the engine itself
+    // with the macros at +-1 in four mixes: the patch as the macros make it and the same patch with every field the new
+    // bends touch put back as the knobs have it give the same samples, bit for bit. (The control: let Air in, and the
+    // render differs, so the comparison can hear a stratum.)
+    {
+        static af::TableSet tables;   // the sine in every slot: it is the engine's arithmetic that is compared
+        const auto play = [](const af::Patch& p, std::vector<float>& L, std::vector<float>& R) {
+            af::Engine e(tables);
+            e.seed(1);
+            e.setPatch(p);
+            for (int note : {48, 55, 64, 67}) e.noteOn(note, 100);
+            const size_t n = 2 * static_cast<size_t>(af::kRate);
+            L.assign(n, 0.0f);
+            R.assign(n, 0.0f);
+            for (size_t b = 0; b < n; b += 128) e.render(&L[b], &R[b], static_cast<int>(std::min<size_t>(128, n - b)));
+        };
+        // p with everything the new bends touch as k has it: the old bends alone.
+        const auto oldBends = [](af::Patch p, const af::Patch& k) {
+            p.air = k.air;
+            p.weather = k.weather;
+            p.echo = k.echo;
+            p.airSpace = k.airSpace;
+            p.weatherSpace = k.weatherSpace;
+            p.groundEcho = k.groundEcho;
+            p.bloomEcho = k.bloomEcho;
+            p.airEcho = k.airEcho;
+            p.weatherEcho = k.weatherEcho;
+            return p;
+        };
+#if defined(__arm__)
+        // qemu is slow (a 40 s phrase takes 7.6 s): the five presets testFactory plays there, two mixes.
+        const std::vector<std::string> subset = {"Init", "Harbour at 4am", "Fifth Light", "Sine Garden", "Choir in Haze"};
+        const std::initializer_list<int> mixes = {15, 0};
+#else
+        const std::vector<std::string> subset;   // every one
+        const std::initializer_list<int> mixes = {15, 0, 5, 10};
+#endif
+        int compared = 0, played = 0;
+        bool silent = true, control = false;
+        for (int i = 0; i < af::kNumFactoryPresets; ++i) {
+            if (!subset.empty() && std::find(subset.begin(), subset.end(), std::string(af::kFactoryPresets[i].name)) == subset.end()) continue;
+            ++played;
+            const af::Patch k = af::patchFromKnobs(presets[static_cast<size_t>(i)].data());
+            for (int mix : mixes) {   // Horizon, Motion, Glow, Density: bit set = +1, clear = -1
+                af::Macros m;
+                m.horizon = mix & 1 ? 1.0f : -1.0f;
+                m.motion = mix & 2 ? 1.0f : -1.0f;
+                m.glow = mix & 4 ? 1.0f : -1.0f;
+                m.density = mix & 8 ? 1.0f : -1.0f;
+                af::Patch bent = k;
+                af::applyMacros(bent, m);
+                const af::Patch old = oldBends(bent, k);
+                std::vector<float> aL, aR, bL, bR;
+                play(bent, aL, aR);
+                play(old, bL, bR);
+                const bool same = aL == bL && aR == bR;
+                if (!same) std::printf("  %s, macros %d: the new bends are heard\n", af::kFactoryPresets[i].name, mix);
+                silent = silent && same;
+                ++compared;
+                if (played == 1 && mix == 15) {
+                    af::Patch air = old;   // Air let in, with keys for it above the split
+                    air.air.level = 0.5f;
+                    air.split = 60;
+                    std::vector<float> cL, cR;
+                    play(air, cL, cR);
+                    control = cL != bL || cR != bR;
+                }
+            }
+        }
+        CHECK(silent && control && played == (subset.empty() ? af::kNumFactoryPresets : static_cast<int>(subset.size())) &&
+              compared == played * static_cast<int>(mixes.size()));
+    }
+
     // Bloom Tone moves with Glow and Horizon only on a low-pass: on a band-pass or a high-pass its cutoff picks a band
     // (Overtone Choir's whistle), and stays bit for bit where the preset has it at either end of either macro.
     for (int mode : {af::FM_LP, af::FM_BP, af::FM_HP}) {
@@ -726,10 +951,10 @@ void testMacros() {
     // Under half a percent a macro is 0 (kBipolarZero), as its knob reads: at 0.501 of its range (+0.2%) the patch is
     // the knobs' bit for bit, at 0.503 (+0.6%) it moves. And over every float from 0.497 to 0.503 (Glow's; the four
     // share the code), the knob shows "0%" exactly where the macro is 0.
-    {
+    for (int start = 0; start < 2; ++start) {   // Init, and the presets with the new strata on (their bends live in the dead zone too)
         Host d;
         std::vector<float> norm(af::P_COUNT);
-        for (int i = 0; i < af::P_COUNT; ++i) norm[static_cast<size_t>(i)] = d.get(i);
+        for (int i = 0; i < af::P_COUNT; ++i) norm[static_cast<size_t>(i)] = start == 0 ? d.get(i) : on[0][static_cast<size_t>(i)];
         const auto same = [&norm]() {
             const auto a = allFields(af::patchFromParams(norm.data())), b = allFields(af::patchFromKnobs(norm.data()));
             for (size_t f = 0; f < a.size(); ++f)
