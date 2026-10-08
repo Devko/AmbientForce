@@ -208,6 +208,9 @@ public:
     }
 
     static constexpr int kDebounceMs = 150;
+    // The worker's name (/proc's comm, top's): the bench waits for the table builder to go by counting
+    // threads, and an instance's loader, which lives as long as the instance, isn't the builder.
+    static constexpr const char* kThreadName = "af-loader";
 
 private:
     // The counts before the store that put the slot's object in (see graveNeverSeen).

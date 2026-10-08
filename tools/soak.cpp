@@ -46,6 +46,7 @@
 #include "factory_presets.h"
 #include "loudness.h"
 #include "param_ids.h"
+#include "phrase.h"
 
 #include <algorithm>
 #include <cmath>
@@ -185,11 +186,13 @@ struct Soak {
         pending.clear();
     }
 
-    // The browser's Next; where it doesn't move (the end of the list), Init, and on from there.
+    // The browser's Next; where it doesn't move (the end of the list), Init, and on from there. Weather's
+    // source in before a sample more (the same run, the same samples).
     void nextPreset() {
         const std::string was = display(P_PRESET);
         press(P_PRESET_NEXT);
         if (display(P_PRESET) == was) press(P_PRE_INIT);
+        afl::waitForSource(e);
         spaceMode = static_cast<int>(paramValue(P_S_MODE, e->getParameter(e, P_S_MODE)));
     }
 
@@ -301,8 +304,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: %s [hours] [seed]\n", argv[0]);
         return 2;
     }
-    // Hermetic: no user folders, nothing saved; the plugin's random numbers fixed.
+    // Hermetic: no user folders (presets, Weather's WAVs), nothing saved; the plugin's random numbers fixed.
     setenv("AF_PRESET_ROOTS", "/nonexistent-afsoak", 1);
+    setenv("AF_SOURCE_ROOTS", "/nonexistent-afsoak:/nonexistent-afsoak", 1);
     setenv("AF_DATA_DIR", "", 1);
     setenv("AF_FIXED_SEED", "1", 1);
     Surface::clock = clockMs;
@@ -329,6 +333,7 @@ int main(int argc, char** argv) {
     if (tables) std::printf("tables built in %.1f s\n", wallS() - t0);
     else std::printf("WARNING: the tables weren't all built in %.0f s, some slots play the sine for a while\n", kTablesWaitS);
     s.press(P_PRE_INIT);   // Init by its button: the browser's Next goes on from there
+    afl::waitForSource(s.e);
     s.transport(true);
     s.nextFreeze = s.in(180.0, 480.0);
     s.nextShimmer = s.in(60.0, 240.0);

@@ -633,11 +633,59 @@ def seg_w(key, kind):
 # A stepper in a card's row (the Source): the label above it as a popup's, the field where a popup's starts, its arrows
 # (h x h) at the ends and its text between them (STEPPER_TEXTS, checked). A button stands where a list's segments start;
 # two in one slot (a tuple in the row) stand one under the other, the gap apart, the slot's Q-Links in that order.
-STEPPER_W, STEPPER_H = 280, 40
+STEPPER_W, STEPPER_H = 356, 40                    # the widest whole text below, "MISSING Memory 007"
 BUTTON_H, BUTTON_GAP = 52, 8                      # shadow_skin's td3 button: 52 tall
 STEPPER_TEXT_PAD = 22                             # shadow_skin: the text box is w - 2h - 6, its label 8 in and 8 short
-# What a stepper's text may say, at its longest (the source's: a field loading; a WAV's name is the user's).
-STEPPER_TEXTS = {SOURCE_KEY: [f + " ..." for f in SOURCE_FIELDS] + ["Memory"]}
+# The Source stepper's text, fitted between its arrows (plugin/surface.cpp fitText: the name cut, ".." after it,
+# when the whole doesn't fit, by the live text's own advance widths, exported as kLiveAdvance). What must show whole:
+# every field loading or missing, Memory, a Memory file loading or missing (to 999999 loading); what may be cut, and
+# must still fit and keep a name to read (MIN_KEPT characters): a Memory number at its longest missing, names a user
+# may give a WAV. Each case is exported with what it comes to (kSourceFitCases), and the plugin's tests hold fitText
+# to it.
+STEPPER_TEXTS = {SOURCE_KEY: [f + " ..." for f in SOURCE_FIELDS] + ["MISSING " + f for f in SOURCE_FIELDS] +
+                 ["Memory", "Memory 007", "Memory 007 ...", "MISSING Memory 007", "Memory 999999 ..."]}
+SOURCE_FIT_CASES = [("MISSING ", "Memory 999999", ""), ("", "Rain on the tin roof of the boathouse", ""),
+                    ("", "Rain on the tin roof of the boathouse", " ..."), ("MISSING ", "Rain on the tin roof of the boathouse", ""),
+                    ("", "Pluie d'été sur le toit de la grange", ""), ("", "Creek", ""), ("", "", " ...")]
+MIN_KEPT = 4
+
+
+_LIVE = []
+
+
+def live_advances():
+    """MPC's live text (LIVE_FONT at VALUE_PX) per character ' '..'~', in 1/64 px, and the widest of them, which the
+    plugin takes for any other character (it can't tell)."""
+    if not _LIVE:
+        upem, adv = _ttf_advances(os.path.join(HERE, LIVE_FONT))
+        table = [int(round(adv.get(chr(c), upem) * VALUE_PX * 64.0 / upem)) for c in range(32, 127)]
+        _LIVE.append((table, max(table)))
+    return _LIVE[0]
+
+
+def live_width(s):
+    table, wide = live_advances()
+    return sum(table[ord(c) - 32] if 32 <= ord(c) < 127 else wide for c in s)
+
+
+def source_text_room(w=STEPPER_W, h=STEPPER_H):
+    """The room the Source stepper's text has between its arrows, TEXT_MARGIN to spare, in 1/64 px."""
+    return (w - 2 * h - STEPPER_TEXT_PAD - TEXT_MARGIN) * 64
+
+
+def fit_text(head, name, tail, room=None):
+    """plugin/surface.cpp fitText(), the same arithmetic."""
+    room = source_text_room() if room is None else room
+    if live_width(head) + live_width(name) + live_width(tail) <= room:
+        return head + name + tail
+    fixed, used, cut = live_width(head) + live_width("..") + live_width(tail), 0, 0
+    for i, c in enumerate(name):
+        w = live_width(c)
+        if fixed + used + w > room:
+            break
+        used += w
+        cut = i + 1
+    return head + name[:cut].rstrip(" ") + ".." + tail
 
 
 def button_w(key):
@@ -1275,11 +1323,21 @@ def check_layout(text, groups):
                 errors.append("%s: list %r tiles must be tile parameters" % (T, key))
             if kind == "stepper" and p["kind"] != "stepper":
                 errors.append("%s: stepper %r is not a stepper parameter" % (T, key))
-            if kind == "stepper":   # its text between the arrows (shadow_skin), what it may say at its longest
-                room = w["w"] - 2 * w["h"] - STEPPER_TEXT_PAD
-                for s in STEPPER_TEXTS.get(key, []):
-                    if text_w(LIVE_FONT, VALUE_PX, s) + TEXT_MARGIN > room:
-                        errors.append("%s: stepper %s: %r does not fit its %d px text" % (T, key, s, room))
+            if kind == "stepper" and key == SOURCE_KEY:   # its text between the arrows (shadow_skin), fitted as the plugin does
+                room = source_text_room(w["w"], w["h"])
+                if room != source_text_room():
+                    errors.append("%s: stepper %s is %d px wide: the plugin fits its text to STEPPER_W, %d" % (
+                        T, key, w["w"], STEPPER_W))
+                for s in STEPPER_TEXTS[key]:
+                    if fit_text("", s, "", room) != s:
+                        errors.append("%s: stepper %s: %r does not fit whole in its %d px (%.1f px)" % (
+                            T, key, s, room // 64, live_width(s) / 64.0))
+                for head, name, tail in SOURCE_FIT_CASES:
+                    fit = fit_text(head, name, tail, room)
+                    kept = len(fit) - len(head) - len(tail) - (0 if fit == head + name + tail else 2)
+                    if live_width(fit) > room or (kept < min(MIN_KEPT, len(name))):
+                        errors.append("%s: stepper %s: %r comes to %r, %.1f px, keeping %d of the name" % (
+                            T, key, head + name + tail, fit, live_width(fit) / 64.0, kept))
             if kind == "meter" and p["kind"] != "meter":
                 errors.append("%s: meter %r is not a meter parameter" % (T, key))
             if kind == "button" and not w.get("label"):
@@ -1368,6 +1426,16 @@ def c_str(s):
     return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def c_bytes(s):
+    """s as a C string of its UTF-8 bytes, any byte outside printable ASCII in octal (never a hex escape, which
+    would run on into the letters after it)."""
+    out = []
+    for b in s.encode("utf-8"):
+        c = chr(b)
+        out.append("\\" + c if c in '"\\' else c if 32 <= b < 127 else "\\%03o" % b)
+    return '"' + "".join(out) + '"'
+
+
 def header():
     index = {p["key"]: i for i, p in enumerate(P)}
     ids = ",\n".join("    P_%s%s" % (p["key"].upper(), " = 0" if i == 0 else "") for i, p in enumerate(P))
@@ -1443,11 +1511,25 @@ static constexpr const char* kStatusMessages[MSG_COUNT] = {
 %s
 };
 
+// MPC's live text (the value text) per character ' '..'~' in 1/64 px, the widest for any other, and the
+// room the Source stepper's text has between its arrows: plugin/surface.cpp's fitText(). The cases
+// surface.py checked, with what each comes to (the tests hold fitText to them).
+static constexpr uint16_t kLiveAdvance[95] = {%s};
+constexpr int kLiveAdvanceWide = %d;
+constexpr int kSourceTextRoom = %d;
+struct SourceFitCase { const char* head; const char* name; const char* tail; const char* fit; };
+static constexpr SourceFitCase kSourceFitCases[] = {
+%s
+};
+
 } // namespace af
 """ % (ids, ", ".join(dict.fromkeys(FMT.values())), specs, "\n".join(opts), info, c_str(VST["name"]),
        c_str(VST["vendor"]), uid, VST["uid"], VST["version"], STEPPER_RANGE, BROWSER_CATS, BROWSER_ITEMS,
        c_str(SOURCE_KEY), c_str(MEMORY_KEY), ", ".join(c_str(f) for f in SOURCE_FIELDS), len(SOURCE_FIELDS),
-       ", ".join(n for n, _, _ in STATUS_MESSAGES), ",\n".join("    " + c_str(t) for _, t, _ in STATUS_MESSAGES))
+       ", ".join(n for n, _, _ in STATUS_MESSAGES), ",\n".join("    " + c_str(t) for _, t, _ in STATUS_MESSAGES),
+       ", ".join(str(a) for a in live_advances()[0]), live_advances()[1], source_text_room(),
+       ",\n".join("    {%s, %s, %s, %s}" % (c_bytes(h), c_bytes(n), c_bytes(t), c_bytes(fit_text(h, n, t)))
+                  for h, n, t in SOURCE_FIT_CASES + [("", s, "") for s in STEPPER_TEXTS[SOURCE_KEY]]))
 
 
 # --- factory presets: presets/Factory/<NN_Category>/<NN_Name>.afp, embedded in the .so ---------

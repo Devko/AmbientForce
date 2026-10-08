@@ -139,7 +139,7 @@ TESTS    := $(wildcard test/*_test.cpp)
 ASAN_FLAGS = -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra -pthread $(INC)
 $(eval $(call objrule,asan,ASAN_FLAGS,CXX))
 $(BUILD)/plugin_test: $(call objs,asan,$(SRC) $(TESTS))
-	$(CXX) $(ASAN_FLAGS) $^ -o $@
+	$(CXX) $(ASAN_FLAGS) $^ -ldl -o $@
 
 # The same suite cross-compiled for the Force's CPU and run under qemu-user (no sanitizers):
 # catches 32-bit and ARM-only code paths (the FPSCR flush, NEON float code).
@@ -172,7 +172,7 @@ $(OBJ)/asan-module/%/module_main.o: test/module_main.cpp $(OBJ)/asan/flags | $(G
 	@mkdir -p $(@D)
 	$(CXX) $(ASAN_FLAGS) -DMODULE_TESTS=$*Tests -MMD -MP -c $< -o $@
 $(BUILD)/$(M)_test: $(OBJ)/asan-module/$(M)/module_main.o $(call objs,asan,$(MOD_SRC))
-	$(CXX) $(ASAN_FLAGS) $^ -o $@
+	$(CXX) $(ASAN_FLAGS) $^ -ldl -o $@
 test-module: $(BUILD)/$(M)_test
 	$<
 $(OBJ)/arm-module/%/module_main.o: test/module_main.cpp $(OBJ)/arm-test/flags | $(GEN)
@@ -214,11 +214,11 @@ $(BUILD)/afbench: $(call objs,o2,$(BENCH_SRC))
 # through the plugin's own entry points into build/demos-out/*.wav (tools/demos.cpp).
 demos: $(BUILD)/demos
 	rm -rf $(BUILD)/demos-out && mkdir -p $(BUILD)/demos-out
-	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos $(BUILD)/demos-out
+	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out AF_SOURCE_ROOTS=$(BUILD)/demos-out:$(BUILD)/demos-out $(BUILD)/demos $(BUILD)/demos-out
 # Level-matching: every factory preset's volume set so its demo phrase plays at PRESET_LUFS.
 PRESET_LUFS ?= -16
 preset-levels: $(BUILD)/demos
-	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos --match presets/Factory $(PRESET_LUFS)
+	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out AF_SOURCE_ROOTS=$(BUILD)/demos-out:$(BUILD)/demos-out $(BUILD)/demos --match presets/Factory $(PRESET_LUFS)
 	python3 $(SURF)/surface.py
 $(BUILD)/demos: $(call objs,o2,$(SRC) tools/demos.cpp)
 	$(CXX) $(O2_FLAGS) $^ -o $@
@@ -294,7 +294,7 @@ $(PGO_TRAIN): $(PGO_TRAIN_OBJ) $(PGO_GEN_OBJ)
 	$(ARM_CXX) $(ARM_SO_FLAGS) -fprofile-generate $^ -o $@
 $(PGO_TRAINED): $(PGO_TRAIN)
 	rm -rf $(PGO_PROF) && mkdir -p $(PGO_PROF)
-	AF_DATA_DIR=$(PGO_DIR) AF_PRESET_ROOTS=$(PGO_DIR) $(ARM_RUN) $(PGO_TRAIN)
+	AF_DATA_DIR=$(PGO_DIR) AF_PRESET_ROOTS=$(PGO_DIR) AF_SOURCE_ROOTS=$(PGO_DIR):$(PGO_DIR) $(ARM_RUN) $(PGO_TRAIN)
 	@n=$$(ls $(PGO_PROF)/*.gcda 2>/dev/null | wc -l); [ $$n -eq $(words $(SRC)) ] || \
 		{ echo "PGO: $$n of $(words $(SRC)) profiles written (PGO=0 builds without)"; exit 1; }
 	touch $@

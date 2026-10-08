@@ -4,6 +4,7 @@
 // values back to MPC, every factory preset playing the demo phrase at its level, and the macros at
 // both ends of their range keeping the hottest presets off the limiter.
 #include "host.h"
+#include "../plugin/loader.h"
 #include "../plugin/presets.h"
 #include "../tools/phrase.h"
 #include "factory_presets.h"
@@ -621,6 +622,30 @@ void testMacroLevels() {
 
 } // namespace
 
+// Weather's source is in before the phrase plays (tools/phrase.h waitForSource, at the top of afl::render, as demos,
+// preset-levels and the preset checks above render): a sound with Weather on renders the same samples every time,
+// whenever the instance's loader thread gets its source in (here a field made afresh each time, from an empty cache,
+// and loaded straight in, as a project is: no wait of the test host's own).
+void testWeatherRendersAlike() {
+    std::printf("== the phrase with Weather on: the same samples every time\n");
+    CHECK(afl::waitForTables());
+    const std::string text = "ambientforce 1\nw_level=0.8\nw_source=builtin:Embers\ng_level=0\nb_level=0\n";   // Weather alone
+    uint64_t prints[2] = {};
+    double weather = 0.0;
+    for (int k = 0; k < 2; ++k) {
+        af::SourceCache::get().clear();
+        Host h;
+        CHECK(h.loadRaw(text) == 1);
+        std::vector<float> L, R;
+        afl::render(h.e, h.log.time, afl::phrase(text), L, R);
+        prints[k] = fingerprint(L, R);
+        weather = rms(std::vector<float>(L.begin() + 3 * 44100, L.begin() + 4 * 44100));   // past its gate's fade in
+    }
+    std::printf("  fingerprints %016llx and %016llx, Weather at %.1f dBFS\n", static_cast<unsigned long long>(prints[0]),
+                static_cast<unsigned long long>(prints[1]), db(weather));
+    CHECK(prints[0] == prints[1] && weather > 0.003);
+}
+
 void presetTests() {
     testState();
     testPresets();
@@ -629,6 +654,7 @@ void presetTests() {
     testFactory();
     testMacroLevels();
     testSourceState();   // last: its user preset would take testPresets' numbers
+    testWeatherRendersAlike();
 }
 
 } // namespace aft

@@ -604,7 +604,9 @@ void Engine::tiltFor(float t) {
 // one): its fading grains copy what they still read from it there (weather.h).
 void Engine::applyRemember() {
     rememberAsked_ = false;
-    memory_.remember();
+    const bool follow = rememberFollows_;
+    rememberFollows_ = false;
+    if (memory_.remember() && follow) p_.weather.memory = true;   // Weather reads the new ring in this piece
 }
 
 void Engine::control() {

@@ -36,15 +36,20 @@
 // Weather's source (plugin/sources.h). The surface keeps its key, as it keeps the preset's: the key
 // the sound plays, saved with it (plugin/state.cpp), which the plugin's loader is asked for (slot 0).
 //   The stepper walks sourceKeys() one item per event, as the preset stepper does, and each step is a
-//   scroll: the loader's 150 ms debounce means a turn through ten sources loads one. A tap on an
+//   scroll: the loader's 150 ms debounce means a turn through ten sources loads one. A step goes the
+//   way MPC moved from the value it read back, one item on from where the key is in the list as it is
+//   now (files added or gone since the value was pushed move the key, not the way). A tap on an
 //   arrow, a project or preset naming the key, and Keep's new file are picks: loaded at once, and a
 //   file loaded already is looked at again (one replaced on the SSD is read anew).
 //   memory: is the engine's (Memory's remembered 16 s): the loader is never asked for it, so it
-//   keeps what it had, and memorySource() tells the audio thread to give Weather Memory. Leaving
-//   Memory, Weather plays it on until the key moved to has loaded (or failed), rather than whatever
-//   the slot held before Memory.
+//   keeps what it had, and memorySource() tells the audio thread to give Weather Memory. A Remember
+//   that happens raises it from the audio thread itself (rememberedHere()). Leaving Memory with
+//   something remembered, Weather plays it on until the key moved to has loaded (or failed), rather
+//   than whatever the slot held before Memory; with nothing remembered there is nothing to hold, and
+//   Weather goes straight to the slot's source.
 //   The stepper's text: the source's name ("Rain on Roof", "Memory", "Creek"), "Surf ..." while it
-//   loads, "MISSING Creek" when it failed (its key kept, as a project's reference).
+//   loads, "MISSING Creek" when it failed (its key kept, as a project's reference), the name cut to
+//   fit between the arrows (fitText()).
 // Locks: the surface's mutex, then the loader's (want(), view()); the loader calls back (its
 // listener, its tick, Keep's job) with none of its own held.
 //
@@ -61,11 +66,18 @@
 #include "param_ids.h"
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
 
 namespace af {
+
+// `head + name + tail` as MPC's live text shows it, fitted into `room` (1/64 px, param_ids.h's
+// kLiveAdvance widths: ASCII by the font's own, any other character as the widest): whole if it fits,
+// else the name cut at a character (spaces at the cut dropped) and ".." after it, head and tail whole.
+// The Source stepper's text (a user's WAV may have any name); surface.py checks its cases against it.
+std::string fitText(const std::string& head, const std::string& name, const std::string& tail, int room);
 
 class Surface {
 public:
@@ -117,10 +129,24 @@ public:
 
     // --- Weather's source (above): UI thread, or the loader's ---------------------
     void        setSourceKey(const std::string& key, bool now);   // now: a pick, else a scroll
+    // `to` picked (now) only if the key is still `from` and still() holds, both looked at under the
+    // surface's lock: Keep's file in place of Memory, if nothing was chosen meanwhile. True if picked.
+    bool        replaceSourceKey(const std::string& from, const std::string& to, const std::function<bool()>& still);
     std::string sourceKey() const;
     void        sourceLoaded();              // the loader published (its listener): the text, Memory's flag
     // Audio thread: whether Weather plays Memory (an atomic).
     bool        memorySource() const { return memory_.load(std::memory_order_acquire); }
+    // Audio thread: a Remember happened, and Weather follows it onto Memory (the engine moved it in that
+    // block): something is remembered from now on, Memory is the choice until a pick after it, and
+    // Memory's flag is up (atomics).
+    void        rememberedHere() {
+        remembered_.store(true, std::memory_order_release);
+        remembers_.fetch_add(1, std::memory_order_acq_rel);
+        memory_.store(true, std::memory_order_release);
+    }
+    // The loader's thread (its tick): a Remember since the last pick makes memory: the key (the stepper's
+    // text, what is saved); a pick after the Remember stands. True if it did.
+    bool        followRemember();
     // The audio thread: a Remember pressed since the last call. The loader's thread: a Keep to start
     // (true marks one being written, until keepDone()).
     bool        takeRemember() { return rememberAsked_.exchange(false, std::memory_order_acq_rel); }
@@ -168,6 +194,7 @@ private:
     int  sourceCur(const std::vector<std::string>& keys) const;
     void updateMemory();
     std::string sourceText() const;
+    uint32_t pickRemembersSeen() const;   // pickRemembers_, under the lock
 
     // UI-thread-only stepping state (RackForce's).
     long long lastSentMs_[P_COUNT] = {};
@@ -201,6 +228,9 @@ private:
 
     // Weather's source and Memory's buttons, between the threads (above).
     std::atomic<bool>        memory_{false};   // Weather plays Memory
+    std::atomic<bool>        remembered_{false};   // a Remember has happened (Memory holds something)
+    std::atomic<uint32_t>    remembers_{0};    // Remembers that happened (the audio thread counts)
+    uint32_t                 pickRemembers_ = 0;   // remembers_ at the last pick (mtx_): a Remember after it is the choice
     std::atomic<bool>        rememberAsked_{false}, keepAsked_{false}, keepBusy_{false};
 
     // The status line: what the UI thread notes, and what the audio thread made of it.

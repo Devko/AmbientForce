@@ -130,6 +130,8 @@ std::atomic<int> g_made{0};   // sources made by loadSource, not found in the ca
 std::mutex g_keepMtx;         // one Keep at a time: the number is chosen and claimed under it
 KeepHook g_keepHook = nullptr;
 void* g_keepCtx = nullptr;
+std::atomic<LoadHook> g_loadHook{nullptr};
+std::atomic<void*> g_loadCtx{nullptr};
 
 // A file's size and time, as the cache keeps them with what it made from it.
 FileStamp stampOf(const std::string& path) {
@@ -284,6 +286,7 @@ std::shared_ptr<const SourceBuffer> loadSource(const std::string& key, std::stri
         // does. A file that has gone is gone, cached or not.
         const FileStamp stamp = stampOf(path);
         if (auto hit = SourceCache::get().find(key, &stamp)) return hit;
+        if (const LoadHook hook = g_loadHook.load(std::memory_order_acquire)) hook(g_loadCtx.load(std::memory_order_acquire), key);
         std::unique_ptr<SourceBuffer> made;
         {
             WavData wav;
@@ -311,6 +314,11 @@ Loader::SlotType sourceSlotType() {
 void setKeepHook(KeepHook hook, void* ctx) {
     g_keepHook = hook;
     g_keepCtx = ctx;
+}
+
+void setLoadHook(LoadHook hook, void* ctx) {
+    g_loadCtx.store(ctx, std::memory_order_release);
+    g_loadHook.store(hook, std::memory_order_release);
 }
 
 std::string keepMemory(Memory& memory, std::string* err) {

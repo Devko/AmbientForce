@@ -6,6 +6,7 @@
 // plugin/patch_map.cpp compiles.
 #include "host.h"
 #include "factory_presets.h"
+#include "../plugin/surface.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1074,6 +1075,25 @@ void testExtremesM2(bool fromMemory) {
     std::printf("  %d values, peak %.2f\n", swept, worst);
 }
 
+// The Source stepper's text, fitted (plugin/surface.h fitText): every case surface.py checked to fit, with what
+// it comes to there, comes to the same here (the two do the same arithmetic on the same widths).
+void testSourceText() {
+    std::printf("== the Source stepper's text, fitted\n");
+    int same = 0, cases = 0;
+    for (const af::SourceFitCase& c : af::kSourceFitCases) {
+        ++cases;
+        const std::string got = af::fitText(c.head, c.name, c.tail, af::kSourceTextRoom);
+        if (got == c.fit) ++same;
+        else std::printf("  \"%s%s%s\": \"%s\", surface.py \"%s\"\n", c.head, c.name, c.tail, got.c_str(), c.fit);
+    }
+    CHECK(cases > 20 && same == cases);
+    // A name cut is cut at a character, never inside one (UTF-8), and keeps what follows it whole.
+    const std::string cut = af::fitText("", "\xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 "
+                                            "\xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9", " ...", af::kSourceTextRoom);
+    CHECK(cut.size() > 6 && cut.compare(cut.size() - 6, 6, ".. ...") == 0 &&
+          (static_cast<unsigned char>(cut[cut.size() - 7]) & 0xC0) != 0xC0);
+}
+
 } // namespace
 
 void paramsTests() {
@@ -1088,6 +1108,7 @@ void paramsTests() {
     testExtremes();
     testExtremesM2(false);
     testExtremesM2(true);
+    testSourceText();
 }
 
 } // namespace aft

@@ -209,7 +209,28 @@ void Surface::sourceLoaded() {
     refresh();
 }
 
+bool Surface::followRemember() {
+    if (remembers_.load(std::memory_order_acquire) == pickRemembersSeen()) return false;
+    const std::vector<std::string> keys = sourceKeys();   // the disk, outside the lock
+    bool picked = false;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (remembers_.load(std::memory_order_acquire) != pickRemembers_) {   // no pick since: Memory it is
+            pickSource(kMemoryKey, true, keys);
+            picked = true;
+        }
+    }
+    if (picked) refresh();
+    return picked;
+}
+
+uint32_t Surface::pickRemembersSeen() const {
+    std::lock_guard<std::mutex> lk(mtx_);
+    return pickRemembers_;
+}
+
 void Surface::pickSource(const std::string& key, bool now, const std::vector<std::string>& keys) {
+    pickRemembers_ = remembers_.load(std::memory_order_acquire);   // a Remember before this pick is behind it
     sourceKey_ = key;
     if (key != kMemoryKey) loader_.want(0, key, now);   // memory: is the engine's: the slot keeps what it has
     const auto at = std::find(keys.begin(), keys.end(), key);
@@ -227,8 +248,12 @@ int Surface::sourceCur(const std::vector<std::string>& keys) const {
 }
 
 void Surface::updateMemory() {
-    bool on = sourceKey_ == kMemoryKey;
-    if (!on && memory_.load(std::memory_order_relaxed)) {   // leaving Memory: on until the new key has come, or failed
+    // Memory: the key, or a Remember since the last pick (the audio thread moved Weather there; the key
+    // follows at the loader's next tick).
+    bool on = sourceKey_ == kMemoryKey || remembers_.load(std::memory_order_acquire) != pickRemembers_;
+    // Leaving Memory with something remembered: on until the new key has come, or failed. With nothing
+    // remembered Memory is silence: the slot's source at once.
+    if (!on && memory_.load(std::memory_order_acquire) && remembered_.load(std::memory_order_acquire)) {
         const Loader::View v = loader_.view(0);
         on = v.key != sourceKey_ || v.state == Loader::Loading;
     }
@@ -237,11 +262,56 @@ void Surface::updateMemory() {
 
 std::string Surface::sourceText() const {
     const std::string name = sourceName(sourceKey_);
-    if (sourceKey_ == kMemoryKey) return name;   // the engine's: never the loader's state
+    if (sourceKey_ == kMemoryKey) return fitText("", name, "", kSourceTextRoom);   // the engine's: never the loader's state
     const Loader::View v = loader_.view(0);
-    if (v.key == sourceKey_ && v.state == Loader::Missing) return "MISSING " + name;
-    if (v.key != sourceKey_ || v.state == Loader::Loading) return name + " ...";
-    return name;
+    if (v.key == sourceKey_ && v.state == Loader::Missing) return fitText("MISSING ", name, "", kSourceTextRoom);
+    if (v.key != sourceKey_ || v.state == Loader::Loading) return fitText("", name, " ...", kSourceTextRoom);
+    return fitText("", name, "", kSourceTextRoom);
+}
+
+bool Surface::replaceSourceKey(const std::string& from, const std::string& to, const std::function<bool()>& still) {
+    const std::vector<std::string> keys = sourceKeys();   // the disk, outside the lock
+    bool picked = false;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (sourceKey_ == from && still()) {
+            pickSource(to, true, keys);
+            picked = true;
+        }
+    }
+    refresh();
+    return picked;
+}
+
+namespace {
+// A character's width in the live text (1/64 px), at s[i]; `next` the index after it (UTF-8).
+int charWidth(const std::string& s, size_t i, size_t* next) {
+    const unsigned char c = static_cast<unsigned char>(s[i]);
+    size_t j = i + 1;
+    while (j < s.size() && (static_cast<unsigned char>(s[j]) & 0xC0) == 0x80) ++j;   // its continuation bytes
+    *next = j;
+    return c >= 32 && c < 127 ? kLiveAdvance[c - 32] : kLiveAdvanceWide;
+}
+int textWidth(const std::string& s) {
+    int w = 0;
+    for (size_t i = 0, next = 0; i < s.size(); i = next) w += charWidth(s, i, &next);
+    return w;
+}
+} // namespace
+
+std::string fitText(const std::string& head, const std::string& name, const std::string& tail, int room) {
+    if (textWidth(head) + textWidth(name) + textWidth(tail) <= room) return head + name + tail;
+    const int fixed = textWidth(head) + textWidth("..") + textWidth(tail);
+    int used = 0;
+    size_t cut = 0;
+    for (size_t i = 0, next = 0; i < name.size(); i = next) {
+        const int w = charWidth(name, i, &next);
+        if (fixed + used + w > room) break;
+        used += w;
+        cut = next;
+    }
+    while (cut > 0 && name[cut - 1] == ' ') --cut;
+    return head + name.substr(0, cut) + ".." + tail;
 }
 
 void Surface::beginBatch() {
@@ -304,7 +374,11 @@ void Surface::apply(int i, float n) {
                 std::lock_guard<std::mutex> lk(mtx_);
                 const int items = static_cast<int>(keys.size());
                 const int cur = sourceCur(keys);
-                const int pick = stepItem(n, stepperRange(items), items, cur);
+                // stepItem's rule (one item per event, the way MPC moved), the way taken against the value MPC
+                // read back, not against where the key now is: files listed since then before the key move it
+                // in the list, and measured from there a step to the right could go left.
+                const float delta = n - want_[P_W_SOURCE].load();
+                const int pick = std::fabs(delta) <= kQuant ? cur : clampi(cur + (delta > 0 ? 1 : -1), 0, std::max(items - 1, 0));
                 if (pick != cur && pick < items) pickSource(keys[static_cast<size_t>(pick)], false, keys);
             }
             break;

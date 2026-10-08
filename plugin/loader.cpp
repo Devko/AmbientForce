@@ -2,6 +2,7 @@
 #include "loader.h"
 
 #include <algorithm>
+#include <sys/prctl.h>
 
 namespace af {
 
@@ -204,6 +205,7 @@ void Loader::publish(Slot& s, std::shared_ptr<const void> obj, const std::string
 }
 
 void Loader::run() {
+    prctl(PR_SET_NAME, kThreadName, 0, 0, 0);   // (loader.h: the bench tells it from the table builder)
     std::unique_lock<std::mutex> lk(mtx_);
     while (!quit_) {
         // Nothing may leave this thread (std::terminate would end MPC): an out-of-memory
