@@ -42,21 +42,25 @@
 //
 // A note that is moved rather than drawn (a motif's after a change, a loop's replay that would
 // repeat) goes to the nearest candidate, the lower on a tie, that keeps the rule against the notes
-// around it: for a motif's note its neighbours within two, round the motif, the two next to it
-// first; for a replay the last two notes and the loop's next two, the note before and the next
-// first. It gives way a step at a time as a draw does, Gravity before the rule within two (the
-// plan's order: the last two notes are never chosen; if that leaves nothing, only the last one):
+// around it: for a motif's note its neighbours within two, round the motif, the note before it
+// first, then the one after; for a replay the last two notes and the loop's next two, the note
+// before first, then the next. It gives way a step at a time as a draw does, Gravity before the
+// rule (the plan's order: the last two notes are never chosen; if that leaves nothing, only the last
+// one):
 //   1. allowed, repeating none of them;
 //   2. allowed, repeating neither next to it;
-//   3. any candidate (of weight 0 too), repeating none of them;
-//   4. any candidate, repeating neither next to it;
-//   5. the nearest allowed.
-// With three candidates step 4 always finds one. So Gravity 1 keeps a motif on the chord where the
-// chord has fewer tones in the range than the motif has notes (a triad's four in Range 1 against
-// Motif 5): a tone may then come back two notes on, and is passed over as the motif plays, unless
-// every note left would be (below; Motif 8 against two or three tones), when it plays, as a draw's
-// would. Only a chord that leaves one allowed tone in the range puts other candidates in: that tone
-// can't be next to itself, so a motif or a loop isn't that tone throughout.
+//   3. allowed, not repeating the note before it;
+//   4. any candidate (of weight 0 too), repeating none of them;
+//   5. any candidate, repeating neither next to it;
+//   6. the nearest allowed.
+// With two allowed tones step 3 always finds one, and with three candidates step 5 does. So at
+// Gravity 1 a moved note leaves the chord only where the chord has a single tone in the range (and
+// with none, every candidate is allowed): that tone can't be next to itself, so a motif or a loop
+// isn't that tone throughout, and the notes around it go to the nearest other candidates. Where the
+// chord has fewer tones in the range than the motif has notes (two tones against Motif 5, or a
+// triad's four in Range 1), a tone comes back one or two notes on; it is passed over as the motif
+// plays (below), and plays only where every note left would be passed over too (Motif 8 against two
+// or three tones), as a draw's would; never where it would repeat the note before.
 //
 // THE PATTERNS:
 // - Random: each event a draw as above.
@@ -71,7 +75,7 @@
 //   order, one note per event. At the end of each pass, with probability Mutate, one of its notes
 //   (drawn) moves to its neighbour (up or down, drawn): the next allowed candidate, which is the
 //   next scale tone while Gravity < 1 and the next chord tone at 1, so Gravity 1 keeps the motif on
-//   the chord (a chord of one tone in the range aside: above). It moves only if that keeps "no
+//   the chord (a chord of a single tone in the range aside: above). It moves only if that keeps "no
 //   repeat within two" round the motif; otherwise the other way, then the notes after it in turn;
 //   none can: no change this pass. A Register change moves the whole motif by its octaves, keeping
 //   its shape; then a note still outside the range (Range made smaller, or the key moved the tonic)
@@ -161,11 +165,11 @@
 //
 // COST: the ARM instructions of a 128-sample block, built with the device's flags and counted by the
 // insn plugin under the instruction-counting qemu (the ones the Makefile's arm-icount uses): the
-// difference of 40 000 and 20 000 blocks after 20 s, over 20 000. step() alone: 144 generating at
-// Density 60 without a loop; 342 at Density 60 with Loop on (16 s, replaying); 395 replaying a full
-// loop (64 events every 2 s, synced, Rubato 1). With set() every block, as Air calls it: 343, 541 and
-// 604. A knob turning every block costs next to nothing more: Range swept 0.5 to 3, 356 (Density 60);
-// Gravity swept 0 to 0.99, 548 (with the 16 s loop). Counted the same way before the review's fixes,
+// difference of 40 000 and 20 000 blocks after 20 s, over 20 000. step() alone: 142 generating at
+// Density 60 without a loop; 340 at Density 60 with Loop on (16 s, replaying); 393 replaying a full
+// loop (64 events every 2 s, synced, Rubato 1). With set() every block, as Air calls it: 341, 539 and
+// 602. A knob turning every block costs next to nothing more: Range swept 0.5 to 3, 354 (Density 60);
+// Gravity swept 0 to 0.99, 546 (with the 16 s loop). Counted the same way before the review's fixes,
 // when every change of either worked the candidates out again: 141, 334, 384; 318, 510, 570; the
 // sweeps 3090 and 3572. Air's share of the budget is 32k a block
 // (docs/plans/2026-10-07-m2-weather.md): the generator is under 2% of it. On the device: pending.
@@ -271,7 +275,7 @@ private:
     int indexOf(int note) const;                       // the candidate's index, or -1
     int fold(int note) const;                          // into the range by octaves: Echo, moved motifs, replays
     // The candidate nearest `note` that keeps the rule against `keep` as far as it can (the header's
-    // list for moved notes); keep[0..nNear) are the notes next to it.
+    // list for moved notes); keep[0] is the note before it, keep[0..nNear) the notes next to it.
     int nearestAllowed(int note, const int* keep, int nNear, int nKeep) const;
     int pick(const int* idx, int n, const int* ex, int nEx, double u) const;
     int choose(double uPick, double uMut, double uWhich, double uDir);   // the generated note

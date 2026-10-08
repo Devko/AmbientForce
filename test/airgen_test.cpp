@@ -368,8 +368,9 @@ void testGravity() {
     // Gravity 1 keeps a motif on the chord where the chord has fewer tones in the range than the
     // motif has notes: Register 5, Range 1 (72..84) holds C's 72 76 79 84, four against Motif 5. A
     // motif drawn at Gravity 0.6, then Gravity 1: from the crossing on, C's tones only; then F's chord
-    // (72 77 81 84): F's only. Never the note before. A moved note keeps out the notes next to it on
-    // the chord before it leaves the chord to keep out the ones two away (eight seeds).
+    // (72 77 81 84): F's only. Never the note before. On the chord, a moved note keeps out the notes
+    // next to it, or only the note before, rather than leave it to keep out the ones two away (eight
+    // seeds).
     {
         bool onC = true, onF = true, never = true;
         size_t total = 0;
@@ -398,6 +399,37 @@ void testGravity() {
         std::printf("  Range 1 (4 chord tones), Motif 5, Gravity 0.6 -> 1, then C -> F: %zu notes, all on the chord %s, never "
                     "the note before %s\n",
                     total, onC && onF ? "yes" : "NO", never ? "yes" : "NO");
+    }
+    // A chord with two tones in the range keeps a motif on them too: Register 5, Range 0.5 (72 74 76
+    // 77) holds C's 72 and 76. A motif of 3..8 drawn at Gravity 0.6, then Gravity 1: a moved note
+    // whose two neighbours are the two tones still takes one of them (it keeps out the note before
+    // only), so every note is a chord tone, 72 and 76 by turns, never the note before (three seeds
+    // for each Motif).
+    {
+        bool onC = true, never = true;
+        size_t total = 0;
+        for (int motif = 3; motif <= 8; ++motif)
+            for (uint32_t seed = 1; seed <= 3; ++seed) {
+                Run r;
+                AirGenPatch p = patchOf(af::AP_CONSTELLATION, 30.0f);
+                p.rangeOct = 0.5f;
+                p.mutate = 0.0f;
+                p.motif = motif;
+                start(r, p, seed);
+                r.seconds(30);
+                p.gravity = 1.0f;
+                r.g.set(p, HarmonyPatch{});
+                const size_t at1 = r.ev.size();
+                r.seconds(60);
+                for (size_t i = at1; i < r.ev.size(); ++i) onC = onC && (r.ev[i].note == 72 || r.ev[i].note == 76);
+                never = never && at1 > 0 && r.ev.size() > at1 + 20 && noRepeats(r.ev, 1, at1 - 1);
+                total += r.ev.size() - at1;
+            }
+        CHECK(onC);
+        CHECK(never);
+        std::printf("  Range 0.5 (2 chord tones), Motif 3..8, Gravity 0.6 -> 1: %zu notes, all on the chord %s, never the "
+                    "note before %s\n",
+                    total, onC ? "yes" : "NO", never ? "yes" : "NO");
     }
     // Range 23/12: C5..B6, 14 scale tones of which 6 are the triad's, the scale's share (3/7) exactly.
     for (float g : {0.0f, 0.6f}) {
@@ -510,11 +542,11 @@ void testNoRepeats() {
 
     // A chord that leaves one allowed tone in the range doesn't make the motif that tone throughout.
     // Gravity 1, Register 4, Range 1 (C major 60..72, eight candidates), a motif on C's tones; then D
-    // alone, so 62 is the only chord tone. A moved note takes 62 wherever that repeats neither note
-    // next to it, two of the motif's five places, and the nearest other candidates elsewhere; one of
-    // the two 62s repeats the note two before it and is passed over as the motif plays. So 62 comes
-    // every fourth note, and no note repeats either of the two before it. Constellation, and Echo of
-    // the player's five.
+    // alone, so 62 is the only chord tone. A moved note takes 62 wherever that doesn't repeat the
+    // note before it, and the nearest other candidates elsewhere; as the motif plays, a 62 that would
+    // repeat either of the two notes before it is passed over. So 62 comes every third note (100 in
+    // 300), and no note repeats either of the two before it. Constellation, and Echo of the player's
+    // five.
     for (int pat : {af::AP_CONSTELLATION, af::AP_ECHO}) {
         Run r;
         AirGenPatch p = patchOf(pat);
@@ -531,19 +563,18 @@ void testNoRepeats() {
         const size_t from = r.ev.size();
         r.events(from + 300);
         int tone = 0;
-        bool fourth = true;   // 62 in every four notes in a row, once the motif has changed
+        bool third = true;   // 62 in every three notes in a row, once the motif has changed
         for (size_t i = from; i < r.ev.size(); ++i) {
             tone += r.ev[i].note == 62;
-            if (i >= from + 5 && i + 4 <= r.ev.size())
-                fourth = fourth && (r.ev[i].note == 62 || r.ev[i + 1].note == 62 || r.ev[i + 2].note == 62 ||
-                                    r.ev[i + 3].note == 62);
+            if (i >= from + 5 && i + 3 <= r.ev.size())
+                third = third && (r.ev[i].note == 62 || r.ev[i + 1].note == 62 || r.ev[i + 2].note == 62);
         }
         const bool ok = r.ev.size() >= from + 300 && noRepeats(r.ev, 2, from - 2);
         CHECK(ok);
-        CHECK(fourth);
+        CHECK(third);
         std::printf("  %s, then a chord of one allowed tone (62): 300 events, no repeat within two %s, 62 %d times, in "
-                    "every four notes %s\n",
-                    kPat[pat], ok ? "yes" : "NO", tone, fourth ? "yes" : "NO");
+                    "every three notes %s\n",
+                    kPat[pat], ok ? "yes" : "NO", tone, third ? "yes" : "NO");
     }
 
     // A motif drawn one note at a time between Random's notes can't see them: in the one-chord-tone

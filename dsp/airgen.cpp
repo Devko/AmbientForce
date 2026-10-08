@@ -170,14 +170,16 @@ int AirGen::fold(int note) const {
     return note;
 }
 
-// The candidate nearest `note`, the lower on a tie, that repeats none of `keep` (keep[0..nNear) the
-// notes next to it, the rest those two away), giving way a step at a time as a draw does, Gravity
-// before the rule (the header's list for moved notes): allowed, keeping all of them out, then only
-// the next ones; any candidate, the same two ways; then the nearest allowed.
+// The candidate nearest `note`, the lower on a tie, that repeats none of `keep` (keep[0] the note
+// before it, keep[0..nNear) the notes next to it, the rest those two away), giving way a step at a
+// time as a draw does, Gravity before the rule (the header's list for moved notes): allowed, keeping
+// all of them out, then the next ones, then the note before; any candidate, keeping all of them out,
+// then the next ones; then the nearest allowed.
 int AirGen::nearestAllowed(int note, const int* keep, int nNear, int nKeep) const {
-    for (int level = 0; level < 5; ++level) {
-        const bool any = level == 2 || level == 3;
-        const int out = level == 0 || level == 2 ? nKeep : level < 4 ? nNear : 0;   // how many of keep kept out
+    for (int level = 0; level < 6; ++level) {
+        const bool any = level == 3 || level == 4;
+        // How many of keep kept out.
+        const int out = level == 0 || level == 3 ? nKeep : level == 1 || level == 4 ? nNear : level == 2 ? (nKeep > 0 ? 1 : 0) : 0;
         int best = -1;
         for (int i = 0; i < nCand_; ++i) {
             const int c = cand_[i];
@@ -395,11 +397,13 @@ void AirGen::moveMotifs(int shift, bool snap) {
             lost[i] = m[i] < lo_ || m[i] > hi_;   // a range under an octave without this pitch class
         }
         for (int i = 0; i < n; ++i) {
-            int keep[4], nk = 0, nNear = 0;   // its neighbours drawn so far, the next ones first
+            // Its neighbours drawn so far: the note before it first, then the next ones, then those
+            // two away.
+            int keep[4], nk = 0, nNear = 0;
             for (int d = 1; d <= 2; ++d) {
                 const int a = (i + d) % len, b = (i - d + len) % len;
-                if (a < n && a != i) keep[nk++] = m[a];
                 if (b < n && b != i) keep[nk++] = m[b];
+                if (a < n && a != i) keep[nk++] = m[a];
                 if (d == 1) nNear = nk;
             }
             bool repeats = false;
