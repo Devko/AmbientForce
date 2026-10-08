@@ -225,9 +225,12 @@ sample. Space runs the Reverb in its own 32-sample chunks.
 **Idle.** Asleep, or awake with nothing to hear (Ground not audible, Bloom with no voice in use)
 and Space `silent()`, `render()` writes zeros and runs no DSP. Space can stay unsilent for minutes
 (Abyss at Decay 30), and a change that lengthens its reach can make it unsilent again with no
-input; it then simply runs that much longer, and plays nothing from before the silence (once
-silent, the Reverb's predelay forgets what came in before: `dsp/space.h`). A muted Ground isn't rendered; a muted Bloom renders
-no voices, only its envelopes and starts move on.
+input; it then simply runs that much longer. Once silent, the Reverb's predelay forgets what came
+in before, so a longer predelay plays nothing from before the silence, and nothing the network
+wrote before it is read again; at very short decays in long lines (Haze and Space at Decay 0.1 to
+0.2 s) what it wrote during the silence can come out under Freeze or a longer Decay
+(`dsp/space.h`, `dsp/reverb.h`). A muted Ground isn't rendered; a muted Bloom renders no voices,
+only its envelopes and starts move on.
 
 **Time** is 64-bit or double wherever it can run for hours: the engine's sample count, the
 harmony's beats, the oscillators' phases (32-bit fixed point, which wraps exactly), the sway's

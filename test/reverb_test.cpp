@@ -1287,10 +1287,13 @@ Ghost resumed(const Space::Params& before, const Space::Params& after, float lev
 // 250 ms, size 1, modulation 1, Space, Haze, Abyss, shimmer 1. Over the next second the return
 // stays under -120 dBFS. Before Reverb::forgetInput() the predelay's buffer still held the burst's
 // end (silent() comes 0.17 to 0.31 s after it), and 250 ms of predelay replayed it: -21 dBFS after
-// Room's -6 dBFS burst, -39 after its -26 dBFS one, -45 after Plate's (Hall's silence comes too
-// late for 250 ms to reach); the other changes reach nothing from before. Then an impulse: its wet
-// stays under -120 dBFS until the new predelay has passed and comes within 250 ms of it (over
-// -100 dBFS: the quietest, Haze at decay 0.1 s, peaks near -78), so the fresh input goes in as before.
+// Room's -6 dBFS burst, -39 after its -26 dBFS one, -45 after Plate's -26 dBFS one (Plate's
+// -6 dBFS burst and both of Hall's go silent too late for 250 ms to reach them); the other changes
+// read nothing the network wrote before the quiet stretch (reverb.h: reachSamples() names what can
+// come out of it at shorter decays and in longer lines than these). Then an impulse: its wet stays
+// under -120 dBFS until the new predelay has passed and comes within 250 ms of it (over -100 dBFS:
+// the quietest, Haze at decay 0.1 s, peaks near -78), so the fresh input goes in as before. That
+// half guards against forgetting too much: it passes without forgetInput() as well.
 void resumeGhost() {
     struct Change {
         const char* what;

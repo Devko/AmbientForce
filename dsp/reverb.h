@@ -97,12 +97,20 @@ public:
     // The longest anything takes to come out once it has gone in, or to go round the network once:
     // the predelay, the longest line (at the larger size, fully modulated) with the diffusers' and
     // allpasses' build-up, and the shimmer's shifter while it runs. In and out both silent for
-    // this long, nothing the network kept from before can come out again, whatever the settings
+    // this long, nothing the network wrote before then is read again, whatever the settings
     // become: its buffers hold older samples, but a larger size moves the reads back slower than
     // the writes move on (0.1 sample a sample at most), the modulation's full depth is in the reach
     // already, a new mode starts the network afresh, and the shifter starts afresh when the shimmer
-    // comes on. Not so the predelay: its buffer keeps the last 370 ms that went in, and a longer
-    // predelay reads up to 250 ms back at once. forgetInput() hides what is older than the silence.
+    // comes on. What it wrote during the silence is as quiet as what came out, but for one
+    // exception: very short decays in long lines. Each pass then loses far more than 120 dB, so
+    // the output falls silent while the input diffusers still ring into the lines (and the in-loop
+    // allpasses on what they read there); a reverb no longer run keeps that ring, and Freeze or a
+    // longer Decay lets it out once it runs again. After a -6 dBFS burst at Decay 0.1 s (the
+    // louder of the two): Haze -92 dBFS at size 0, -78 at 0.5, -59 at 1; Space -111, -110 and -91;
+    // Haze at Decay 0.2 s still -105 to -113. Under -120 dBFS at Decay 0.33 s and longer, and in
+    // Room, Hall, Plate and Abyss at any. The predelay is another matter: its buffer keeps the last
+    // 370 ms that went in, and a longer predelay reads up to 250 ms back at once. forgetInput()
+    // hides what is older than the silence.
     int reachSamples() const;
 
     // The input has been silent for the last `quiet` samples, and the caller may stop running the
