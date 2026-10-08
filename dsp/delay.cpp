@@ -191,6 +191,21 @@ constexpr float kApCoef = 0.65f;
 // How long the longest allpass rings until -60 dB (0.65 a lap: 17 laps of 24.9 ms), for the tail.
 constexpr int kApRing = 17 * kAp.len[1][kStages - 1];
 
+// The layout as the code takes it. A sub-run (a segment at most) reads and writes a ring in a
+// straight line from where it is, on into the copy past its end, so the copy is a segment long at
+// least. diffuseSides() then either brings back what went past the end or copies what went to the
+// start, never both, and an allpass never reads what the same sub-run wrote: every ring is at least
+// a segment longer than its copy (a stage added to kStages without its time, at length 0, fails
+// here too). kApRing takes R's last allpass for the longest of the eight.
+constexpr bool apLayoutHolds() {
+    for (int side = 0; side < 2; ++side)
+        for (int s = 0; s < kStages; ++s)
+            if (kAp.len[side][s] < kSeg + kApGuard || kAp.len[side][s] > kAp.len[1][kStages - 1]) return false;
+    return true;
+}
+static_assert(kApGuard >= kSeg, "a sub-run runs past a ring's end into its copy, never past the copy");
+static_assert(apLayoutHolds(), "every ring a segment longer than its copy, R's last the longest");
+
 float onePole(float hz) { return 1.0f - std::exp(-2.0f * kPi * hz / kRate); }
 float perSegment(float seconds) { return 1.0f - std::exp(-kSeg / (seconds * kRate)); }
 float perSample(float seconds) { return 1.0f - std::exp(-1.0f / (seconds * kRate)); }
@@ -234,20 +249,36 @@ double wholeIfClose(double t) {
     return std::fabs(t - r) < 1e-6 ? r : t;
 }
 
+// Positions s..e of a line zeroed, with the copies past its end of those among its first kGuard.
+// std::fill, a vector loop here: libc's memset counted more ARM instructions for these few dozen.
+void zeroSpan(float* line, int s, int e) {
+    std::fill(line + s, line + e + 1, 0.0f);
+    if (s < kGuard) std::fill(line + kLen + s, line + kLen + std::min(e, kGuard - 1) + 1, 0.0f);
+}
+
 // Until a line has been written all the way round since reset(), it still holds what came before.
 // Before a run of n samples at times te + d .. te + n d, zero what of that its taps can reach
-// (ages past `written`; those written since stay): a few dozen samples, and only the first time
-// round, instead of 1.4 MB at once or a check on every tap.
+// (ages past `written`; those written since stay): a few dozen samples, and only until the lines
+// have been written past the reach, instead of 1.4 MB at once or a check on every tap. run() and
+// diffuseRun() stop calling it there: set() works the reach out as the furthest any tap reads
+// until the next set(), the segment under way included, and each set() moves it. Ages from..to sit
+// at positions w - to .. w - from, across the line's end at most once (ages run 1 .. kLen - 1): one
+// fill or two.
 void hideOld(float* line, int w, int written, double te, double d, int n) {
     const double lo = std::min(te + d, te + n * d), hi = std::max(te + d, te + n * d);
     // At sample k a tap of age a reads what is k samples younger now; ages under 1 are written
     // in the run before they're read.
     const int from = std::max({written + 1, std::clamp(static_cast<int>(lo), 2, kMaxAge) - n, 1});
     const int to = std::clamp(static_cast<int>(hi), 2, kMaxAge) + 2;
-    for (int a = from; a <= to; ++a) {
-        const int j = w - a < 0 ? w - a + kLen : w - a;
-        line[j] = 0.0f;
-        if (j < kGuard) line[kLen + j] = 0.0f;
+    if (from > to) return;
+    const int s = w - to, e = w - from;
+    if (s >= 0) {
+        zeroSpan(line, s, e);
+    } else if (e < 0) {
+        zeroSpan(line, s + kLen, e + kLen);
+    } else {
+        zeroSpan(line, 0, e);
+        zeroSpan(line, s + kLen, kLen - 1);
     }
 }
 
@@ -373,11 +404,15 @@ Delay::Delay()
 }
 
 void Delay::reset() {
+    env_ = 0.0f;
+    clear();
+}
+
+void Delay::clear() {
     w_ = 0;
     written_ = 0;
     lpL_ = lpR_ = hpL_ = hpR_ = 0.0f;
     gainL_ = gainR_ = 1.0f;
-    env_ = 0.0f;
     phWow_ = phFlutL_ = phFlutR_ = 0.0f;
     segLeft_ = 0;
     fadeL_ = fadeR_ = -1;
@@ -457,7 +492,8 @@ void Delay::set(const Params& p, const Transport& t) {
     // their length, but an allpass holds the frequencies at its poles up to (1 + g) / (1 - g) =
     // 4.7 times as long, and the slowest of those set the end: a noise burst's -60 dB edge was
     // measured at most 1.7 times their length later a pass (at 1 to 100 ms, feedback 0.5 to 0.99).
-    // Between Diffuse 0 and 1 the repeats fall faster still (the blend loses a little a pass).
+    // Between Diffuse 0 and 1 the blend takes a little more off most of a repeat each pass, but
+    // nothing off the comb the tail narrows to (delay.h): the estimate counts on none of it.
     const bool diffuse = tgt_[DIFFUSE] > 0.0f || cur_[DIFFUSE] > 0.0f;
     const double longest = std::max({tgtL_, tgtR_, tL_, tR_, tBL_, tBR_}) + wowTgt_ * kWowDepth * (1.0f + kFlutter);
     if (fb != tailFb_ || longest != tailLongest_ || diffuse != tailDiffuse_) {
@@ -472,10 +508,17 @@ void Delay::set(const Params& p, const Transport& t) {
         tail_ = fb >= 1.0f ? kTailForever : static_cast<int>(std::min(tail, static_cast<double>(kTailForever)));
     }
 
-    // Once round: the furthest either head reads (its glide's start or end, the wow at its deeper
-    // amount while it glides), the Hermite kernel's reach and a segment's glide, and the diffusers
-    // while they run or may start.
-    const double heads = std::max({tgtL_, tgtR_, tL_, tR_, tBL_, tBR_}) + std::max(wowTgt_, wowAmt_) * kWowDepth * (1.0f + kFlutter);
+    // Once round: the furthest any read goes until the next set(), and the diffusers while they run
+    // or may start. The heads only move towards their targets from here, the wow no deeper than the
+    // deeper of its amounts: their glides' starts and ends with that wow, and the reads where they
+    // are now. Those count because tL_ and the rest are already a segment's glide on: the rest of
+    // the segment under way still reads from where it is (teL_ ...), in a glide down above all of
+    // them by 1.2% of the way left to go, which a set() between segments (a block cut off the
+    // 32-sample grid) would otherwise leave out. Then the Hermite kernel's reach, and a segment
+    // more. Every read stays under this until the next set(): Echo's silent() waits for it, and
+    // hideOld() stops at it.
+    const double heads = std::max(std::max({tgtL_, tgtR_, tL_, tR_, tBL_, tBR_}) + std::max(wowTgt_, wowAmt_) * kWowDepth * (1.0f + kFlutter),
+                                  std::max({teL_, teR_, teBL_, teBR_}));
     reach_ = static_cast<int>(heads) + 3 + kSeg + (diffuse ? kApLongest : 0);
 }
 
@@ -577,7 +620,8 @@ void Delay::process(float* L, float* R, int n) {
         moving = moving || tgt_[k] != cur_[k];
     }
     // The diffusers run while Diffuse is above 0 or on its way to or from it. Starting again they
-    // start empty: what they held is from before the reset, or from before Diffuse sat at 0.
+    // start empty: what they held is from before a reset() or clear(), or before Diffuse sat at 0.
+    // (std::fill: libc's memset counted more ARM instructions for these 23 KB.)
     const bool diffusing = cur_[DIFFUSE] != 0.0f || tgt_[DIFFUSE] != 0.0f;
     if (diffusing && apStale_) {
         std::fill(ap_.begin(), ap_.end(), 0.0f);
@@ -629,7 +673,7 @@ void Delay::run(float* L, float* R, int n) {
     const double dbl = teBStepL_, dbr = teBStepR_;
     Lr gainA = {gain_[0], gain_[1]}, gainB = {gain_[2], gain_[3]};
     const Lr sGainA = {gainStep_[0], gainStep_[1]}, sGainB = {gainStep_[2], gainStep_[3]};
-    if (written < kLen) {
+    if (written < std::min(kLen, reach_)) {   // hideOld(): past the reach no tap reads before the restart
         hideOld(bl, w, written, teL, dl, n);
         hideOld(br, w, written, teR, dr, n);
         if (Fading) {
@@ -758,7 +802,7 @@ void Delay::diffuseRun(float* L, float* R, int n) {
     const double dbl = teBStepL_, dbr = teBStepR_;
     Lr gainA = {gain_[0], gain_[1]}, gainB = {gain_[2], gain_[3]};
     const Lr sGainA = {gainStep_[0], gainStep_[1]}, sGainB = {gainStep_[2], gainStep_[3]};
-    if (written < kLen) {
+    if (written < std::min(kLen, reach_)) {   // hideOld(): past the reach no tap reads before the restart
         hideOld(bl, w, written, teL, dl, n);
         hideOld(br, w, written, teR, dr, n);
         if (Fading) {

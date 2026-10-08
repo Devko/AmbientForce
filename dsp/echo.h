@@ -10,24 +10,60 @@
 //
 // silent(): the send and the wet (before the duck) have both stayed under -120 dBFS for as long as
 // anything takes to come round the Delay once (Delay::reachSamples(): the longest read, at the wow's
-// depth, plus the diffusers while they run): nothing in flight, no repeat left, so the engine may
-// stop running it. A repeat comes round within that, so with feedback 1 it is never silent while
-// the repeats sound. The quiet counts saturate: an installation running for days never wraps them.
+// depth, plus the diffusers while they run), counted in 32-sample chunks: nothing in flight, no
+// repeat left, so the engine may stop running it. A repeat comes round within that, so with
+// feedback 1 it is never silent while the repeats sound. The wet's level isn't measured while the
+// send brings anything: silent() is false then whatever the wet is. The quiet count saturates: an
+// installation running for days never wraps it.
+//
+// Silent doesn't mean empty: the Delay's lines still hold what went in up to 8 s before, at ages
+// past the reach, where a longer time (or deeper wow, or a wider spread) would read it. Set while
+// the engine skips Echo, such a change makes silent() false (the reach grows), and what went in
+// before would come back. So once Echo has been silent() since something last went through the
+// Delay, the next process() starts the Delay afresh, whether or not the engine skipped any calls
+// in between. Silent can come at the end of a process(), or at a set(): set() works the reach out
+// again from where the heads have glided to, so a time gliding down, or Diffuse landing on 0, can
+// make Echo silent there, and the engine skip it from that block. The fresh start: Delay::clear()
+// hides the lines' old samples from every read and empties the cuts and the limiter, the diffusers
+// are cleared the next time they run, and the Delay jumps to the latest set(), as it would have
+// glided there had it run on. The quiet count is full again, as after reset(): woken by a setting
+// alone, Echo is silent again at the end of that call unless something comes in. Once a silence:
+// until something has gone through the Delay again, it isn't started afresh again.
+//
+// The duck's envelope is kept across the fresh start. It follows the send, quiet since before the
+// silence began, so it has fallen on its own, and it still says how loud the send has just been:
+// emptied, it let a quiet phrase's first repeats after a short silence through 15 dB louder than a
+// Delay that ran on. Where the engine skipped Echo it holds what it had when the skipping began
+// (fallen for the reach, by its 250 ms release), where a Delay run on through the pause would have
+// let it fall further: the next phrase's repeats then swell in from under the duck. After a loud
+// burst at 20 ms with duck 1 (resumeDuck()'s setting), a quiet phrase's first repeats come 11 dB
+// under a Delay run on after a 0.5 s pause (6.5 dB under 320 ms on), 15.6 dB under after 5 s
+// (8 dB at 320 ms). Kept because a swell is gentler than the jump an emptied envelope gives. A
+// question for Task 8: the engine knows when and for how long it skipped Echo, and could tell it,
+// so the envelope falls as far as it would have.
 //
 // Wet only from the start: an Echo that has never been set() plays initEcho() at mix 1. Drive and
 // Glide stay at initEcho()'s (0 and Tape): M2 doesn't show them.
 //
 // Cost, in ARM instructions per 128-sample block: counted with a module-level harness (Echo alone,
-// noise in, after the lines' first 8 s, two block counts under qemu's instruction-counting plugin,
-// the device's compiler flags); Task 8 counts it again in the engine with make arm-icount.
-// - M2's worst case (Ping-Pong, wow 1, Diffuse 1, duck 1, feedback 0.9, 1/4. at 120 BPM): 29.2k;
-//   29.8k at 1 ms, where the diffusers' sub-runs get shorter. initEcho(): 29.2k as well.
-// - The same at Diffuse 0: 25.1k: EffectForce's Delay 24.4k, the level checks and copies the rest.
-// M2's budget gives Echo 28k: this is 1.2k (4%) over it, all of it Diffuse's 4.1k. At the plan's
-// 0.0245 points of p99 per thousand, about 0.72 points (device: pending).
+// noise in, after the lines' first 8 s; the device's compiler flags without the profile, under the
+// qemu and insn plugin make arm-icount counts with, 768 blocks less 256); Task 8 counts it again in
+// the engine.
+// - M2's worst case (Ping-Pong, wow 1, Diffuse 1, duck 1, feedback 0.9, 1/4. at 120 BPM): 30.0k;
+//   30.5k at 1 ms, where the diffusers' sub-runs get shorter. initEcho(): 30.0k as well.
+// - The same at Diffuse 0: 25.9k: EffectForce's Delay 25.1k, the send's level check and the copies
+//   the rest. The wet's level check, skipped while the send brings anything, took 0.4k more.
+// - After a fresh start (a silence, or reset()), at the worst case: the first block 36.1k, most of
+//   the extra the diffusers' 23 KB clear; then 30.9k a block for as long as the delay time (750 ms
+//   here), the reads' old samples zeroed ahead of them, one or two fills a run; then 30.0k again.
+// M2's budget gives Echo 28k: this is 2.0k (7%) over it, less than Diffuse's 4.1k. At the plan's
+// 0.0268 points of p99 per thousand, about 0.80 points; the first block after a silence 0.97
+// (device: pending). Task 8's bench should count a phrase that starts after a silence, so that
+// those blocks are in its p99.
 //
 // Real-time rules: the constructor allocates (the Delay's lines, 2.8 MB, and its diffusers, 23 KB);
-// reset(), set() and process() don't allocate, lock or throw.
+// reset(), set() and process() don't allocate, lock or throw. A fresh start costs the blocks above
+// once a silence, not every block.
 #include "common.h"
 #include "delay.h"
 
@@ -54,16 +90,20 @@ private:
     Delay::Params dp_;         // what the Delay is given: the asked, wet only
     Transport t_;
     bool jump_ = true;         // reset() with no set() since: the next process() sets the Delay again
-    uint32_t quietIn_ = 0;     // samples the send has stayed under -120 dBFS (saturating)
-    uint32_t quietOut_ = 0;    // ... and the wet, before the duck
+    bool held_ = false;        // something has gone through the Delay since it last started afresh
+    bool asleep_ = false;      // ... and silent() since (at a process()'s end, or a set()): the next
+                               // process() starts it afresh
+    uint32_t quiet_ = 0;       // samples the send and the wet (before the duck) have both stayed
+                               // under -120 dBFS (saturating)
 };
 
 inline constexpr const char* kEchoModeNames[] = {"Stereo", "Ping-Pong", "Mono"};   // Delay::Mode
 static_assert(sizeof kEchoModeNames / sizeof kEchoModeNames[0] == Delay::kModes, "a name for every mode");
 
 // Echo's defaults (Init's, though Init sends nothing to it): a dotted quarter synced (450 ms free),
-// repeats about 9 dB down a pass (feedback 0.45, and Diffuse's share) through a band of 150 Hz to
-// 4.5 kHz, a little tape wow, ducked a little under the strata, diffused a little more each pass.
+// the first repeats about 9 dB down a pass (feedback 0.45, and Diffuse's share, which falls away as
+// the tail narrows: delay.h) through a band of 150 Hz to 4.5 kHz, a little tape wow, ducked a
+// little under the strata, diffused a little more each pass.
 inline Echo::Params initEcho() {
     Echo::Params p;
     Delay::Params& d = p.delay;
