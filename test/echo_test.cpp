@@ -3,8 +3,9 @@
 // feedback ratio and the cuts against the one-pole responses, the glide landing exactly, drive,
 // limiter, ducking, wow depth, and robustness (feedback 1 for 30 s, extremes, random jumps, NaN
 // input, block sizes, reset, the tail). Then AmbientForce's own: Diffuse (0 is EffectForce's Delay
-// bit for bit, the smear, no growth, Mono, clicks, block sizes, odd values, the tail) and
-// dsp/echo.h (wet only, silent()).
+// bit for bit, the smear, what a pass loses, the comb a long tail narrows to, no growth, Mono,
+// clicks, block sizes, odd values, the tail) and dsp/echo.h (wet only, silent() within the Delay's
+// reach, nothing old when it runs again after a silence).
 #include "signal.h"
 #include "../dsp/delay.h"
 #include "../dsp/echo.h"
@@ -1245,6 +1246,36 @@ void diffuseLoss() {
     std::printf("\n");
 }
 
+// The comb (dsp/delay.h): a pass of the blend loses noise where the clear and the diffused repeat
+// meet out of phase, but nothing where they meet in phase, so with a long feedback the tail narrows
+// pass by pass to a comb of those frequencies and holds there. Feedback 1, 200 ms, the cuts open, a
+// 0.25 s burst: at Diffuse 0.3, from second 10 to second 20 (50 passes) it loses under 0.1 dB a
+// pass, not diffuseLoss()'s 1.84 of a first one, and second 20's spectrum has under a quarter as
+// many bins within 20 dB of its strongest as Diffuse 0's.
+void diffuseComb() {
+    int within[2] = {};
+    double loss[2] = {};
+    for (int k = 0; k < 2; ++k) {
+        Delay d;
+        P p = plain(200.0f);
+        p.feedback = 1.0f;
+        p.diffuse = k ? 0.3f : 0.0f;
+        Buf L = whiteNoise(21 * kSr, 0.5f, 7), R = whiteNoise(21 * kSr, 0.5f, 8);
+        std::fill(L.begin() + kSr / 4, L.end(), 0.0f);
+        std::fill(R.begin() + kSr / 4, R.end(), 0.0f);
+        run(d, p, L, R);
+        const size_t s10 = 10 * static_cast<size_t>(kSr), s20 = 20 * static_cast<size_t>(kSr), len = 32768;
+        loss[k] = db(rms(L, s20, s20 + len) / rms(L, s10, s10 + len)) / 50.0;
+        const Spectrum s(L, s20, len);
+        const double top = *std::max_element(s.amp.begin(), s.amp.end());
+        within[k] = static_cast<int>(std::count_if(s.amp.begin(), s.amp.end(), [top](double a) { return a > 0.1 * top; }));
+    }
+    std::printf("  diffuse: feedback 1, the cuts open, seconds 10 to 20: %.3f dB a pass at Diffuse 0.3 (%.3f at 0); "
+                "%d bins within 20 dB of the top (%d at 0)\n", loss[1], loss[0], within[1], within[0]);
+    CHECK(loss[1] > -0.1);
+    CHECK(4 * within[1] < within[0]);
+}
+
 // No growth: Echo at feedback 1, Diffuse 1 and wow 1, every mode, a 1 s burst and then 120 s: the
 // last second's peak no higher than the peak of the second after the burst. With the cuts open:
 // the 20 Hz high-pass and the reads' interpolation are all that lose anything then, so whatever
@@ -1578,11 +1609,22 @@ void wetOnly() {
     }
 }
 
+// How far the Delay inside Echo reaches with p (Delay::reachSamples()): a Delay set the same way.
+size_t reachOf(const af::Echo::Params& p) {
+    Delay d;
+    P dp = p.delay;
+    dp.mix = 1.0f;
+    d.set(dp, tempo(120.0));
+    return static_cast<size_t>(d.reachSamples());
+}
+
 // A burst of `burstS` seconds of noise into Echo, then nothing for `totalS` in all: where the
 // return falls under -120 dBFS for good, where silent() starts saying so for good, and whether it
-// said so before the return's end (early) or still didn't half a second after it (late).
+// said so before the return had been quiet for the Delay's reach (early), or still didn't once it
+// had (late). Echo counts in 32-sample chunks and the test asks after each 128-sample block, so
+// "once it had" allows a chunk and a block more.
 struct Quieting {
-    size_t end = 0, from = 0;
+    size_t end = 0, from = 0, reach = 0;
     bool early = false, late = false;
 };
 Quieting quieting(af::Echo& e, const af::Echo::Params& p, double burstS, double totalS) {
@@ -1593,22 +1635,24 @@ Quieting quieting(af::Echo& e, const af::Echo::Params& p, double burstS, double 
     e.reset();
     const Return o = runEcho(e, p, x, y, tempo(120.0));
     Quieting q;
+    q.reach = reachOf(p);
     for (size_t i = 0; i < o.L.size(); ++i)
         if (std::max(std::fabs(o.L[i]), std::fabs(o.R[i])) > 1e-6f) q.end = i + 1;
     q.from = o.L.size();
     for (size_t b = 0; b < o.silent.size(); ++b) {
         const size_t blockEnd = std::min((b + 1) * 128, o.L.size());
-        q.early = q.early || (o.silent[b] && blockEnd <= q.end);
-        q.late = q.late || (!o.silent[b] && blockEnd >= q.end + static_cast<size_t>(kSr / 2));
+        q.early = q.early || (o.silent[b] && blockEnd < q.end + q.reach);
+        q.late = q.late || (!o.silent[b] && blockEnd >= q.end + q.reach + af::kChunk + 128);
         if (!o.silent[b]) q.from = o.L.size();
         else if (q.from == o.L.size()) q.from = blockEnd;
     }
     return q;
 }
 
-// silent(): the repeats of a 0.3 s burst at feedback 0.3 (Echo's defaults, free at 200 ms) and of
-// the same through Ping-Pong at 400 ms with Diffuse 1 and duck 1: silent within half a second of
-// the return falling under -120 dBFS, and not before. Never while feedback 1 holds the repeats,
+// silent(): the repeats of a 0.3 s burst at feedback 0.3 (Echo's defaults, free at 200 ms), of the
+// same through Ping-Pong at 400 ms with Diffuse 1 and duck 1, and at 1 s with feedback 0.2 (a reach
+// over a second): silent once the return has been under -120 dBFS for the Delay's reach, give or
+// take a chunk and a block (quieting()), and not before. Never while feedback 1 holds the repeats,
 // nor while a send comes in that duck 1 hides the repeats under. A new or reset Echo is silent.
 void silence() {
     af::Echo e;
@@ -1622,11 +1666,18 @@ void silence() {
     q.delay.timeMs = 400.0f;
     q.delay.diffuse = 1.0f;
     q.delay.duck = 1.0f;
-    std::printf("  echo: the return under -120 dBFS, then silent():");
-    for (const af::Echo::Params* c : {&p, &q}) {
-        const Quieting r = quieting(e, *c, 0.3, 8.0);
-        std::printf(" %.2f s, %.2f s;", r.end / af::kRate, r.from / af::kRate);
-        CHECK(r.end > static_cast<size_t>(0.3 * kSr) && r.end + static_cast<size_t>(kSr) < static_cast<size_t>(8.0 * kSr));
+    af::Echo::Params s = p;
+    s.delay.timeMs = 1000.0f;
+    s.delay.feedback = 0.2f;
+    const struct {
+        const af::Echo::Params* p;
+        double seconds;
+    } cases[] = {{&p, 8.0}, {&q, 8.0}, {&s, 12.0}};
+    std::printf("  echo: the return under -120 dBFS, the reach, then silent():");
+    for (const auto& c : cases) {
+        const Quieting r = quieting(e, *c.p, 0.3, c.seconds);
+        std::printf(" %.2f s + %.2f s, %.2f s;", r.end / af::kRate, r.reach / af::kRate, r.from / af::kRate);
+        CHECK(r.end > static_cast<size_t>(0.3 * kSr) && r.end + r.reach + static_cast<size_t>(kSr) < static_cast<size_t>(c.seconds * kSr));
         CHECK(!r.early && !r.late);
     }
     std::printf("\n");
@@ -1651,6 +1702,52 @@ void silence() {
 
     e.reset();
     CHECK(e.silent());
+}
+
+// Back after silent(): the engine stops running Echo once silent() says so, and runs it again when
+// a send brings something or silent() turns false. A longer time turns it false (the reach grows
+// past the quiet so far) while the lines still hold the burst of two seconds before, at ages the
+// longer time reads: without a fresh start it came back at about -50 dBFS. Here: a 0.3 s burst at
+// 200 ms, run until silent(), then skipped while the time is set to 2 s, then run again: nothing
+// comes out of 3 s of silence and the first 2 s after an impulse (not 1e-15), and the impulse's
+// repeat comes at the new time. Every mode, with Diffuse 0.3 and without.
+void resume() {
+    std::printf("  echo: back after silent(), a 2 s time, the loudest before the new repeat:");
+    for (float diffuse : {0.3f, 0.0f}) {
+        for (int mode = 0; mode < Delay::kModes; ++mode) {
+            af::Echo e;
+            af::Echo::Params p = af::initEcho();
+            p.delay.sync = false;
+            p.delay.timeMs = 200.0f;
+            p.delay.feedback = 0.3f;
+            p.delay.mode = mode;
+            p.delay.diffuse = diffuse;
+            const size_t burst = static_cast<size_t>(0.3 * kSr);
+            Buf x = whiteNoise(10 * kSr, 0.5f, 97), y = whiteNoise(10 * kSr, 0.5f, 98);
+            std::fill(x.begin() + static_cast<std::ptrdiff_t>(burst), x.end(), 0.0f);
+            std::fill(y.begin() + static_cast<std::ptrdiff_t>(burst), y.end(), 0.0f);
+            for (size_t pos = 0; pos < x.size() && !(pos > burst && e.silent()); pos += 128) {
+                e.set(p, tempo(120.0));
+                e.process(&x[pos], &y[pos], &x[pos], &y[pos], 128);
+            }
+            CHECK(e.silent());
+
+            p.delay.timeMs = 2000.0f;   // skipped: set() goes on, process() doesn't
+            for (int b = 0; b < 100; ++b) e.set(p, tempo(120.0));
+            CHECK(!e.silent());
+
+            const size_t later = 3 * static_cast<size_t>(kSr), time = 88200, depth = 43;   // wow 0.3: 42.3 samples
+            Buf L(later + time + 2000, 0.0f);
+            L[later] = 1.0f;
+            const Return o = runEcho(e, p, L, L, tempo(120.0));
+            const size_t before = later + time - depth - 2;
+            const float old = std::max(peak(o.L, 0, before), peak(o.R, 0, before));
+            std::printf(" %.3g", static_cast<double>(old));
+            CHECK(old < 1e-15f);
+            CHECK(std::max(peak(o.L, before, o.L.size()), peak(o.R, before, o.R.size())) > 0.05f);
+        }
+    }
+    std::printf("\n");
 }
 
 } // namespace
@@ -1685,6 +1782,7 @@ void echoTests() {
     diffuseZero();
     diffuseSmears();
     diffuseLoss();
+    diffuseComb();
     diffuseNoGrowth();
     diffuseMono();
     diffuseSmooth();
@@ -1695,6 +1793,7 @@ void echoTests() {
     echoIsDelay();
     wetOnly();
     silence();
+    resume();
 }
 
 } // namespace aft

@@ -42,15 +42,21 @@
 // but a pure delay of its length, so a coefficient of 0.65 x diffuse would put the repeats 60 ms
 // late a pass as soon as Diffuse left 0, and back on time with a jump when it landed there. A
 // blend of a signal and its allpassed self never boosts any frequency (|1 - d + d H| <= 1 when
-// |H| = 1), so feedback 1 never runs away: it holds the repeats at Diffuse 0 and 1, and between
-// them each pass loses up to 2.3 dB on average (at 0.5, 1.8 dB at 0.3) where the clear and the
-// diffused repeat meet out of phase. Diffused energy comes the allpasses' lengths later on average
-// (60 ms on L, 64 ms on R, a pass): heavily diffused repeats trail the beat. Mono's R takes L's
-// diffusion. At Diffuse 0 none of it runs, and the Delay is EffectForce's bit for bit; a change
-// glides across the chunk like the other ramps, and diffusers that start again (after reset() or
-// after Diffuse sat at 0) start empty, so nothing old comes back out of them. The allpasses run
-// four samples at a time (diffuseRun() in delay.cpp says how): about 4k ARM instructions a
-// 128-sample block on top of the Delay's own 24k (dsp/echo.h has the counts).
+// |H| = 1), so feedback 1 never runs away. At Diffuse 0 and 1 the blend loses nothing, and feedback
+// 1 holds the repeats. Between them a pass of noise loses up to 2.3 dB on average (at 0.5; 1.8 dB
+// at 0.3) where the clear and the diffused repeat meet out of phase, but nothing where they meet
+// in phase (H = 1): with a long feedback the tail narrows pass by pass to a comb of those
+// frequencies, and the comb holds. At feedback 1 it rings on, pitched, fading little faster than
+// the repeats at Diffuse 0 (with the cuts open, at Diffuse 0.3 and 200 ms, 0.04 dB a pass from 10 s
+// to 20 s against 1.8 dB on the first, and a seventh as much of the spectrum within 20 dB of its
+// peak as at Diffuse 0).
+// Diffused energy comes the allpasses' lengths later on average (60 ms on L, 64 ms on R, a pass):
+// heavily diffused repeats trail the beat. Mono's R takes L's diffusion. At Diffuse 0 none of it
+// runs, and the Delay is EffectForce's bit for bit; a change glides across the chunk like the other
+// ramps, and diffusers that start again (after reset() or after Diffuse sat at 0) start empty, so
+// nothing old comes back out of them. The allpasses run four samples at a time (diffuseRun() in
+// delay.cpp says how): about 4k ARM instructions a 128-sample block on top of the Delay's own 24k
+// (dsp/echo.h has the counts).
 //
 // Wow: a 0.5 Hz wow (+-3 ms at wow 1) and a 6 Hz flutter (+-0.2 ms) move the read times; R's
 // wow runs a quarter cycle ahead of L's and its flutter at 6.6 Hz. Under 12 ms the depth shrinks to
@@ -62,9 +68,9 @@
 // Only the wet ducks, not the loop, so the repeats bloom in the gaps.
 //
 // reset() is cheap (EffectForce's rack called it on the audio thread when the module came back on;
-// here the engine's reset and its guard do): the lines aren't cleared. Until they have been
-// written all the way round, each run of samples first zeroes the few old samples its taps can
-// reach, so nothing from before ever comes out.
+// here the engine's reset and its guard do, and Echo when it runs again after a silence): the lines
+// aren't cleared. Until they have been written all the way round, each run of samples first zeroes
+// the few old samples its taps can reach, so nothing from before ever comes out.
 #include "common.h"
 
 #include <vector>
@@ -101,8 +107,10 @@ public:
 
     // The longest anything takes to come out once it has gone in, or to go round once: the
     // longest read (either head, wherever its glide is going, at the wow's depth) and, while the
-    // diffusers run, the longer side's allpasses. In and out both quiet for this long: the
-    // Delay holds nothing (Echo's silent()).
+    // diffusers run, the longer side's allpasses. In and out both quiet for this long: nothing in
+    // the Delay can come out at these settings (Echo's silent()). It isn't empty: the lines keep
+    // what went in until it is written over, 8 s on, where a longer reach would read it, until
+    // reset() hides it (Echo resets the Delay when it runs again after a silence).
     int reachSamples() const { return reach_; }
     // The wet's gain now (the duck's), so Echo can tell a quiet wet from a ducked one.
     float duckGain() const { return duck_; }

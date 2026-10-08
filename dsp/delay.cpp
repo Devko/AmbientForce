@@ -191,6 +191,21 @@ constexpr float kApCoef = 0.65f;
 // How long the longest allpass rings until -60 dB (0.65 a lap: 17 laps of 24.9 ms), for the tail.
 constexpr int kApRing = 17 * kAp.len[1][kStages - 1];
 
+// The layout as the code takes it. A sub-run (a segment at most) reads and writes a ring in a
+// straight line from where it is, on into the copy past its end, so the copy is a segment long at
+// least. diffuseSides() then either brings back what went past the end or copies what went to the
+// start, never both, and an allpass never reads what the same sub-run wrote: every ring is at least
+// a segment longer than its copy (a stage added to kStages without its time, at length 0, fails
+// here too). kApRing takes R's last allpass for the longest of the eight.
+constexpr bool apLayoutHolds() {
+    for (int side = 0; side < 2; ++side)
+        for (int s = 0; s < kStages; ++s)
+            if (kAp.len[side][s] < kSeg + kApGuard || kAp.len[side][s] > kAp.len[1][kStages - 1]) return false;
+    return true;
+}
+static_assert(kApGuard >= kSeg, "a sub-run runs past a ring's end into its copy, never past the copy");
+static_assert(apLayoutHolds(), "every ring a segment longer than its copy, R's last the longest");
+
 float onePole(float hz) { return 1.0f - std::exp(-2.0f * kPi * hz / kRate); }
 float perSegment(float seconds) { return 1.0f - std::exp(-kSeg / (seconds * kRate)); }
 float perSample(float seconds) { return 1.0f - std::exp(-1.0f / (seconds * kRate)); }
@@ -457,7 +472,8 @@ void Delay::set(const Params& p, const Transport& t) {
     // their length, but an allpass holds the frequencies at its poles up to (1 + g) / (1 - g) =
     // 4.7 times as long, and the slowest of those set the end: a noise burst's -60 dB edge was
     // measured at most 1.7 times their length later a pass (at 1 to 100 ms, feedback 0.5 to 0.99).
-    // Between Diffuse 0 and 1 the repeats fall faster still (the blend loses a little a pass).
+    // Between Diffuse 0 and 1 the blend takes a little more off most of a repeat each pass, but
+    // nothing off the comb the tail narrows to (delay.h): the estimate counts on none of it.
     const bool diffuse = tgt_[DIFFUSE] > 0.0f || cur_[DIFFUSE] > 0.0f;
     const double longest = std::max({tgtL_, tgtR_, tL_, tR_, tBL_, tBR_}) + wowTgt_ * kWowDepth * (1.0f + kFlutter);
     if (fb != tailFb_ || longest != tailLongest_ || diffuse != tailDiffuse_) {
