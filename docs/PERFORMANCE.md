@@ -126,25 +126,35 @@ These figures replace the ones this table had through M1 (init chord 210k, drone
 `arm-icount`'s for the same code: the commit they were taken at (`9183bd8`) counts 196.7k, 161.7k,
 312.5k and 392.3k here. Today's code counts under 1% over that, for the synced breath and sways.
 **With M2's engine** (Task 8: Air, Weather, Echo and Memory wired in, all off in these cases), the
-same cases count 5.8k a block more: Memory recording the output (3.6k) and the new routing. M2's
-own cases play the engine itself, linked into the bench, until the plugin maps their parameters
+same cases count 4.7k to 4.8k a block more: Memory recording the output (3.6k) and the new routing.
+M2's own cases play the engine itself, linked into the bench, until the plugin maps their parameters
 (`worst engine`, the `worst` case played so, counts 0.4k under the plugin's):
 
 | Case (M2's engine) | ARM instructions per block | Its spike, counted by hand |
 |---|---|---|
-| init chord / drone / bloom 6x2 | 203.0k / 168.0k / 318.8k | |
-| worst | 400.3k | its re-strike's block 418.2k |
-| air | 149.0k | |
-| weather | 181.4k | |
-| worst m2 | 531.9k | its re-strike's block 570.0k (a Remember's 23k in it) |
-| air strike | 149.8k | the strike's block 359.8k, the ten after it 159.4k |
-| echo resume | 142.2k | the phrase's first block 216.1k, the 34 after it 200.3k, the silence 115.9k |
+| init chord / drone / bloom 6x2 | 202.0k / 167.0k / 317.7k | |
+| worst | 399.3k | its re-strike's block 417.2k |
+| air | 146.6k | |
+| weather | 180.9k | |
+| worst m2 | 528.7k | a re-strike's block with its Remember 586.7k; with the Remember refused 569.0k |
+| air strike | 147.5k | the strike's block 357.5k, the ten after it 156.9k |
+| echo resume | 141.2k | the phrase's first block 215.2k, the 34 after it 199.3k, the silence 114.9k |
 
-M2's worst case, part by part (the case less each part): Weather 60.5k, Air 38.4k, Echo 32.8k with
-its sends, and the 5.8k above; 137.4k over 0.0.2's worst, where the plan budgeted 128k. At the
-plan's 0.0268 points of p99 a thousand, 531.9k is **14.25%** (device: pending), under the 14.5% at
-which the plan's caps start. The spikes are a block or ten in 2 s: `afbench <so> --icount <case>
-690` less `689` is the re-strike's (or the strike's, or the phrase's) block alone.
+M2's worst case, part by part (the case less each part): Weather 60.9k (in Stretch, the dearer mode;
+59.7k in Cloud), Air 35.9k, Echo 32.4k with its sends, and the 4.8k above; 134.2k over 0.0.2's worst,
+where the plan budgeted 128k. At the plan's 0.0268 points of p99 a thousand, 528.7k is **14.17%**
+(device: pending), under the 14.5% at which the plan's caps start. The spikes are a block or ten in
+2 s: `afbench <so> --icount <case> 690` less `689` is the re-strike's (or the strike's, or the
+phrase's) block alone. In `worst m2` a Remember is asked with every re-strike and taken with every
+second one (Memory takes one after 2 s of recording, 88200 samples; the re-strikes are 88192 apart),
+the first at block 0: `1379` less `1378` is a re-strike with its Remember (the dearest block, one in
+4 s), `690` less `689` one whose Remember is refused.
+
+Task 8's review moved Air and Weather's pans and Echo sends into their own output pass, wrote Memory
+straight from the bus and gave Air its clock only when it renders: from the counts first made with
+Task 6 merged (`61642fe`: init chord 203.0k, worst 400.4k, air 149.0k, weather 181.5k, worst m2
+532.0k in Cloud) about 1k came off every case and 4.5k off M2's worst (Cloud for Cloud; Air's part
+38.4k to 35.9k, Weather's 60.5k to 59.7k).
 
 The strata's figures below and the oscillator's were counted before `arm-icount` too: compare them
 with each other, not with the table above.

@@ -150,13 +150,15 @@ pans glide in a straight line over 10 ms from the control step that finds them c
 sample carried from one piece to the next, so a MIDI event that cuts a piece short never makes one
 jump.
 
-**M2's strata and Echo** (`dsp/engine.h` has the routing): Air and Weather render into the buses as
-Ground and Bloom do, by their Listen and Split. Every stratum's dry (after its level, before its pan)
-goes into the Echo bus at its Echo send, gliding 10 ms; Echo runs while a sounding stratum sends to
-it or it isn't `silent()`, and its return goes into the mix and, at Echo Space, into Space's send.
-Sends to Echo are 0 where nobody would hear it, Air's and Weather's Space sends where Space's return
-is 0. Memory records its tap (the strata's dry, or the dry and the returns before the tilt) once the
-guard has looked. All of it is off in Init, which plays 0.0.2's samples.
+**M2's strata and Echo** (`dsp/engine.h` has the routing): Air and Weather render into the buses by
+their Listen and Split, each taking its own pan and Echo send in the same pass over its output.
+Every stratum's dry (after its level, before its pan) goes into the Echo bus at its Echo send,
+gliding 10 ms; Echo runs while a sounding stratum sends to it or it isn't `silent()`, and its return
+goes into the mix and, at Echo Space, into Space's send. Sends to Echo are 0 where nobody would hear
+it, Air's and Weather's Space sends where Space's return is 0. Memory records its tap (the strata's
+dry, or the dry and the returns before the tilt) straight from the bus, after Weather, and goes on
+recording across Stop and a long suspend; the guard and CC 120 start its ring afresh. All of it is
+off in Init, which plays 0.0.2's samples.
 
 **The output:** dry + Echo's and Space's returns → tilt → make-up and volume → the non-finite guard →
 limiter → Stop's fade.

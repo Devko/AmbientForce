@@ -131,7 +131,7 @@
 // well under a block's time but over Air's share. Air's generator plays from C4 up (a pluck there
 // costs 5.8k a strike), so only notes played to Air go that low. The bench's `air strike` (Task 8)
 // counts one through the engine: six plucks struck from C1 (24 to 33) cost 210.6k in their block
-// and 10.2k a block for the ten blocks their bursts take.
+// and 10.0k a block for the ten blocks their bursts take.
 //
 // Real-time rules: everything is fixed-size (the pluck's line, 8 KB a voice, and its burst's 120
 // samples). Nothing allocates, locks or throws after the constructor.
@@ -190,7 +190,18 @@ public:
     // Adds the dry into outL/outR and the send at spaceSend into sendL/sendR. n <= 128.
     void render(const TableSet& tables, float* outL, float* outR, float* sendL, float* sendR,
                 float spaceSend, int n);
-    int active() const;        // voices ringing above -90 dBFS (or fading for a steal)
+    // render()'s first half, for a caller that mixes the voices itself (Air: its level, pan and
+    // sends in one pass): n samples of the voices' dry into bus() from its sample `from` (from + n
+    // <= kMaxBlock), L and R side by side, those samples cleared first. The same control steps as
+    // render() of n. False with every voice free (the samples only cleared).
+    bool renderBus(const TableSet& tables, int from, int n);
+    const f2* bus() const { return bus_; }
+    // Voices ringing above -90 dBFS (or fading for a steal).
+    int active() const {
+        int n = 0;
+        for (const Voice& v : v_) n += v.stage != VS_FREE ? 1 : 0;
+        return n;
+    }
     VoiceView voice(int i) const;
 
 private:

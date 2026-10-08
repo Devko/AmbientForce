@@ -20,8 +20,9 @@
 //   (setChord(current(), root >= 0), given when it changes). Free: from the tonic chord, from the
 //   first note on. While Air is off (level 0, as in Init, or muted) it is given neither chords nor
 //   notes: it isn't rendered, a chord change would work its generator's candidates out for nothing
-//   (twelve times in a re-strike of six keys), and a note struck into it would ring from where it
-//   stood when Air was turned up. Turned up, it takes the chord there is then.
+//   (twelve times in a re-strike of six keys), and a note struck into it would wait to ring until
+//   Air was turned up. Air itself lets its voices go once its level has glided to 0 (air.h, the
+//   author's decision): turned up, it starts afresh, from the chord there is then.
 // - Weather, Notes: its gate open while any key is held (a finger, the pedal or Hold), To Key Chord
 //   on the held notes' pitch classes. Harmony: open while the harmony has a chord, on its pitch
 //   classes. Free: open from the first note until the engine sleeps, on the tonic chord's. Shut, it
@@ -66,7 +67,9 @@
 // at once. A note-on or the transport starting during a fade turns it round: the output comes
 // back up at kRecoverDbPerS. On Stop changed during a fade applies at once: Keep turns it round,
 // Cut resets. A longer suspend resets. CC 120 and reset() silence everything at once, forget the
-// harmony and the keys, and sleep.
+// harmony and the keys, and sleep. Memory goes on recording across all of these but CC 120 and the
+// guard (plan decision 10, the author's): after Stop's Fade or Cut, or a long suspend, the last 16 s
+// are still there, and a Remember takes what was played.
 //
 // The mix: Ground and Bloom each render their dry (panned by groundPan / bloomPan, equal power,
 // unity in the middle) into the dry bus and add their sends into the Space bus (Ground at
@@ -80,14 +83,17 @@
 // that cuts a piece short never makes one jump.
 //
 // M2's mix (all of it off in Patch{}, Init, which plays 0.0.2's samples bit for bit):
-// - Air and Weather render as Ground and Bloom do, panned by airPan / weatherPan, their Space sends
-//   at airSpace / weatherSpace (0 with Space's return at 0, as Ground's). Weather is given Bloom's
-//   dry peak over the piece for Duck (Bloom then renders into its own buffer), and its source: the
-//   plugin's (setWeatherSource), or with weather.memory Memory's remembered 16 s.
+// - Air and Weather render into the buses, panned by airPan / weatherPan, their Space sends at
+//   airSpace / weatherSpace (0 with Space's return at 0, as Ground's). Each takes its pan and Echo
+//   send itself (setMix(): the engine's pan law, gliding 10 ms in the stratum), in one pass over its
+//   own output, straight into the buses. Weather is given Bloom's dry peak over the piece for Duck
+//   (Bloom then renders into its own buffer), and its source: the plugin's (setWeatherSource), or
+//   with weather.memory Memory's remembered 16 s.
 // - Echo (plan decision 2): each stratum's dry, after its level and before its pan, goes into the
 //   Echo bus at its Echo send (groundEcho, bloomEcho, airEcho, weatherEcho), gliding as the pans do.
-//   Bloom's tail handoff isn't echoed (its boost is Space's). A stratum centred and sending nothing
-//   to Echo still renders straight into the bus; one that sends renders into its own buffer first.
+//   Bloom's tail handoff isn't echoed (its boost is Space's). Ground and Bloom, centred and sending
+//   nothing to Echo, still render straight into the bus; sending or panned they render into their own
+//   buffer first, and are mixed by 0.0.2's loop (a panned one bit for bit as it was).
 //   Echo runs while a stratum sounding sends to it, or while it isn't silent(); its return goes into
 //   the mix at echoReturn and into Space's send bus at echoSpace (both gliding). The sends to Echo
 //   are 0 where nobody would hear it (echoReturn 0, and echoSpace or Space's return 0), Echo's to
@@ -95,13 +101,15 @@
 //   engine skipped it, it is told for how long (Echo::rest()), so its duck has fallen as far as it
 //   would have: the first repeats after a pause come as loud as a Delay's run on through it
 //   (echo.h; the engine counts the gap on its sample count, idle and asleep alike).
-// - Memory records its tap once a piece has been through the guard (it never records a piece the
-//   guard zeroes): Strata, the four strata's dry sum as it is in the bus (panned), or Output, the
-//   dry and Echo's and Space's returns, before the tilt. It records only while the engine runs DSP
-//   (awake and not idle). remember() applies at the next control step's start, so Weather (on
-//   Memory) renders from the new ring in that very piece, before Memory's next write() records
-//   over the old one (memory.h asks for that order: Remember, Weather, write). Asleep no control
-//   step runs, and a Remember applies at the next render() at once.
+// - Memory records its tap straight from the bus: Strata, the four strata's dry sum as it is there
+//   (panned), or Output, the dry and Echo's and Space's returns, before the tilt. It takes a sample
+//   that isn't finite as 0, and the guard's reset then starts its ring afresh, so nothing a guard
+//   zeroes stays recorded. It records only while the engine runs DSP (awake and not idle).
+//   remember() applies at the next control step's start, so Weather (on Memory) renders from the
+//   new ring in that very piece, before Memory's next write() records over the old one (memory.h
+//   asks for that order: Remember, Weather, write; Memory writes after Weather). Asleep no
+//   control step runs, and a Remember applies at the next render() at once (after a Stop, on what
+//   was played).
 //
 // The output: dry + Echo's return x echoReturn + Space's x spaceReturn -> tilt -> make-up and
 // volume -> the non-finite guard -> limiter -> Stop's fade.
@@ -134,17 +142,19 @@
 // (MPC's 128) never cut one; only a MIDI event does, at its sample: the same events play the same
 // samples whatever the blocks (multiples of kChunk; checked with everything on). The strata, Echo
 // and Space are rendered a piece at a time: they read their tables (TableSet::get) and step their
-// own controls at every call. Before each piece Ground, Bloom and Air are given MPC's tempo and the
-// engine's one beat count at its first sample, for their synced cycles (Ground's Breath, the sways,
-// Air's synced loop): MPC's position while the transport plays, on from where it was at the tempo
-// while it is stopped. The count runs on the sample count, asleep or awake, so the strata keep to
-// one grid whether they sound or not.
+// own controls at every call. Before each piece Ground and Bloom are given MPC's tempo and the
+// engine's one beat count at its first sample, for their synced cycles (Ground's Breath, the sways),
+// and Air too before each piece it renders (its synced loop finds its place from it after a skip):
+// MPC's position while the transport plays, on from where it was at the tempo while it is stopped.
+// The count runs on the sample count, asleep or awake, so the strata keep to one grid whether they
+// sound or not.
 //
 // Idle: asleep, or awake with nothing to hear (Ground !audible(), Bloom with no voice in use, Air
 // neither audible() nor generating(), Weather !audible()), Echo::silent() and Space::silent():
 // render() writes zeros and runs no DSP. Each stratum may be skipped only by its own contract:
-// Ground and Air (their voices) stand still where they were, Weather holds no source while
-// !audible(), Echo and Space start afresh by themselves after a silence however it began. Air's
+// Ground stands still where it was, Air has let its voices go (its level at 0) or has none, Weather
+// holds no source while !audible(), Echo and Space start afresh by themselves after a silence
+// however it began. Air's
 // generator is rendered while it may strike (its level up, generating or looping), so a gap between
 // its notes doesn't stop it. Space can stay unsilent for minutes (Abyss at Decay 30), and a set()
 // that lengthens its reach can make it unsilent again with no input: it then simply runs that much
@@ -152,21 +162,23 @@
 //
 // Cost, as ARM instructions per 128-sample block (make arm-icount: qemu's count, the device's flags,
 // the plain build; M2's cases play the engine itself, tools/bench.cpp says why): asleep 1.2k. The
-// bench's M1 cases each count 5.8k more than in 0.0.2, with Air, Weather and Echo off: Memory
-// recording the output (3.6k, memory.h) and the new routing. Init holding a triad 203.0k; the worst
-// case (six voices of unison 2 with FM, every Ground partial and Body, Abyss with shimmer) 400.3k,
-// 418.2k in its re-strike's block. Air alone (Felt ringing in six voices at Decay 20, Density 60,
-// Loop on, Init's Space) 149.0k; Weather alone (16 grains, +12, To Key Chord, high-pass, tilt,
-// Duck) 181.4k. M2's worst case (`worst m2`: that worst case with Air and Weather so, every Echo
-// send open into Echo at Ping-Pong, wow, Diffuse and duck 1, feedback 0.9, Memory, a Remember with
-// each re-strike) 531.9k, 570.0k in its re-strike's block (the Remember 23k of it): Weather 60.5k,
-// Air 38.4k (its six keys struck again every 2 s, panned, sent to Echo), Echo 32.8k with the four
-// sends, each the worst case less it. 0.0.2's worst counted 394.5k: M2 adds 137.4k, where the plan
-// budgeted 128k. At its 0.0268 points of p99 a thousand that is 14.25 points against the 15% gate
-// (device: pending), under the 14.5 at which the plan's caps start (Bloom's unison 2 first).
+// bench's M1 cases each count 4.7k to 4.8k more than in 0.0.2, with Air, Weather and Echo off: Memory
+// recording the output (3.6k, memory.h) and the new routing. Init holding a triad 202.0k; the worst
+// case (six voices of unison 2 with FM, every Ground partial and Body, Abyss with shimmer) 399.3k,
+// 417.2k in its re-strike's block. Air alone (Felt ringing in six voices at Decay 20, Density 60,
+// Loop on, Init's Space) 146.6k; Weather alone (16 grains, Cloud, +12, To Key Chord, high-pass,
+// tilt, Duck) 180.9k. M2's worst case (`worst m2`: that worst case with Air and Weather so, Weather
+// in Stretch, every Echo send open into Echo at Ping-Pong, wow, Diffuse and duck 1, feedback 0.9,
+// Memory, a Remember asked with each re-strike) 528.7k: Weather 60.9k, Air 35.9k (its six keys
+// struck again every 2 s, panned, sent to Echo), Echo 32.4k with the four sends, each the worst case
+// less it. Its dearest block is a re-strike's that takes a Remember, 586.7k (one in 4 s: Memory
+// takes one 2 s of recording after the last, and the re-strikes are 8 samples sooner); one whose
+// Remember is refused 569.0k. 0.0.2's worst counted 394.5k: M2 adds 134.2k, where the plan budgeted
+// 128k. At its 0.0268 points of p99 a thousand that is 14.17 points against the 15% gate (device:
+// pending), under the 14.5 at which the plan's caps start (Bloom's unison 2 first).
 // Spikes, counted by hand (docs/PERFORMANCE.md): six Kalimba plucks struck from C1 cost 210.6k in
-// their block and 10.2k a block for the ten their bursts take (airvoices.h: bounded, Air's share
-// being for ringing); a phrase after a silence 15.8k more in its first block than in the blocks
+// their block and 10.0k a block for the ten their bursts take (airvoices.h: bounded, Air's share
+// being for ringing); a phrase after a silence 15.9k more in its first block than in the blocks
 // after (Echo's fresh start, echo.h, and the note's).
 //
 // Real-time rules: everything is allocated in the constructor (Space's buffers, about 870 KB; Echo's
@@ -321,6 +333,8 @@ public:
     // Remember (the plugin's button, before a block): Memory's ring recording becomes Weather's
     // remembered source at the next control step (Memory::remember(); refused within 2 s of the
     // last, with under 0.5 s recorded, or while Keep writes: Info says whether the generation moved).
+    // Audio thread only: it sets a plain flag the render reads (Task 10 calls it from
+    // processReplacing, never from setParameter).
     void remember() { rememberAsked_ = true; }
 
     void render(float* outL, float* outR, int n);   // overwrites n samples (any n)
@@ -369,7 +383,8 @@ private:
     void routeAir();                         // Air's chord and whether it generates, by its Listen
     void routeWeather();                     // Weather's gate and its To Key chord, by its Listen
     void control();                          // a control step
-    void clearDsp();                         // every DSP state, silent (reset() and the guard)
+    void clearDsp(bool restartMemory);       // every DSP state, silent (reset(), sleep() and the guard)
+    void sleep(bool restartMemory);          // silent, the keys and the harmony forgotten, asleep
     void settle();                           // the output where it settles: glides landed, filters empty
     bool piece(float* outL, float* outR, int n, uint64_t at);   // n <= kChunk samples from `at`; false: not finite
     void applyRemember();                    // a Remember asked for
@@ -440,8 +455,8 @@ private:
     // The mix and the output.
     float groundSend_ = 0.0f, bloomSend_ = 0.0f, airSend_ = 0.0f, weatherSend_ = 0.0f;   // into Space
     Glide ret_;                              // the Space return
-    Glide gPanL_, gPanR_, bPanL_, bPanR_, aPanL_, aPanR_, wPanL_, wPanR_;   // the strata's pans
-    Glide gEcho_, bEcho_, aEcho_, wEcho_;    // the strata's Echo sends
+    Glide gPanL_, gPanR_, bPanL_, bPanR_;    // Ground's and Bloom's pans (Air and Weather glide their own)
+    Glide gEcho_, bEcho_;                    // Ground's and Bloom's Echo sends
     Glide echoRet_, echoSpace_;              // Echo's return into the mix, and its send into Space
     Glide volume_;                           // the volume as a gain
     float tilt_ = 0.0f;                      // where the tilt glides, from tiltNow_
@@ -454,10 +469,8 @@ private:
     // A piece's buffers: each stratum's dry when it is wanted apart (panned, sent to Echo, Bloom's
     // for Duck), the Space sends (and Space's wet in them), the Echo bus (and Echo's wet in it).
     float gL_[kChunk] = {}, gR_[kChunk] = {}, bL_[kChunk] = {}, bR_[kChunk] = {};
-    float aL_[kChunk] = {}, aR_[kChunk] = {}, wL_[kChunk] = {}, wR_[kChunk] = {};
     float sendL_[kChunk] = {}, sendR_[kChunk] = {};
     float echoL_[kChunk] = {}, echoR_[kChunk] = {};
-    float tapL_[kChunk] = {}, tapR_[kChunk] = {};   // Memory's tap, written once the guard has looked
 };
 
 // Process-wide, summed over every instance, for the soak (tools/soak.cpp), which only sees the

@@ -650,25 +650,28 @@ void AirVoices::renderBlock(const TableSet& tables, float* outL, float* outR, fl
     if (n <= 0) return;
     spaceSend = clampParam(spaceSend, 0.0f, 1.0f, 0.0f);
     if (send_ < 0.0f) send_ = spaceSend;
-    bool any = false;
-    for (const Voice& v : v_) any = any || v.stage != VS_FREE;
-    if (!any) {
-        send_ = spaceSend;
-        return;
+    if (active() > 0) {
+        renderBus(tables, 0, n);
+        mixOut(bus_, outL, outR, sendL, sendR, send_, (spaceSend - send_) / static_cast<float>(n), n);
     }
-    clearBus(bus_, n);
+    send_ = spaceSend;
+}
+
+bool AirVoices::renderBus(const TableSet& tables, int from, int n) {
+    if (n <= 0) return false;
+    clearBus(bus_ + from, n);
+    if (active() == 0) return false;
     const Wavetable& felt = tables.get(TB_FELT_PIANO);
     for (Voice& v : v_) {
-        for (int o = 0; o < n && v.stage != VS_FREE;) {
-            int m = std::min(kChunk, n - o);
+        for (int o = from; o < from + n && v.stage != VS_FREE;) {
+            int m = std::min(kChunk, from + n - o);
             if (v.stage == VS_STEAL) m = std::min(m, v.stealLeft);
             if (v.age < v.firstPass) m = std::min(m, v.firstPass - v.age);   // a long burst's first pass ends a step
             voiceStep(v, felt, o, m);
             o += m;
         }
     }
-    mixOut(bus_, outL, outR, sendL, sendR, send_, (spaceSend - send_) / static_cast<float>(n), n);
-    send_ = spaceSend;
+    return true;
 }
 
 void AirVoices::voiceStep(Voice& v, const Wavetable& felt, int o, int m) {
@@ -798,12 +801,6 @@ void AirVoices::pluckBurst(Voice& v, f2 dP, f2* bus, int m) {
         v.env = std::max(v.env, v.noise.peak * exp2Fast(v.holdLog2 * static_cast<float>(end)));
     }
     v.level = v.env * v.vel;
-}
-
-int AirVoices::active() const {
-    int n = 0;
-    for (const Voice& v : v_) n += v.stage != VS_FREE ? 1 : 0;
-    return n;
 }
 
 AirVoices::VoiceView AirVoices::voice(int i) const {

@@ -37,10 +37,14 @@
 //   worst engine `worst`, through the engine
 //   worst m2     `worst engine` and everything of M2 at its dearest (the plan's budget): Air as in
 //                `air` (Harmony; its six keys above Split struck again with each re-strike), Weather as
-//                in `weather` (Harmony, ducking under Bloom), every Echo send open into Echo at
-//                Ping-Pong, wow 1, Diffuse 1, duck 1, feedback 0.9 (never silent), its return into the
-//                mix and Space, Air and Weather panned (their own buffers), Memory recording the output
-//                and a Remember with every re-strike (Memory takes one every 2 s at most)
+//                in `weather` but in Stretch, the dearer mode (Harmony, ducking under Bloom), every
+//                Echo send open into Echo at Ping-Pong, wow 1, Diffuse 1, duck 1, feedback 0.9 (never
+//                silent), its return into the mix and Space, Air and Weather panned, Memory recording
+//                the output and a Remember asked with every re-strike. Memory takes one after 2 s of
+//                recording (88200 samples) and the re-strikes are 88192 apart, so every second one
+//                is taken: the first at the warm-up's end (block 0), then blocks 1378, 2756 and so on;
+//                `--icount "worst m2" 1379` less `1378` is a re-strike with its Remember, 689's one
+//                refused
 //   air strike   a low chord struck on Air (Ground and Bloom muted): Kalimba on the notes, six keys
 //                from C1 struck again every kRestrikeBlocks: each strike builds six bursts of a
 //                period at note 24 and over (airvoices.h: Air's spikes, bounded, above its share)
@@ -300,7 +304,8 @@ af::Patch enginePatch(int c) {
         p.weather.level = 0.5f * 0.5f;
         p.weather.listen = c == C_WEATHER ? LI_FREE : LI_HARMONY;
         p.weather.grains = Weather::kGrains;
-        p.weather.mode = WM_CLOUD;
+        // The plan's case (weather) is Cloud; M2's worst takes Stretch, the dearer (1.2k here).
+        p.weather.mode = c == C_WORST_M2 ? WM_STRETCH : WM_CLOUD;
         p.weather.pitch = 12.0f;
         p.weather.toKey = TK_CHORD;
         p.weather.hpHz = 200.0f;
@@ -418,7 +423,7 @@ void playCase(int c, int blocks, Key&& key, Remember&& remember, Render&& render
             keys(key, c, chord, false);
             chord ^= 1;
             keys(key, c, chord, true);
-            if (c == C_WORST_M2) remember();   // as often as Memory takes one (2 s)
+            if (c == C_WORST_M2) remember();   // taken every second time (the header says why)
         }
         if (c == C_ECHO_RESUME && at > 0 && at % kRestrikeBlocks == 0) keys(key, c, 0, true);
         if (c == C_ECHO_RESUME && at % kRestrikeBlocks == kPhraseBlocks) keys(key, c, 0, false);

@@ -231,6 +231,31 @@ private:
     int left_ = 0;
 };
 
+// A gain that moves in a straight line to its target over `samples` from wherever it is when the
+// target changes, taken on a piece at a time (AmbientForce's: Air's and Weather's pans and Echo
+// sends, which glide as the engine's own gains do). A step under half an ulp of `now` lands, as one
+// past the target does.
+struct LineGlide {
+    float now = 0.0f, to = 0.0f, step = 0.0f;
+    void aim(float target, int samples) {
+        if (target == to) return;
+        to = target;
+        step = (to - now) / static_cast<float>(samples);
+    }
+    void land() {
+        now = to;
+        step = 0.0f;
+    }
+    float move(int n) {   // on by n samples; where it is then
+        if (now != to) {
+            const float x = now + step * static_cast<float>(n);
+            now = x == now || (step > 0.0f ? x >= to : x <= to) ? to : x;
+        }
+        return now;
+    }
+    bool still() const { return now == to; }
+};
+
 // --- interpolation and delay lines --------------------------------------------------------------
 
 // 4-point, 3rd-order Hermite between x0 (t = 0) and x1 (t = 1).

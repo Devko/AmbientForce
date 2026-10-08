@@ -1330,20 +1330,30 @@ uint16_t pcsOf(const std::vector<int>& notes) {
 // Free: from the first note, on the tonic chord (Gravity 1: its tones only); nothing before it.
 void testAirListen() {
     std::printf("== engine: Air by Listen\n");
-    {
+    // Four seeds, each a minute after the release cut in thirds: strikes in every third, and as many
+    // in all as a Poisson process at 30 a minute gives but once in a million (10..60).
+    for (uint32_t seed : {1u, 2u, 3u, 4u}) {
         Engine e(sines());
+        e.seed(seed);
         Patch p = airOnly();
         p.air.gen.density = 30.0f;
         e.setPatch(p);
         e.noteOn(60, 100);
         render(e, 1.0);
         e.noteOff(60);
-        const uint64_t at = e.info().airStrikes;
-        const Out o = render(e, 60.0);
-        const uint64_t n = e.info().airStrikes - at;
-        std::printf("  Harmony, memory Forever: %llu strikes in the 60 s after the release (density 30)\n",
-                    static_cast<unsigned long long>(n));
-        CHECK(n >= 20 && n <= 45 && rms(tail(o.L, 10.0)) > 1e-3);
+        uint64_t at = e.info().airStrikes, all = 0;
+        bool every = true;
+        Out o;
+        for (int third = 0; third < 3; ++third) {
+            o = render(e, 20.0);
+            const uint64_t k = e.info().airStrikes - at;
+            at += k;
+            all += k;
+            every = every && k > 0;
+        }
+        std::printf("  Harmony, memory Forever, seed %u: %llu strikes in the minute after the release (density 30)\n",
+                    seed, static_cast<unsigned long long>(all));
+        CHECK(every && all >= 10 && all <= 60 && rms(tail(o.L, 10.0)) > 1e-4);
     }
     {
         Engine e(sines());
@@ -1536,6 +1546,24 @@ void testStrataMix() {
         z.noteOff(69);
         render(z, 3.0);
         CHECK(z.info().idle);
+        // The Echo send: Echo's repeats (Init's Echo, a dotted quarter, feedback 0.45) ring on after
+        // the stratum has stopped; with the send at 0, nothing does.
+        double echoed[2] = {};
+        for (int k = 0; k < 2; ++k) {
+            Engine s(sines());
+            Patch ps = patch(1.0f);
+            ps.echoReturn = 1.0f;
+            (weather ? ps.weatherEcho : ps.airEcho) = k ? 1.0f : 0.0f;
+            start(s, ps);
+            render(s, weather ? 2.5 : 0.3);   // Weather past its gate's fade in
+            s.noteOff(69);
+            render(s, weather ? 2.2 : 0.7);
+            CHECK(!(weather ? s.info().weatherAudible : s.air().audible()));
+            echoed[k] = rms(render(s, 1.0).L);
+        }
+        std::printf("  %s's Echo send: %.1f dBFS RMS of repeats after it stopped (send 0: %.1f)\n", name, db(echoed[1]),
+                    db(echoed[0]));
+        CHECK(echoed[0] == 0.0 && echoed[1] > 1e-5);
     }
 }
 
@@ -2020,23 +2048,66 @@ Patch everything() {
 }
 
 // The same events play the same samples whatever MPC's block sizes (multiples of the control step:
-// the events cut the pieces at their samples, the blocks never), everything on, a Remember and a
-// source change among the events; and blocks off the grid (1, 33, 77, 100) play it finite, under the
-// ceiling, the Remember taken.
+// the events cut the pieces at their samples, the blocks never), everything on, and forty events at
+// odd samples: notes (over and under Split), the pedal, four Remembers, Weather onto Memory and off
+// it, its source dropped and given back, Air's and Weather's mutes, pans and Echo sends gliding,
+// their Listen, Split, Memory's tap, the levels. Blocks off the grid (1, 33, 77, 100) play it finite,
+// under the ceiling, every Remember taken.
 void testBlocks() {
-    std::printf("== engine: everything on, MPC's block sizes\n");
+    std::printf("== engine: everything on, forty events, MPC's block sizes\n");
     struct Ev {
         size_t at;
-        int what;   // a note on (> 0) or off (< 0); 1000 Remember; 1001 Weather onto Memory; 1002 no source
+        void (*act)(Engine&, Patch&);
     };
-    const Ev ev[] = {{0, 60},     {1000, 64},   {4410, 90},      {33333, -64}, {44101, 67},   {70001, 88},
-                     {90000, -60}, {110000, 1000}, {110007, 1001}, {140000, 59}, {150003, 1002}, {170000, -67}};
+    const Ev ev[] = {
+        {0, [](Engine& e, Patch&) { e.noteOn(60, 100); }},
+        {1001, [](Engine& e, Patch&) { e.noteOn(64, 90); }},
+        {4411, [](Engine& e, Patch&) { e.noteOn(90, 110); }},   // over Split: Air's
+        {9999, [](Engine& e, Patch&) { e.sustain(true); }},
+        {20001, [](Engine& e, Patch&) { e.noteOff(64); }},      // held by the pedal
+        {26463, [](Engine& e, Patch&) { e.remember(); }},
+        {30001, [](Engine& e, Patch& p) { p.airPan = -0.7f; e.setPatch(p); }},
+        {33333, [](Engine& e, Patch& p) { p.weatherEcho = 0.9f; e.setPatch(p); }},
+        {40007, [](Engine& e, Patch&) { e.sustain(false); }},
+        {44101, [](Engine& e, Patch&) { e.noteOn(67, 100); }},
+        {50003, [](Engine& e, Patch& p) { p.weather.memory = true; e.setPatch(p); }},
+        {55555, [](Engine& e, Patch& p) { p.air.mute = true; e.setPatch(p); }},
+        {61111, [](Engine& e, Patch& p) { p.groundPan = 0.5f; p.bloomEcho = 0.0f; e.setPatch(p); }},
+        {66667, [](Engine& e, Patch& p) { p.weather.mute = true; e.setPatch(p); }},
+        {70001, [](Engine& e, Patch&) { e.noteOn(88, 100); }},  // to a muted Air: nothing
+        {72229, [](Engine& e, Patch& p) { p.air.mute = false; e.setPatch(p); }},
+        {77777, [](Engine& e, Patch& p) { p.weather.mute = false; e.setPatch(p); }},
+        {80003, [](Engine& e, Patch&) { e.setWeatherSource(nullptr); }},
+        {85009, [](Engine& e, Patch& p) { p.weather.memory = false; e.setPatch(p); }},   // no source: fades
+        {90001, [](Engine& e, Patch&) { e.noteOff(60); }},
+        {95003, [](Engine& e, Patch&) { e.setWeatherSource(noiseSource()); }},
+        {99991, [](Engine& e, Patch& p) { p.air.listen = af::LI_NOTES; e.setPatch(p); }},
+        {105001, [](Engine& e, Patch& p) { p.split = -1; e.setPatch(p); }},
+        {108003, [](Engine& e, Patch&) { e.noteOn(72, 80); }},   // Air on the notes: struck
+        {116967, [](Engine& e, Patch&) { e.remember(); }},
+        {120011, [](Engine& e, Patch& p) { p.weather.listen = af::LI_NOTES; e.setPatch(p); }},
+        {125003, [](Engine& e, Patch& p) { p.memoryTap = af::MT_OUTPUT; e.setPatch(p); }},
+        {130001, [](Engine& e, Patch& p) { p.weatherPan = 0.8f; p.airEcho = 0.0f; e.setPatch(p); }},
+        {140009, [](Engine& e, Patch&) { e.noteOff(67); }},
+        {150001, [](Engine& e, Patch& p) { p.air.level = 0.2f; p.weather.level = 0.3f; e.setPatch(p); }},
+        {160007, [](Engine& e, Patch&) { e.noteOn(62, 100); }},
+        {170003, [](Engine& e, Patch& p) { p.weather.memory = true; e.setPatch(p); }},
+        {180001, [](Engine& e, Patch& p) { p.groundEcho = 0.9f; e.setPatch(p); }},
+        {205211, [](Engine& e, Patch&) { e.remember(); }},
+        {210011, [](Engine& e, Patch& p) { p.split = 70; e.setPatch(p); }},
+        {215009, [](Engine& e, Patch&) { e.noteOn(79, 100); }},   // over Split again
+        {230003, [](Engine& e, Patch& p) { p.memoryTap = af::MT_STRATA; e.setPatch(p); }},
+        {260001, [](Engine& e, Patch&) { e.noteOff(62); }},
+        {293443, [](Engine& e, Patch&) { e.remember(); }},
+        {300007, [](Engine& e, Patch&) { e.noteOff(72); }},
+    };
     const auto play = [&](const std::vector<int>& sizes, bool& remembered) {
         Engine e(sines());
         e.seed(77);
-        e.setPatch(everything());
+        Patch patch = everything();
+        e.setPatch(patch);
         e.setWeatherSource(noiseSource());
-        const size_t n = static_cast<size_t>(4.5 * af::kRate);
+        const size_t n = static_cast<size_t>(7.0 * af::kRate);
         Out o{Buf(n), Buf(n)};
         Clock t;
         t.playing = true;
@@ -2044,17 +2115,7 @@ void testBlocks() {
         // plugin cuts them: an event never moves the blocks after it.
         size_t pos = 0, next = 0, k = 0, blockEnd = 0;
         while (pos < n) {
-            for (; next < sizeof ev / sizeof *ev && ev[next].at <= pos; ++next) {
-                const int w = ev[next].what;
-                if (w == 1000) e.remember();
-                else if (w == 1001 || w == 1002) {
-                    Patch p = everything();
-                    p.weather.memory = w == 1001;
-                    e.setPatch(p);
-                    if (w == 1002) e.setWeatherSource(nullptr);
-                } else if (w > 0) e.noteOn(w, 100);
-                else e.noteOff(-w);
-            }
+            for (; next < sizeof ev / sizeof *ev && ev[next].at <= pos; ++next) ev[next].act(e, patch);
             if (pos == blockEnd) {   // a block: the transport once, at its first sample
                 blockEnd += static_cast<size_t>(sizes[k++ % sizes.size()]);
                 e.setTransport(t.bpm, static_cast<double>(pos) / af::kRate * t.bpm / 60.0, t.playing, true);
@@ -2065,7 +2126,7 @@ void testBlocks() {
             e.render(&o.L[pos], &o.R[pos], static_cast<int>(m));
             pos += m;
         }
-        remembered = e.info().remembered && e.info().airStrikes > 3 && e.info().echoRuns > 0;
+        remembered = e.info().memoryGeneration == 4 && e.info().airStrikes > 3 && e.info().echoRuns > 0;
         return o;
     };
     bool r1 = false, r2 = false, r3 = false, r4 = false;
@@ -2111,6 +2172,145 @@ void testEverythingLoud() {
     CHECK(peakOf(hit) == 0.0f && finiteOut(hit) && e.info().guards == 1 && af::guardTrips() - trips == 1);
     const Out after = render(e, 2.0);
     CHECK(finiteOut(after) && e.info().guards == 1 && peakOf(after) > 0.0f);
+}
+
+// The author's decision: Memory keeps recording across Stop and a suspend. Played 4 s, then Stop
+// (Fade, after its fade has put the engine to sleep; Cut; Keep) or a long suspend: a Remember is
+// taken (the generation moves) and the remembered source holds what was played. A guard trip and
+// CC 120 (reset()) start the ring afresh: a Remember then is refused (under 0.5 s recorded).
+void testMemoryAcrossStop() {
+    std::printf("== engine: Memory across Stop and a suspend\n");
+    enum Way { FADE, CUT, KEEP, SUSPEND, GUARD, CC120 };
+    const char* names[] = {"Fade", "Cut", "Keep", "a long suspend", "a guard trip", "CC 120"};
+    for (int way = FADE; way <= CC120; ++way) {
+        Engine e(defaults());
+        Patch p = dry();
+        p.onStop = way == CUT ? af::OS_CUT : way == KEEP ? af::OS_KEEP : af::OS_FADE;
+        e.setPatch(p);
+        Clock t;
+        t.playing = true;
+        e.noteOn(60, 100);
+        render(e, 4.0, &t);
+        switch (way) {
+            case FADE:
+            case CUT:
+            case KEEP:
+                t.playing = false;
+                render(e, way == FADE ? Engine::kFadeS + 0.5 : 0.1, &t);
+                break;
+            case SUSPEND:
+                e.suspend();
+                e.resume(2.0);
+                break;
+            case GUARD:
+                e.testInjectNaN();
+                render(e, 128.0 / af::kRate, &t);
+                break;
+            default: e.reset(); break;
+        }
+        const bool asleep = !e.info().awake;
+        e.remember();
+        render(e, 0.01, &t);
+        const bool taken = e.info().memoryGeneration == 1;
+        double level = 0.0;
+        if (const af::GrainSource* s = e.memory().remembered()) {
+            double sum = 0.0;
+            for (int f = 0; f < s->frames; ++f) sum += static_cast<double>(s->level[0][2 * f]) * s->level[0][2 * f];
+            level = std::sqrt(sum / std::max(1, s->frames)) * s->gain;
+        }
+        std::printf("  %-14s %s; Remember %s, %.1f dBFS RMS remembered\n", names[way], asleep ? "asleep" : "awake",
+                    taken ? "taken" : "refused", db(level));
+        if (way == GUARD || way == CC120) CHECK(!taken && !e.info().remembered);
+        else CHECK(taken && level > 1e-3 && asleep == (way != KEEP));
+    }
+}
+
+// The author's decision: Air lets its voices go once its level has glided to 0 (or is set to 0 where
+// it already is). Two Felt notes at Decay 20, Air muted a second in: within 10 ms (and a step) none
+// rings, in Info or the meter's count; unmuted a minute later, nothing comes back. And a note struck
+// as the level was raised, before any render, goes when the level is set back to 0 there.
+void testAirLetsGo() {
+    std::printf("== engine: Air lets its voices go at level 0\n");
+    Engine e(sines());
+    Patch p = airOnly();
+    p.air.listen = af::LI_NOTES;
+    p.air.voice.sound = af::AS_FELT;
+    p.air.voice.decayS = 20.0f;
+    e.setPatch(p);
+    e.noteOn(72, 100);
+    e.noteOn(76, 100);
+    e.noteOff(72);
+    e.noteOff(76);
+    const Out on = render(e, 1.0);
+    CHECK(e.info().airActive == 2 && e.activeVoices() == 2 && rms(tail(on.L, 0.2)) > 1e-3);
+    p.air.mute = true;
+    e.setPatch(p);
+    render(e, 0.011);
+    CHECK(e.info().airActive == 0 && e.activeVoices() == 0);
+    render(e, 60.0);
+    p.air.mute = false;
+    e.setPatch(p);
+    const Out back = render(e, 1.0);
+    std::printf("  unmuted after a minute: %.1f dBFS peak\n", db(peakOf(back)));
+    CHECK(peakOf(back) == 0.0f && e.info().airActive == 0);
+    // Set to 0 where the level already is.
+    p.air.level = 0.0f;
+    e.setPatch(p);
+    render(e, 0.1);
+    p.air.level = 0.5f;
+    e.setPatch(p);
+    e.noteOn(74, 100);   // struck: the level is on its way up
+    CHECK(e.info().airActive == 1);
+    p.air.level = 0.0f;
+    e.setPatch(p);       // back to 0 before any render: nothing to glide down
+    CHECK(e.info().airActive == 0);
+}
+
+// The Remember's order, caught where it acts: a Remember applies at a control step's start, so the
+// first grain Weather (on Memory) starts after the generation moves starts before Memory has written
+// anything into its new ring (fill() 0). Applied after Weather's render, Memory would write the piece
+// first. Three Remembers 2.1 s apart under a cloud of 8 grains of 30 ms on Memory (8 of the 16
+// voices free, so a grain starts at the source change itself: every voice busy fading would hold
+// the new grains back a step or two).
+void testRememberBeforeWeather() {
+    std::printf("== engine: a Remember before Weather renders\n");
+    Engine e(sines());
+    Patch p = bloomSine();
+    p.weatherPan = -1.0f;
+    p.weather.memory = true;
+    p.weather.sizeS = 0.03f;
+    p.weather.grains = 8;
+    p.weather.width = 0.0f;
+    e.setPatch(p);
+    e.noteOn(69, 100);
+    render(e, 3.0);
+    e.remember();
+    render(e, 0.01);
+    struct Watch {
+        const Engine* e;
+        uint32_t gen;
+        int checked, bad;
+    } w{&e, e.info().memoryGeneration, 0, 0};
+    e.testWeatherHook(
+        [](void* ctx, float) {
+            Watch& x = *static_cast<Watch*>(ctx);
+            const Engine::Info i = x.e->info();
+            if (i.memoryGeneration == x.gen) return;
+            x.gen = i.memoryGeneration;
+            ++x.checked;
+            if (i.memoryFill != 0.0f) ++x.bad;
+        },
+        &w);
+    p.weather.level = 1.0f;
+    p.bloomPan = 1.0f;
+    e.setPatch(p);
+    render(e, 2.1);
+    for (int k = 0; k < 3; ++k) {
+        e.remember();
+        render(e, 2.1);
+    }
+    std::printf("  %d Remembers seen at a grain's start, %d with the new ring already written\n", w.checked, w.bad);
+    CHECK(w.checked == 3 && w.bad == 0 && e.info().memoryGeneration == 4);
 }
 
 // reset() and the guard reset Air, Weather and Echo: silent at once, nothing left ringing.
@@ -2174,6 +2374,9 @@ void engineTests() {
     testBlocks();
     testEverythingLoud();
     testResets();
+    testMemoryAcrossStop();
+    testAirLetsGo();
+    testRememberBeforeWeather();
     testCost();
 }
 
