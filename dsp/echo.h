@@ -33,9 +33,14 @@
 // The duck's envelope is kept across the fresh start. It follows the send, quiet since before the
 // silence began, so it has fallen on its own, and it still says how loud the send has just been:
 // emptied, it let a quiet phrase's first repeats after a short silence through 15 dB louder than a
-// Delay that ran on. Where the engine skipped Echo it holds what it had when the skipping
-// began: fallen (250 ms release) for the reach at least, where a Delay run on through a long
-// pause would have let it fall to nothing.
+// Delay that ran on. Where the engine skipped Echo it holds what it had when the skipping began
+// (fallen for the reach, by its 250 ms release), where a Delay run on through the pause would have
+// let it fall further: the next phrase's repeats then swell in from under the duck. After a loud
+// burst at 20 ms with duck 1 (resumeDuck()'s setting), a quiet phrase's first repeats come 11 dB
+// under a Delay run on after a 0.5 s pause (6.5 dB under 320 ms on), 15.6 dB under after 5 s
+// (8 dB at 320 ms). Kept because a swell is gentler than the jump an emptied envelope gives. A
+// question for Task 8: the engine knows when and for how long it skipped Echo, and could tell it,
+// so the envelope falls as far as it would have.
 //
 // Wet only from the start: an Echo that has never been set() plays initEcho() at mix 1. Drive and
 // Glide stay at initEcho()'s (0 and Tape): M2 doesn't show them.

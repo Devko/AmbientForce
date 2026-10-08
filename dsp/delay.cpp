@@ -259,9 +259,11 @@ void zeroSpan(float* line, int s, int e) {
 // Until a line has been written all the way round since reset(), it still holds what came before.
 // Before a run of n samples at times te + d .. te + n d, zero what of that its taps can reach
 // (ages past `written`; those written since stay): a few dozen samples, and only until the lines
-// have been written past the reach (run() and diffuseRun() stop calling it there: no tap reads
-// further back), instead of 1.4 MB at once or a check on every tap. Ages from..to sit at positions
-// w - to .. w - from, across the line's end at most once (ages run 1 .. kLen - 1): one fill or two.
+// have been written past the reach, instead of 1.4 MB at once or a check on every tap. run() and
+// diffuseRun() stop calling it there: set() works the reach out as the furthest any tap reads
+// until the next set(), the segment under way included, and each set() moves it. Ages from..to sit
+// at positions w - to .. w - from, across the line's end at most once (ages run 1 .. kLen - 1): one
+// fill or two.
 void hideOld(float* line, int w, int written, double te, double d, int n) {
     const double lo = std::min(te + d, te + n * d), hi = std::max(te + d, te + n * d);
     // At sample k a tap of age a reads what is k samples younger now; ages under 1 are written
@@ -506,10 +508,17 @@ void Delay::set(const Params& p, const Transport& t) {
         tail_ = fb >= 1.0f ? kTailForever : static_cast<int>(std::min(tail, static_cast<double>(kTailForever)));
     }
 
-    // Once round: the furthest either head reads (its glide's start or end, the wow at its deeper
-    // amount while it glides), the Hermite kernel's reach and a segment's glide, and the diffusers
-    // while they run or may start.
-    const double heads = std::max({tgtL_, tgtR_, tL_, tR_, tBL_, tBR_}) + std::max(wowTgt_, wowAmt_) * kWowDepth * (1.0f + kFlutter);
+    // Once round: the furthest any read goes until the next set(), and the diffusers while they run
+    // or may start. The heads only move towards their targets from here, the wow no deeper than the
+    // deeper of its amounts: their glides' starts and ends with that wow, and the reads where they
+    // are now. Those count because tL_ and the rest are already a segment's glide on: the rest of
+    // the segment under way still reads from where it is (teL_ ...), in a glide down above all of
+    // them by 1.2% of the way left to go, which a set() between segments (a block cut off the
+    // 32-sample grid) would otherwise leave out. Then the Hermite kernel's reach, and a segment
+    // more. Every read stays under this until the next set(): Echo's silent() waits for it, and
+    // hideOld() stops at it.
+    const double heads = std::max(std::max({tgtL_, tgtR_, tL_, tR_, tBL_, tBR_}) + std::max(wowTgt_, wowAmt_) * kWowDepth * (1.0f + kFlutter),
+                                  std::max({teL_, teR_, teBL_, teBR_}));
     reach_ = static_cast<int>(heads) + 3 + kSeg + (diffuse ? kApLongest : 0);
 }
 
@@ -664,7 +673,7 @@ void Delay::run(float* L, float* R, int n) {
     const double dbl = teBStepL_, dbr = teBStepR_;
     Lr gainA = {gain_[0], gain_[1]}, gainB = {gain_[2], gain_[3]};
     const Lr sGainA = {gainStep_[0], gainStep_[1]}, sGainB = {gainStep_[2], gainStep_[3]};
-    if (written < std::min(kLen, reach_)) {   // hideOld(): past the reach no tap sees old samples
+    if (written < std::min(kLen, reach_)) {   // hideOld(): past the reach no tap reads before the restart
         hideOld(bl, w, written, teL, dl, n);
         hideOld(br, w, written, teR, dr, n);
         if (Fading) {
@@ -793,7 +802,7 @@ void Delay::diffuseRun(float* L, float* R, int n) {
     const double dbl = teBStepL_, dbr = teBStepR_;
     Lr gainA = {gain_[0], gain_[1]}, gainB = {gain_[2], gain_[3]};
     const Lr sGainA = {gainStep_[0], gainStep_[1]}, sGainB = {gainStep_[2], gainStep_[3]};
-    if (written < std::min(kLen, reach_)) {   // hideOld(): past the reach no tap sees old samples
+    if (written < std::min(kLen, reach_)) {   // hideOld(): past the reach no tap reads before the restart
         hideOld(bl, w, written, teL, dl, n);
         hideOld(br, w, written, teR, dr, n);
         if (Fading) {

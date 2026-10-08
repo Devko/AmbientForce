@@ -71,9 +71,9 @@
 // here the engine's reset and its guard do, and Echo its clear() when it runs again after a
 // silence): the lines aren't cleared. Until they have been written past the reach (reachSamples()),
 // each run of samples first zeroes the few old samples its taps can reach, in one or two fills, so
-// nothing from before ever comes out: past it no tap reads anything older than the restart, until
-// a set() moves the reach further, and then the zeroing goes on (at most until the lines have been
-// written all the way round, 8 s).
+// nothing from before ever comes out. Past it no tap reads anything older than the restart until
+// the next set(), which works the reach out again: if that takes it past what has been written, the
+// zeroing goes on (at most until the lines have been written all the way round, 8 s).
 #include "common.h"
 
 #include <vector>
@@ -112,13 +112,14 @@ public:
     void process(float* L, float* R, int n);
     int tailSamples() const { return tail_; }
 
-    // The longest anything takes to come out once it has gone in, or to go round once: the
-    // longest read (either head, wherever its glide is going, at the wow's depth) and, while the
-    // diffusers run, the longer side's allpasses. In and out both quiet for this long: nothing in
-    // the Delay can come out at these settings (Echo's silent()). It isn't empty: the lines keep
-    // what went in until it is written over, 8 s on, where a longer reach would read it, until
-    // reset() or clear() hides it (Echo clears the Delay when it runs again after a silence). No
-    // read goes further back than this, so reset()'s zeroing stops here too.
+    // The longest anything takes to come out once it has gone in, or to go round once, as set()
+    // last worked it out: the furthest any read goes until the next set() (either head, where it
+    // reads now and wherever its glide is going, at the wow's depth) and, while the diffusers run,
+    // the longer side's allpasses. In and out both quiet for this long: nothing in the Delay can
+    // come out before a set() moves it (Echo's silent()). It isn't empty: the lines keep what went
+    // in until it is written over, 8 s on, where a longer reach would read it, until reset() or
+    // clear() hides it (Echo clears the Delay when it runs again after a silence). Until the next
+    // set() no read goes further back than this, so reset()'s zeroing stops here too.
     int reachSamples() const { return reach_; }
     // The wet's gain now (the duck's), so Echo can tell a quiet wet from a ducked one.
     float duckGain() const { return duck_; }

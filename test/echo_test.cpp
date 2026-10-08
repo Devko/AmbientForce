@@ -4,9 +4,10 @@
 // limiter, ducking, wow depth, and robustness (feedback 1 for 30 s, extremes, random jumps, NaN
 // input, block sizes, reset, the tail). Then AmbientForce's own: Diffuse (0 is EffectForce's Delay
 // bit for bit, the smear, what a pass loses, the comb a long tail narrows to, no growth, Mono,
-// clicks, block sizes, odd values, the tail) and dsp/echo.h (wet only, silent() within the Delay's
-// reach, nothing old when it runs again after a silence, however the silence began, and the duck's
-// envelope kept across it).
+// clicks, block sizes, odd values, the tail), nothing old after a reset (two Delays whose lines
+// differ only before it), and dsp/echo.h (wet only, silent() within the Delay's reach, nothing old
+// when it runs again after a silence, however the silence began, and the duck's envelope kept
+// across it).
 #include "signal.h"
 #include "../dsp/delay.h"
 #include "../dsp/echo.h"
@@ -1534,6 +1535,174 @@ void diffuseTail() {
     std::printf("\n");
 }
 
+// --- reset() hides what came before: the two-Delay oracle ------------------------------------
+
+// Two Delays given the same settings, and since a reset() the same input; before it A took loud
+// noise and B silence. All they hold is the same but what their lines held before the reset (the
+// diffusers start empty, the envelope and the cuts at 0), so any difference in their output, to
+// the bit, is a read of an old sample: what reset()'s zeroing (hideOld()) is there to stop, until
+// the lines have been written past the reach, which must bound every read until the next set().
+// The noise fills the lines all the way round (9 s): reset() writes from the start again, so a
+// read past what has been written since lands at the lines' far end.
+struct Twins {
+    Delay a, b;
+    float worst = 0.0f;
+    Buf al, ar, bl, br;
+    void set(const P& p, af::Transport t) {
+        a.set(p, t);
+        b.set(p, t);
+    }
+    void reset() {
+        a.reset();
+        b.reset();
+    }
+    // n samples of loud noise into A and silence into B, set() before every block of 128.
+    void apart(const P& p, af::Transport t, int n, uint32_t& seed) {
+        for (int pos = 0; pos < n; pos += 128) {
+            const int m = std::min(128, n - pos);
+            al = whiteNoise(m, 0.5f, seed++);
+            ar = whiteNoise(m, 0.5f, seed++);
+            bl.assign(static_cast<size_t>(m), 0.0f);
+            br = bl;
+            set(p, t);
+            a.process(al.data(), ar.data(), m);
+            b.process(bl.data(), br.data(), m);
+        }
+    }
+    // The same n samples into both; their largest difference so far.
+    float run(const float* l, const float* r, int n) {
+        al.assign(l, l + n);
+        ar.assign(r, r + n);
+        bl = al;
+        br = ar;
+        a.process(al.data(), ar.data(), n);
+        b.process(bl.data(), br.data(), n);
+        for (size_t i = 0; i < al.size(); ++i) worst = std::max({worst, std::fabs(al[i] - bl[i]), std::fabs(ar[i] - br[i])});
+        return worst;
+    }
+};
+
+// The reach holds while a time glides down. 2 s, the lines full (A loud, B silent), reset(); then
+// silence with a set() before every block, and t0 after the reset the time goes to 50 ms: the
+// heads glide down across what has been written since. set() works the reach out from heads
+// already a segment's glide on, while the rest of the segment under way, which a block cut off the
+// 32-sample grid leaves to run after a set(), still reads from where it was: set() must count it
+// (blocks of 1 and 33 samples; without it old samples came out at up to 0.55 at most of these
+// moments). And steady: 500 ms, wow 0.3, Diffuse 0 and 0.3, blocks of 33, the lines written past
+// the reach, where the zeroing stops. Not a sample apart.
+void reachHolds() {
+    uint32_t seed = 601;
+    Twins full;
+    full.apart(plain(2000.0f), {}, 9 * kSr, seed);
+    full.reset();
+    const Buf z(64, 0.0f);
+    int tries = 0, apart = 0;
+    for (int n : {1, 33}) {
+        for (float wow : {0.0f, 0.3f}) {
+            for (int k = 0; k < 14; ++k) {
+                const size_t downAt = static_cast<size_t>((0.05 + 0.137 * k) * kSr);
+                Twins q = full;
+                P p = plain(2000.0f);
+                p.wow = wow;
+                for (size_t pos = 0; pos < downAt + static_cast<size_t>(kSr / 2); pos += static_cast<size_t>(n)) {
+                    if (pos >= downAt) p.timeMs = 50.0f;
+                    q.set(p, {});
+                    q.run(z.data(), z.data(), n);
+                }
+                ++tries;
+                apart += q.worst > 0.0f;
+            }
+        }
+    }
+    int steady = 0;
+    for (float diffuse : {0.0f, 0.3f}) {
+        Twins q = full;
+        P p = plain(500.0f);
+        p.wow = 0.3f;
+        p.diffuse = diffuse;
+        for (int pos = 0; pos < 2 * kSr; pos += 33) {
+            q.set(p, {});
+            q.run(z.data(), z.data(), 33);
+        }
+        steady += q.worst > 0.0f;
+    }
+    std::printf("  reach: a 2 s time down to 50 ms, blocks of 1 and 33: %d of %d moments read old samples; steady: %d of 2\n",
+                apart, tries, steady);
+    CHECK(apart == 0);
+    CHECK(steady == 0);
+}
+
+// The same over random settings, in short rounds from the twins just reset (the lines filled apart
+// once, a copy each round), where the zeroing lives: 0.05 to 0.6 s of free and synced times (to
+// 8 s), spread, mode, wow, Diffuse, feedback, Tape and Fade, duck, changed one at a time, blocks of
+// 1..300 samples, set() before most of them, phrases and gaps. Not a sample apart. A broad net
+// rather than a sharp one: a zeroing stopped 40 samples short of the reach came apart in 3 of these
+// rounds (it can only show where a read sits within those samples just as the zeroing stops);
+// reachHolds() is the sharp one for the glide.
+void reachFuzz() {
+    uint32_t s = 1234, seed = 701;
+    const auto u = [&s]() {
+        s = s * 1664525u + 1013904223u;
+        return static_cast<float>(s >> 8) / 16777216.0f;
+    };
+    Twins full;
+    full.apart(plain(2000.0f), {}, 9 * kSr, seed);
+    full.reset();
+    P p = plain(500.0f);
+    af::Transport t;
+    const auto randomize = [&]() {
+        const float k = u();
+        if (k < 0.35f) {
+            p.sync = false;
+            p.timeMs = std::exp(u() * std::log(2000.0f));
+        } else if (k < 0.5f) {
+            p.sync = true;
+            p.divBeats = af::kDelayDivs[static_cast<int>(u() * af::kNumDelayDivs) % af::kNumDelayDivs].beats;
+            t.bpm = 30.0 + u() * 170.0;
+        } else if (k < 0.6f) {
+            p.spread = u() - 0.5f;
+        } else if (k < 0.68f) {
+            p.mode = static_cast<int>(u() * 3.0f) % 3;
+        } else if (k < 0.78f) {
+            p.wow = u() < 0.3f ? 0.0f : u();
+        } else if (k < 0.86f) {
+            p.diffuse = u() < 0.4f ? 0.0f : u();
+        } else if (k < 0.92f) {
+            p.feedback = u();
+        } else if (k < 0.96f) {
+            p.glide = u() < 0.5f ? Delay::TAPE : Delay::FADE;
+        } else {
+            p.duck = u();
+        }
+    };
+    const int rounds = 200;
+    long total = 0;
+    float l[300], r[300], worst = 0.0f;
+    int apart = 0;
+    for (int round = 0; round < rounds; ++round) {
+        Twins q = full;
+        for (int k = 0; k < 4; ++k) randomize();
+        const long end = total + static_cast<long>((0.05f + 0.55f * u()) * kSr);
+        while (total < end) {
+            if (u() < 0.03f) randomize();
+            const int n = 1 + static_cast<int>(u() * 300.0f) % 300;
+            const float level = u() < 0.5f ? 0.0f : 0.3f;
+            for (int i = 0; i < n; ++i) {
+                l[i] = level * (u() - 0.5f);
+                r[i] = level * (u() - 0.5f);
+            }
+            if (u() < 0.9f) q.set(p, t);
+            q.run(l, r, n);
+            total += n;
+        }
+        apart += q.worst > 0.0f;
+        worst = std::max(worst, q.worst);
+    }
+    std::printf("  reach: random settings, %d rounds, %.1f s: %d rounds read old samples, the largest difference %g\n",
+                rounds, static_cast<double>(total) / kSr, apart, static_cast<double>(worst));
+    CHECK(apart == 0);
+}
+
 // --- Echo: the send / return -------------------------------------------------------------------
 
 // What Echo returned for the sends, and silent() after each block.
@@ -1889,6 +2058,8 @@ void echoTests() {
     diffuseOdd();
     diffuseRestart();
     diffuseTail();
+    reachHolds();
+    reachFuzz();
     echoIsDelay();
     wetOnly();
     silence();
