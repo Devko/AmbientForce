@@ -2,11 +2,13 @@
 // in time, the same twice, at -20 dBFS RMS, no step at its loop's seam on any level, its channels
 // decorrelated; Night's crickets on C and out of the loop's crossfade, Surf's two swells. Memory:
 // FrameDecimator against StereoDecimator; what it records (the sine 6 dB down at level 0, the slower
-// levels holding it), a full ring read back from its oldest frame, the guard, the seam a dip at
-// every level, Remember's rules (the gap, the least recorded, pinning, the generation, the old ring
-// no longer a source, the recording afresh after it), reset() keeping what is remembered, the same
-// bits whatever the pieces, odd input, Weather playing a remembered ring across its end, pins from
-// another thread, nothing allocating. Needs no plugin: make test-module M=fields.
+// levels holding it), a full ring read back from its oldest frame (its origin a multiple of 4 and
+// not), the levels aligned at every origin, the guard, the seam a dip at every level, Remember's
+// rules (the gap, the least recorded, the frames rounded down to a multiple of 4, pinning, the
+// generation, the old ring no longer a source, the recording afresh after it), reset() keeping
+// what is remembered, the same bits whatever the pieces, odd input, Weather playing a remembered
+// ring across its end (at every level, against the same source unrolled), pins from another
+// thread, nothing allocating. Needs no plugin: make test-module M=fields.
 #include "check.h"
 #include "signal.h"
 #include "../dsp/fields.h"
@@ -17,20 +19,13 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cfloat>
 #include <cstdio>
 #include <cstring>
 #include <limits>
 #include <memory>
 #include <thread>
 #include <vector>
-
-#if defined(__SANITIZE_ADDRESS__)
-// The sanitizer runtime's (sanitizer/allocator_interface.h, which GCC doesn't install): hooks its
-// allocator calls on every allocation and free.
-extern "C" int __sanitizer_install_malloc_and_free_hooks(void (*malloc_hook)(const volatile void*, size_t),
-                                                         void (*free_hook)(const volatile void*));
-#define FIELDS_COUNTS_ALLOCS 1
-#endif
 
 namespace aft {
 namespace {
@@ -222,8 +217,8 @@ void testSurfSwells() {
 // --- Memory ---------------------------------------------------------------------------------------
 
 // FrameDecimator (halfband.h, Memory's) is StereoDecimator's filter: over noise, in runs of every
-// length from 1 to 13 pairs (its six at a time and what is left over), the same frames to within
-// float rounding (bit for bit where the compiler fuses alike), and both empty again after reset().
+// length from 1 to 13 pairs (its six at a time and what is left over), the same frames bit for bit,
+// into another buffer and in place (as Memory runs it); and empty again after reset().
 void testFrameDecimator() {
     std::printf("== memory: FrameDecimator is StereoDecimator's filter\n");
     const int frames = 2 * 6000;
@@ -239,10 +234,18 @@ void testFrameDecimator() {
         const int n = std::min(run, frames / 2 - p);
         fd.process(&x[static_cast<size_t>(4 * p)], n, &b[static_cast<size_t>(2 * p)]);
     }
+    af::FrameDecimator inPlace;
+    Buf c(static_cast<size_t>(frames)), t(52);
+    for (int p = 0, run = 1; p < frames / 2; p += run, run = run % 13 + 1) {
+        const int n = std::min(run, frames / 2 - p);
+        std::copy(&x[static_cast<size_t>(4 * p)], &x[static_cast<size_t>(4 * (p + n))], t.begin());
+        inPlace.process(t.data(), n, t.data());
+        std::copy(t.begin(), t.begin() + 2 * n, &c[static_cast<size_t>(2 * p)]);
+    }
     float worst = 0.0f;
-    for (size_t i = 0; i < a.size(); ++i) worst = std::max(worst, std::fabs(a[i] - b[i]));
+    for (size_t i = 0; i < a.size(); ++i) worst = std::max({worst, std::fabs(a[i] - b[i]), std::fabs(a[i] - c[i])});
     std::printf("  largest difference %.2g\n", static_cast<double>(worst));
-    CHECK(worst <= 1e-6f);
+    CHECK(worst == 0.0f);
     fd.reset();
     float out[2] = {1.0f, 1.0f};
     const float zeros[4] = {};
@@ -302,49 +305,51 @@ void testRecords() {
         }
 }
 
-// A full ring (check 5): 20 s of a ramp written (in pieces of 77, crossing the ring's end anywhere):
-// the source is 16 s, its origin the oldest of the last 16 s, and level 0 read on from origin is
-// the ramp's last 16 s exactly (but for the seam's fades); each channel its own.
+// A full ring (check 5): 20 s of a ramp written (in pieces of 77, crossing the ring's end anywhere),
+// and 20 s and 3 frames (the origin no multiple of 4): the source is 16 s, its origin the oldest of
+// the last 16 s, and level 0 read on from origin is the ramp's last 16 s exactly (but for the
+// seam's fades); each channel its own; the guard at every level.
 void testFullRing() {
     std::printf("== memory: a full ring\n");
-    Memory m;
-    const int n = 20 * kSec;
-    Buf L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
-    const auto ramp = [](int i) { return static_cast<float>(i % 65536 - 32768) / 16384.0f; };   // every 16-bit value in turn
-    for (int i = 0; i < n; ++i) {
-        L[static_cast<size_t>(i)] = ramp(i);
-        R[static_cast<size_t>(i)] = ramp(i + 12345);
-    }
-    feed(m, L, R, 77);
-    CHECK(m.fill() == 1.0f);
-    CHECK(m.remember());
-    const af::GrainSource* s = m.remembered();
-    CHECK(s && s->ready());
-    if (!s) return;
-    CHECK(s->frames == Memory::kFrames && s->origin == n % Memory::kFrames);
-    int wrong = 0;
-    for (int j = Memory::kSeamFade; j < Memory::kFrames - Memory::kSeamFade; ++j) {
-        const int f = (s->origin + j) % Memory::kFrames, i = n - Memory::kFrames + j;
-        if (s->level[0][2 * f] != i % 65536 - 32768 || s->level[0][2 * f + 1] != (i + 12345) % 65536 - 32768) ++wrong;
-    }
-    std::printf("  origin %d, %d frames out of place\n", s->origin, wrong);
-    CHECK(wrong == 0);
-    // The guard: the ring's first frames again past its end, at every level.
-    for (int k = 0; k < af::GrainSource::kLevels; ++k) {
-        const int len = s->frames >> k;
-        CHECK(std::memcmp(s->level[k] + 2 * len, s->level[k], sizeof(int16_t) * 2 * af::GrainSource::kGuard) == 0);
+    for (const int n : {20 * kSec, 20 * kSec + 3}) {
+        Memory m;
+        Buf L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+        const auto ramp = [](int i) { return static_cast<float>(i % 65536 - 32768) / 16384.0f; };   // every 16-bit value in turn
+        for (int i = 0; i < n; ++i) {
+            L[static_cast<size_t>(i)] = ramp(i);
+            R[static_cast<size_t>(i)] = ramp(i + 12345);
+        }
+        feed(m, L, R, 77);
+        CHECK(m.fill() == 1.0f);
+        CHECK(m.remember());
+        const af::GrainSource* s = m.remembered();
+        CHECK(s && s->ready());
+        if (!s) continue;
+        CHECK(s->frames == Memory::kFrames && s->origin == n % Memory::kFrames);
+        int wrong = 0;
+        for (int j = Memory::kSeamFade; j < Memory::kFrames - Memory::kSeamFade; ++j) {
+            const int f = (s->origin + j) % Memory::kFrames, i = n - Memory::kFrames + j;
+            if (s->level[0][2 * f] != i % 65536 - 32768 || s->level[0][2 * f + 1] != (i + 12345) % 65536 - 32768) ++wrong;
+        }
+        std::printf("  origin %d, %d frames out of place\n", s->origin, wrong);
+        CHECK(wrong == 0);
+        // The guard: the ring's first frames again past its end, at every level.
+        for (int k = 0; k < af::GrainSource::kLevels; ++k) {
+            const int len = s->frames >> k;
+            CHECK(std::memcmp(s->level[k] + 2 * len, s->level[k], sizeof(int16_t) * 2 * af::GrainSource::kGuard) == 0);
+        }
     }
 }
 
-// The seam (check 6), full and not yet full: at every level, across the seam (newest frame against
-// oldest) the largest step is no larger than the sine's own elsewhere (the 5 ms fades: a dip, never
-// a step), and the two frames meeting there are silent.
+// The seam (check 6), full (its origin a multiple of 4 and not) and not yet full: at every level,
+// across the seam (newest frame against oldest) the largest step is no larger than the sine's own
+// elsewhere (the 5 ms fades: a dip, never a step), and the two frames meeting there are silent.
 void testSeam() {
     std::printf("== memory: the seam\n");
-    for (const int seconds : {3, 20}) {
+    for (const int frames : {3 * kSec, 20 * kSec, 20 * kSec + 3}) {
         Memory m;
         const float a = 0.6f;
-        feed(m, sine(441.7, seconds * kSec, a), 100);
+        feed(m, sine(441.7, frames, a), 100);
         CHECK(m.remember());
         const af::GrainSource* s = m.remembered();
         if (!s) continue;
@@ -356,17 +361,19 @@ void testSeam() {
                 for (size_t i = n - reach; i < n; ++i) across.push_back(x[i]);
                 for (size_t i = 0; i < reach; ++i) across.push_back(x[i]);
                 const float own = maxStep(x, n / 3, 2 * n / 3), at = maxStep(across);
-                if (ch == 0) std::printf("  %2d s, level %d: across the seam %.4f, the sine's own %.4f\n", seconds, k, at, own);
+                if (ch == 0)
+                    std::printf("  %7d frames, level %d: across the seam %.4f, the sine's own %.4f\n", frames, k, at, own);
                 CHECK(at <= own * 1.02f);
                 CHECK(x.front() == 0.0f && x.back() == 0.0f);
             }
     }
 }
 
-// Remember's rules (check 7): under 0.5 s recorded refused (22049 frames no, 22050 yes); within 2 s
-// of recording since the last refused (88199 no, 88200 yes); pinned refused, then allowed once
-// unpinned; pin() with nothing remembered false (holding no pin); the generation counts only the
-// Remembers that happened; the ring recording after one is empty.
+// Remember's rules (check 7): under 0.5 s recorded refused (22049 frames no, 22050 yes, a source of
+// 22048: rounded down to a multiple of 4); within 2 s of recording since the last refused (88199
+// no, 88200 yes); pinned refused, then allowed once unpinned; pin() with nothing remembered false
+// (holding no pin); the generation counts only the Remembers that happened; the ring recording
+// after one is empty.
 void testRules() {
     std::printf("== memory: Remember's rules\n");
     Memory m;
@@ -378,6 +385,9 @@ void testRules() {
     feed(m, Buf(x.begin(), x.begin() + 1));
     CHECK(m.remember());          // ...so this one isn't refused
     CHECK(m.generation() == 1 && m.fill() == 0.0f);
+    // 22050 frames held, 2 over a multiple of 4: the source is the 22048 under it (ready, so Weather
+    // plays it).
+    CHECK(m.remembered() && m.remembered()->ready() && m.remembered()->frames == 22048);
     feed(m, Buf(x.begin(), x.begin() + 88199));
     CHECK(!m.remember());         // within 2 s of the last
     CHECK(m.generation() == 1);
@@ -444,9 +454,9 @@ void testReset() {
     CHECK(sameSource(*m.remembered(), *ref2->remembered()));
 }
 
-// The same bits whatever the pieces: a ring not full (3.3 s) and one gone round (17.3 s), written in
-// pieces of 1, 33, 77, 100, 128 and at random (1..300, more than a block too), remember the same
-// source as pieces of 128 do, every level, the guard too.
+// The same bits whatever the pieces: a ring not full (3.3 s, its frames rounded down to a multiple of
+// 4) and one gone round (17.3 s), written in pieces of 1, 33, 77, 100, 128 and at random (1..300,
+// more than a block too), remember the same source as pieces of 128 do, every level, the guard too.
 void testPieces() {
     std::printf("== memory: the same whatever the pieces\n");
     for (const double seconds : {3.3, 17.3}) {
@@ -454,6 +464,9 @@ void testPieces() {
         Buf L = whiteNoise(n, 0.5f, 5), R = sine(1234.5, n, 0.7f);
         for (int i = 0; i < n; ++i) L[static_cast<size_t>(i)] += 0.8f * std::sin(0.001f * static_cast<float>(i));
         const auto ref = fresh(L, R);
+        const af::GrainSource* r = ref->remembered();
+        CHECK(r && r->ready() && r->frames == std::min(n - n % 4, Memory::kFrames));
+        if (seconds < 4.0) CHECK(n % 4 != 0);   // (so the rounding is tried)
         int same = 0, tried = 0;
         for (const int piece : {1, 33, 77, 100, 0}) {
             Memory m;
@@ -462,13 +475,13 @@ void testPieces() {
             ++tried;
             if (m.remembered() && sameSource(*m.remembered(), *ref->remembered())) ++same;
         }
-        std::printf("  %.1f s: %d of %d the same\n", seconds, same, tried);
+        std::printf("  %.1f s (%d frames, a source of %d): %d of %d the same\n", seconds, n, r ? r->frames : 0, same, tried);
         CHECK(same == tried);
     }
 }
 
-// Odd input: NaN and infinities never reach the decimators (a sine after them is recorded at every
-// level as from fresh), an infinity is full scale, -0 is 0.
+// Odd input: NaN and infinities are 0 and never reach the decimators (a sine after them is recorded
+// at every level as from fresh); a finite sample however large is full scale; -0 is 0.
 void testOddInput() {
     std::printf("== memory: odd input\n");
     const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
@@ -481,6 +494,8 @@ void testOddInput() {
     R[1001] = -inf;
     L[2000] = -0.0f;
     R[2000] = 1e30f;
+    L[3000] = FLT_MAX;   // (too large to scale: still full scale)
+    R[3000] = -FLT_MAX;
     Memory m;
     feed(m, L, R, 33);
     const Buf tone = sine(500.0, 2 * kSec, 0.5f);
@@ -488,9 +503,10 @@ void testOddInput() {
     CHECK(m.remember());
     const af::GrainSource* s = m.remembered();
     if (!s) return;
-    CHECK(s->level[0][2 * 1000] == 32767 && s->level[0][2 * 1001 + 1] == -32768 && s->level[0][2 * 2000] == 0);
+    CHECK(s->level[0][2 * 1000] == 0 && s->level[0][2 * 1001 + 1] == 0 && s->level[0][2 * 2000] == 0);
     CHECK(s->level[0][2 * 2000 + 1] == 32767);
-    CHECK(s->level[0][2 * 1067] == 0 && s->level[0][2 * 1067 + 1] == 32767);   // 97 x 11: NaN, and inf
+    CHECK(s->level[0][2 * 3000] == 32767 && s->level[0][2 * 3000 + 1] == -32768);
+    CHECK(s->level[0][2 * 1067] == 0 && s->level[0][2 * 1067 + 1] == 0);   // 97 x 11: NaN, and inf
     for (int k = 0; k < af::GrainSource::kLevels; ++k) {
         const Buf x = inOrder(*s, k, 0);
         const size_t from = static_cast<size_t>((kSec + 4000) >> k), to = x.size() - static_cast<size_t>(1000 >> k);
@@ -542,6 +558,115 @@ void testWeatherReadsMemory() {
     }
 }
 
+// The levels line up where Weather reads them (after the review's probe): a 60 Hz sine (cosine on R)
+// recorded, level k read at (origin + p - its offset) / 2^k, linearly, is level 0 at origin + p to
+// within 8 of the sine's 13107 (one frame off at level 1 would be about 220), in a full ring of
+// every origin mod 4, one exactly full, and rings not yet full.
+void testLevelsAligned() {
+    std::printf("== memory: the levels aligned at every origin\n");
+    const double kTau = 3.19, off[3] = {0.0, 1.0 - kTau, 3.0 - 3.0 * kTau};   // weather.cpp's kOffset
+    const auto at = [](const af::GrainSource& s, int k, double q, int ch) {
+        const int n = s.frames >> k;
+        q = std::fmod(q, n);
+        if (q < 0.0) q += n;
+        const int i = static_cast<int>(q);
+        const double f = q - i, a = s.level[k][2 * i + ch], b = s.level[k][2 * ((i + 1) % n) + ch];
+        return a + f * (b - a);
+    };
+    double worst = 0.0;
+    int tried = 0;
+    for (const int total : {20 * kSec, 20 * kSec + 1, 20 * kSec + 2, 20 * kSec + 3, Memory::kFrames, 3 * kSec,
+                            3 * kSec + 1}) {
+        Memory m;
+        feed(m, sine(60.0, total, 0.8f), sine(60.0, total, 0.8f, 0.5 * kPi));
+        if (!m.remember()) continue;
+        const af::GrainSource& s = *m.remembered();
+        ++tried;
+        double err = 0.0;
+        for (int p = 5000; p < 15000; ++p)
+            for (int ch = 0; ch < 2; ++ch) {
+                const double ref = at(s, 0, s.origin + p, ch);
+                for (int k = 1; k < af::GrainSource::kLevels; ++k)
+                    err = std::max(err, std::fabs(at(s, k, (s.origin + p - off[k]) / (1 << k), ch) - ref));
+            }
+        std::printf("  %6d frames, origin %6d: at most %.1f off\n", total, s.origin, err);
+        worst = std::max(worst, err);
+    }
+    CHECK(tried == 7 && worst <= 8.0);
+}
+
+// A source's levels turned so that its frame origin - origin % 4 comes first (the origin then
+// origin % 4, a whole frame of every level): the same source, without the ring's end where it was.
+struct Unrolled {
+    std::vector<int16_t> data[af::GrainSource::kLevels];
+    af::GrainSource src;
+};
+std::unique_ptr<Unrolled> unrolled(const af::GrainSource& s) {
+    auto u = std::make_unique<Unrolled>();
+    const int keep = s.origin % 4;
+    for (int k = 0; k < af::GrainSource::kLevels; ++k) {
+        const int n = s.frames >> k, turn = (s.origin - keep) >> k;
+        u->data[k].resize(2 * static_cast<size_t>(n + af::GrainSource::kGuard));
+        for (int j = 0; j < n + af::GrainSource::kGuard; ++j) {
+            const int f = (j % n + turn) % n;
+            u->data[k][2 * static_cast<size_t>(j)] = s.level[k][2 * f];
+            u->data[k][2 * static_cast<size_t>(j) + 1] = s.level[k][2 * f + 1];
+        }
+        u->src.level[k] = u->data[k].data();
+    }
+    u->src.frames = s.frames;
+    u->src.origin = keep;
+    u->src.gain = s.gain;
+    return u;
+}
+
+// Weather reading a full ring across its end, through the guard, at every level (Stream at pitch 0,
+// +12 and +24: levels 0, 1 and 2; the origin no multiple of 4), plays what it plays from the same
+// source laid out without that end: the same samples to within float rounding.
+void testAcrossTheEnd() {
+    std::printf("== memory: Weather across a ring's end at every level\n");
+    Memory m;
+    const int n = 20 * kSec + 3;
+    Buf x = whiteNoise(n, 0.3f, 41);
+    const Buf tone = sine(300.0, n, 0.3f);
+    for (size_t i = 0; i < x.size(); ++i) x[i] += tone[i];
+    feed(m, x, sine(700.0, n, 0.4f));
+    CHECK(m.remember());
+    const af::GrainSource* s = m.remembered();
+    if (!s) return;
+    const auto u = unrolled(*s);
+    for (const float pitch : {0.0f, 12.0f, 24.0f}) {
+        af::WeatherPatch p;
+        p.level = 1.0f;
+        p.mode = af::WM_STREAM;
+        p.drift = 0.0f;
+        p.pitch = pitch;
+        // The read point a second before the ring's end (the source's frame kFrames - origin).
+        p.position = static_cast<float>((Memory::kFrames - s->origin - kSec) / static_cast<double>(s->frames));
+        Buf out[2][4];
+        for (int which = 0; which < 2; ++which) {
+            af::Weather w;
+            w.seed(7);
+            w.set(p, af::HarmonyPatch{});
+            w.gate(true);
+            const int len = 3 * kSec;
+            for (Buf& b : out[which]) b.assign(static_cast<size_t>(len), 0.0f);
+            for (int i = 0; i < len; i += kBlk) {
+                const size_t at = static_cast<size_t>(i);
+                w.render(which ? &u->src : s, 0.0f, &out[which][0][at], &out[which][1][at], &out[which][2][at],
+                         &out[which][3][at], 0.0f, std::min(kBlk, len - i));
+            }
+        }
+        float worst = 0.0f;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < out[0][c].size(); ++i) worst = std::max(worst, std::fabs(out[0][c][i] - out[1][c][i]));
+        const double level = rms(out[0][0], static_cast<size_t>(2 * kSec));
+        std::printf("  pitch %+3.0f: largest difference %.2g, the output at %.1f dBFS RMS\n", static_cast<double>(pitch),
+                    static_cast<double>(worst), db(level));
+        CHECK(worst <= 1e-5f && level > 0.05);
+    }
+}
+
 // pin() from another thread (Keep on the loader thread) while the audio thread writes and asks to
 // remember at every block: while pinned the remembered source and its generation never change.
 void testPinThreads() {
@@ -582,26 +707,14 @@ void testPinThreads() {
     CHECK(m.generation() == 13);
 }
 
-#if FIELDS_COUNTS_ALLOCS
-// ASan's allocator calls these for every allocation; only the test's own thread counts.
-thread_local bool t_counting = false;
-int g_allocs = 0;
-void onMalloc(const volatile void*, size_t) {
-    if (t_counting) ++g_allocs;
-}
-void onFree(const volatile void*) {}
-#endif
-
 // Nothing in write, remember, reset, remembered, fill, generation, pin or unpin allocates.
 void testNoAllocation() {
     std::printf("== memory: no allocation\n");
-#if FIELDS_COUNTS_ALLOCS
-    static const bool hooked = __sanitizer_install_malloc_and_free_hooks(onMalloc, onFree) != 0;
-    CHECK(hooked);
+#if AFT_COUNTS_ALLOCS
+    CHECK(hookAllocations());
     Memory m;
     const Buf x = whiteNoise(301, 0.5f, 5);
-    t_counting = true;
-    g_allocs = 0;
+    countAllocations();
     int remembered = 0;
     for (int i = 0; i < 9000; ++i) {
         m.write(x.data(), x.data() + 1, i % 7 ? kBlk : 1 + i % 300);
@@ -612,9 +725,9 @@ void testNoAllocation() {
         (void)m.fill();
         (void)m.generation();
     }
-    t_counting = false;
-    std::printf("  %d allocations (%d Remembers)\n", g_allocs, remembered);
-    CHECK(g_allocs == 0 && remembered > 3);
+    const int allocs = allocationsCounted();
+    std::printf("  %d allocations (%d Remembers)\n", allocs, remembered);
+    CHECK(allocs == 0 && remembered > 3);
 #else
     std::printf("  (counted under ASan: make test)\n");
 #endif
@@ -635,6 +748,8 @@ void fieldsTests() {
     testPieces();
     testOddInput();
     testWeatherReadsMemory();
+    testLevelsAligned();
+    testAcrossTheEnd();
     testPinThreads();
     testNoAllocation();
 }

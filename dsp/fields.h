@@ -40,10 +40,13 @@
 //
 // The level: buildSource sets the RMS to -20 dBFS unless the peak would pass 0 dBFS, so a field's
 // peaks must stay within 20 dB of its RMS. Its peaks are rounded by a soft knee (tanh) that starts at
-// 6.5 times its RMS and never reaches 9 times (19.1 dB): the loudest drops and crackles lose some of
-// their peak (in Light Rain, the sparsest, 0.6% of the frames are over the knee, its RMS 0.14 dB
-// less), everything under it is untouched (in Wind, Surf and Night nothing or a few frames reach
-// it), and buildSource's level is the RMS's.
+// 6.5 times its RMS (16.3 dB) and never reaches 9 times (19.1 dB), so buildSource's level is the
+// RMS's. Everything under the knee is untouched (in Wind, Surf and Night nothing or a few frames
+// reach it), but the impulsive fields' loudest transients are squashed, by as much as their peak
+// stood over 19.1 dB before it: before the knee Embers' peak is 28.4 dB over its RMS (its loudest
+// crackles lose up to about 9 dB), Light Rain's 25.4 (about 6), Rain on Roof's 22.1 (3), Stream's
+// 21.3 (2). The frames over the knee: Light Rain 0.6% (its RMS 0.14 dB less), Rain on Roof 0.26%,
+// Embers 0.14%, Stream 0.14%.
 //
 // Cost, at load time on the loader thread: 27 to 45 ms a field on x86 (-O2; 70 to 130 under ASan,
 // checked under 1 s), and as ARM instructions (qemu's count, the device's flags) 202M (Wind High) to
@@ -61,7 +64,11 @@ inline constexpr const char* kFieldNames[] = {"Rain on Roof", "Light Rain", "Win
 static_assert(sizeof kFieldNames / sizeof *kFieldNames == FD_COUNT, "a name per field");
 constexpr float kFieldS = 12.0f;   // every field loops after 12 s
 // Load time (the loader thread): the field rendered and made a source (buildSource). Deterministic
-// (each field its own seed); allocates; tens of ms on x86. nullptr for an id out of range.
+// for a build (each field its own seed): the same samples every time. Not across machines: x86 and
+// ARM round their library functions and fused operations apart, and their sources differ by 1 in 70
+// to 346 of a field's 1.85M 16-bit samples (the review's measure; no event lands elsewhere), so no
+// test may pin a field's bits across platforms. Allocates; tens of ms on x86. nullptr for an id
+// out of range.
 std::unique_ptr<SourceBuffer> renderField(int id);
 
 } // namespace af

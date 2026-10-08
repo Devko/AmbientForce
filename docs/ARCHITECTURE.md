@@ -80,12 +80,9 @@ flowchart LR
 | `surface/fonts/` | Titillium Web (SIL OFL), the skin's font; the layout check measures text with its advance table |
 | `presets/Factory/` | Factory presets: `NN_Category/NN_Name.afp`, a folder per browser category |
 | `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `airgen_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `weather_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `airgen_test.cpp`, `engine_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `weather_test.cpp`, `fields_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
-| `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
+| `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters and the allocation counter (under ASan, one hook for every suite); the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
 | `tools/pgo_train.cpp` | The trainer for the profile-guided build (runs under `qemu-arm`): every mode, then every factory preset |
 | `tools/phrase.h` | The demo phrase (two held chords and their release, in each preset's own key) and the loudness the presets are matched by; `demos` and `test/preset_test.cpp` share it |

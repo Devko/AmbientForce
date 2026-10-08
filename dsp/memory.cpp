@@ -10,6 +10,7 @@
 #include "simd.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 #include <thread>
@@ -56,23 +57,29 @@ AF_INLINE void put4(const float* x, int16_t* q, int count) {
 #endif
 }
 
-// Four frames of L and R staged at x, interleaved, in 16-bit units: each sample not finite made 0,
-// times kToInt, clamped to full scale (+-kIn before the scaling). The decimators take them as they
-// are (a power of two changes none of their arithmetic but the exponents).
+// Four frames of L and R staged at x, interleaved, in 16-bit units: each sample not finite (NaN or
+// an infinity) made 0, as EffectForce's Grain does (finiteLr), then times kToInt and clamped to full
+// scale (+-kIn before the scaling; a finite sample too large for the scaling clamps too). The
+// decimators take them as they are (a power of two changes none of their arithmetic but the
+// exponents).
 AF_INLINE void stage4(const float* l4, const float* r4, float* x) {
 #if AF_NEON
     const f4 lo = vdupq_n_f32(-kIn * kToInt), hi = vdupq_n_f32(kIn * kToInt), scale = vdupq_n_f32(kToInt);
-    f4 l = vmulq_f32(vld1q_f32(l4), scale), r = vmulq_f32(vld1q_f32(r4), scale);
-    l = vreinterpretq_f32_u32(vandq_u32(vceqq_f32(l, l), vreinterpretq_u32_f32(l)));   // NaN -> +0
-    r = vreinterpretq_f32_u32(vandq_u32(vceqq_f32(r, r), vreinterpretq_u32_f32(r)));
+    const f4 most = vdupq_n_f32(FLT_MAX);
+    f4 l = vld1q_f32(l4), r = vld1q_f32(r4);
+    l = vreinterpretq_f32_u32(vandq_u32(vcaleq_f32(l, most), vreinterpretq_u32_f32(l)));   // |l| <= FLT_MAX, or +0
+    r = vreinterpretq_f32_u32(vandq_u32(vcaleq_f32(r, most), vreinterpretq_u32_f32(r)));
+    l = vmulq_f32(l, scale);
+    r = vmulq_f32(r, scale);
     const float32x4x2_t z = vzipq_f32(vminq_f32(vmaxq_f32(l, lo), hi), vminq_f32(vmaxq_f32(r, lo), hi));
     vst1q_f32(x, z.val[0]);
     vst1q_f32(x + 4, z.val[1]);
 #else
     for (int i = 0; i < 4; ++i) {
-        const float l = l4[i] * kToInt, r = r4[i] * kToInt;
-        x[2 * i] = std::min(std::max(l == l ? l : 0.0f, -kIn * kToInt), kIn * kToInt);
-        x[2 * i + 1] = std::min(std::max(r == r ? r : 0.0f, -kIn * kToInt), kIn * kToInt);
+        const float l = std::fabs(l4[i]) <= FLT_MAX ? l4[i] * kToInt : 0.0f;
+        const float r = std::fabs(r4[i]) <= FLT_MAX ? r4[i] * kToInt : 0.0f;
+        x[2 * i] = std::min(std::max(l, -kIn * kToInt), kIn * kToInt);
+        x[2 * i + 1] = std::min(std::max(r, -kIn * kToInt), kIn * kToInt);
     }
 #endif
 }

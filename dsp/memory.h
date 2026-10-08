@@ -5,8 +5,8 @@
 // never reads the ring being recorded (plan decision 3), so nothing it plays can feed itself back.
 //
 // Recording (EffectForce's Grain recording, dsp/grain.cpp): write() stages each sample (one not
-// finite made 0) scaled by 1/2 (6 dB of headroom: the tap may pass 0 dBFS before the limiter) and
-// clamped, and records them kBlock (128) frames at a time: level 0 rounded to the nearest 16-bit
+// finite, NaN or an infinity, made 0) scaled by 1/2 (6 dB of headroom: the tap may pass 0 dBFS
+// before the limiter) and clamped, and records them kBlock (128) frames at a time: level 0 rounded to the nearest 16-bit
 // value; each pair of frames (even, odd: the ring's own pairs, where Weather's level offsets put
 // them) through the halfband decimator into level 1, each pair of those into level 2, from the
 // floats before they were rounded, as grainsrc.cpp makes a file's; the guard frames written as the
@@ -84,7 +84,7 @@ public:
     Memory& operator=(const Memory&) = delete;
     void reset();                                // the ring recording starts afresh; the remembered one stays
     // Audio thread: n samples of the tap (any n; the engine's pieces), scaled by 1/2 into 16 bit
-    // (6 dB of headroom), clamped.
+    // (6 dB of headroom), clamped; a sample not finite is 0.
     void write(const float* L, const float* R, int n);
     // Audio thread: the ring recording becomes the remembered source (its seam faded over 5 ms each
     // side, its guard written), and recording goes on in the other, empty. False (nothing changes)
@@ -94,8 +94,10 @@ public:
     float fill() const;                          // 0..1: how much of 16 s the ring recording holds
     uint32_t generation() const;                 // +1 at every Remember (Keep says which it wrote)
     // Any thread (Keep, on the loader thread): while pinned, Remember is refused, so the remembered
-    // ring can be read safely. pin() returns false (and holds no pin) if nothing is remembered.
-    // Pins count: each pin() that returned true takes one unpin().
+    // ring can be read safely. pin() returns false (and holds no pin) if nothing is remembered; it
+    // holds the gate while it looks, so a Remember in those few instructions is refused, as one
+    // while Keep writes is (plan decision 9). Pins count: each pin() that returned true takes one
+    // unpin().
     bool pin();
     void unpin();
 

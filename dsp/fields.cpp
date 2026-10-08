@@ -26,7 +26,8 @@ constexpr double kKneeFrom = 6.5, kKneeTo = 9.0;   // the soft knee, in the fiel
 
 // --- generators ---------------------------------------------------------------------------------
 
-// xorshift32 (fastmath.h's), its seed spread first so neighbouring seeds start far apart.
+// xorshift32 (fastmath.h's, through common.h), its seed spread first so neighbouring seeds start
+// far apart.
 struct Rng {
     uint32_t s;
     explicit Rng(uint32_t seed) {
