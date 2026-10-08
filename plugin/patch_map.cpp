@@ -14,9 +14,18 @@ constexpr const char* kMemoryNames[] = {"Off", "1 Bar", "2 Bars", "4 Bars", "8 B
                                         "Forever"};
 constexpr int kMemoryBars[] = {0, 1, 2, 4, 8, 16, 32, 64, -1};   // HarmonyPatch::memoryBars: off, bars, forever
 static_assert(sizeof kMemoryNames / sizeof *kMemoryNames == sizeof kMemoryBars / sizeof *kMemoryBars, "Memory");
-constexpr const char* kRegisterNames[] = {"Low", "Mid", "High"};   // GroundPatch::registerOct 1, 2, 3
+// Ground Reg and Air Reg: GroundPatch::registerOct 1, 2, 3; AirGenPatch::registerOct 4, 5, 6.
+constexpr const char* kRegisterNames[] = {"Low", "Mid", "High"};
 constexpr const char* kUnisonNames[] = {"1", "2"};                 // BloomPatch::unison
 constexpr const char* kOnOff[] = {"Off", "On"};                    // a switch: 0 off, 1 on
+// Echo Div's options are kDelayDivs' names: the table holds the beats beside them, so its names are gathered here.
+struct DelayDivNames {
+    const char* n[kNumDelayDivs];
+    constexpr DelayDivNames() : n() {
+        for (int i = 0; i < kNumDelayDivs; ++i) n[i] = kDelayDivs[i].name;
+    }
+};
+constexpr DelayDivNames kDelayDivNames;
 
 // The family's audio taper: a level knob's 0..1 to a gain, so the knob's middle is about -12 dB.
 float taper(float knob) { return knob * knob; }
@@ -45,6 +54,12 @@ constexpr OptionList kOptionLists[] = {
     list(P_S_MODE, Reverb::kModeNames), list(P_S_FREEZE, kOnOff), list(P_S_SHINT, Reverb::kIntervalNames),
     list(P_G_BREATHSYNC, kSyncNames), list(P_G_BREATHDIV, kBarDivNames), list(P_G_SWAYSYNC, kSyncNames),
     list(P_G_SWAYDIV, kBarDivNames), list(P_B_SWAYSYNC, kSyncNames), list(P_B_SWAYDIV, kBarDivNames),
+    list(P_E_MODE, kEchoModeNames), list(P_E_SYNC, kSyncNames), list(P_E_DIV, kDelayDivNames.n),
+    list(P_A_LISTEN, kListenNames), list(P_A_MUTE, kOnOff), list(P_A_SOUND, kAirSoundNames),
+    list(P_A_PATTERN, kAirPatternNames), list(P_A_REG, kRegisterNames), list(P_A_LOOP, kOnOff),
+    list(P_A_LOOPSYNC, kSyncNames), list(P_A_LOOPDIV, kBarDivNames),
+    list(P_W_LISTEN, kListenNames), list(P_W_MUTE, kOnOff), list(P_W_MODE, kWeatherModeNames),
+    list(P_W_TOKEY, kToKeyNames), list(P_W_MEMTAP, kMemoryTapNames),
 };
 
 constexpr bool sameText(const char* a, const char* b) {
@@ -72,6 +87,15 @@ constexpr int firstUnlike() {
 
 static_assert(firstUnlike() == -1, "surface.py's option list for this parameter is not the engine's names (kOptionLists)");
 static_assert(PARAM_SPECS[P_B_BOCT].lo == -2.0f && PARAM_SPECS[P_B_BOCT].hi == 2.0f, "BloomPatch::bOctave -2..+2");
+static_assert(PARAM_SPECS[P_W_GRAINS].lo == 1.0f && PARAM_SPECS[P_W_GRAINS].hi == static_cast<float>(Weather::kGrains),
+              "Grains runs from 1 to Weather::kGrains");
+static_assert(PARAM_SPECS[P_A_MOTIF].lo == 3.0f && PARAM_SPECS[P_A_MOTIF].hi == static_cast<float>(AirGen::kMotifMax),
+              "Motif runs from 3 to AirGen::kMotifMax");
+// A saved project stores its values by key, but MPC stores them by index: the parameters of 0.0.2 keep theirs (the
+// sound ones to b_swaydiv's popup flag), M2's follow, and the preset stepper and the browser move up behind them.
+static_assert(P_B_SWAYDIV__OPEN == 97 && P_E_MODE == 98 && P_W_MEMTAP == 159 && P_PRESET == 160,
+              "MPC stores values by index: a parameter moved or added here moves saved projects' values (surface.py)");
+static_assert(PARAM_SPECS[P_E_DIV].hi == static_cast<float>(kNumDelayDivs - 1), "an option for every Echo division");
 
 float paramValue(int id, float n) {
     if (id < 0 || id >= P_COUNT) return 0.0f;
@@ -160,6 +184,17 @@ std::string paramDisplay(int id, float n) {
             break;
         }
         case Fmt::Semi: std::snprintf(b, sizeof b, v == 0.0f ? "0 st" : "%+.0f st", v); break;
+        case Fmt::PerMin:   // Air Density: notes a minute; "off" where the patch map makes it 0 (kAirDensityOff)
+            if (v < kAirDensityOff) return "off";
+            std::snprintf(b, sizeof b, v < 9.95f ? "%.1f /min" : "%.0f /min", v);
+            break;
+        case Fmt::Note: {   // Split: a MIDI note as its name and octave, C4 = 60; 0 is off
+            const long n = std::lround(v);
+            if (n <= 0) return "Off";
+            std::snprintf(b, sizeof b, "%s%ld", kKeyNames[n % 12], n / 12 - 1);
+            break;
+        }
+        case Fmt::OctRange: std::snprintf(b, sizeof b, "%.1f Oct", v); break;   // Air Range: octaves, not signed
         case Fmt::Count: std::snprintf(b, sizeof b, "%.0f", v); break;
         case Fmt::Db:
             if (v <= kVolumeOffDb) return "-inf dB";   // where the engine's output is off
@@ -390,6 +425,77 @@ Patch patchFromKnobs(const float* norm) {
     b.width = V(P_B_WIDTH);
     p.bloomSpace = taper(V(P_B_SPACE));
     p.bloomPan = V(P_B_PAN);
+
+    // M2. The strata's levels and sends are knobs with the audio taper, like Ground's; every default is the
+    // engine's (Patch{}), which has the new strata off.
+    p.groundEcho = taper(V(P_G_ECHO));
+    p.bloomEcho = taper(V(P_B_ECHO));
+
+    AirPatch& a = p.air;
+    a.listen = I(P_A_LISTEN);
+    a.mute = On(P_A_MUTE);
+    a.level = taper(V(P_A_LEVEL));
+    a.velSens = V(P_A_VEL);
+    a.voice.sound = I(P_A_SOUND);
+    a.voice.toneHz = V(P_A_TONE);
+    a.voice.decayS = V(P_A_DECAY);
+    a.voice.width = V(P_A_WIDTH);
+    AirGenPatch& ag = a.gen;
+    const float density = V(P_A_DENSITY);
+    ag.density = density < kAirDensityOff ? 0.0f : density;   // what the knob reads "off" at is off
+    ag.pattern = I(P_A_PATTERN);
+    ag.registerOct = I(P_A_REG) + 4;   // Low, Mid, High: the tonic in octave 4, 5, 6 (C4 = 60)
+    ag.rangeOct = V(P_A_RANGE);
+    ag.gravity = V(P_A_GRAVITY);
+    ag.motif = I(P_A_MOTIF);
+    ag.mutate = V(P_A_MUTATE);
+    ag.loop = On(P_A_LOOP);
+    ag.loopS = V(P_A_LOOPLEN);
+    ag.loopBeats = synced(P_A_LOOPSYNC, P_A_LOOPDIV);
+    ag.rubato = V(P_A_RUBATO);
+    p.airSpace = taper(V(P_A_SPACE));
+    p.airEcho = taper(V(P_A_ECHO));
+    p.airPan = V(P_A_PAN);
+    p.split = I(P_H_SPLIT) == 0 ? -1 : I(P_H_SPLIT);   // 0 is Off
+
+    WeatherPatch& w = p.weather;
+    w.listen = I(P_W_LISTEN);
+    w.mute = On(P_W_MUTE);
+    w.level = taper(V(P_W_LEVEL));
+    w.mode = I(P_W_MODE);
+    w.position = V(P_W_POSITION);
+    w.drift = V(P_W_DRIFT);
+    w.spray = V(P_W_SPRAY);
+    w.sizeS = V(P_W_SIZE);
+    w.grains = I(P_W_GRAINS);
+    w.pitch = V(P_W_PITCH);
+    w.toKey = I(P_W_TOKEY);
+    w.reverse = V(P_W_REVERSE);
+    w.width = V(P_W_WIDTH);
+    w.tilt = V(P_W_TILT);
+    w.hpHz = V(P_W_HP);
+    w.duck = V(P_W_DUCK);
+    // w.memory (the source is Memory's remembered 16 s) comes with the source, not with a knob.
+    p.weatherSpace = taper(V(P_W_SPACE));
+    p.weatherEcho = taper(V(P_W_ECHO));
+    p.weatherPan = V(P_W_PAN);
+    p.memoryTap = I(P_W_MEMTAP);
+
+    // Echo: initEcho()'s Delay with the knobs' fields; Spread, Drive and Glide stay as it has them, and Echo
+    // forces the mix to wet only.
+    Delay::Params& d = p.echo.delay;
+    d.mode = I(P_E_MODE);
+    d.sync = On(P_E_SYNC);
+    d.timeMs = V(P_E_TIME);
+    d.divBeats = kDelayDivs[I(P_E_DIV)].beats;
+    d.feedback = V(P_E_FEEDBACK);
+    d.lowCutHz = V(P_E_LOWCUT);
+    d.highCutHz = V(P_E_HIGHCUT);
+    d.wow = V(P_E_WOW);
+    d.duck = V(P_E_DUCK);
+    d.diffuse = V(P_E_DIFFUSE);
+    p.echoReturn = taper(V(P_E_RETURN));
+    p.echoSpace = taper(V(P_E_SPACE));
 
     Reverb::Params& r = p.space.reverb;
     r.mode = I(P_S_MODE);

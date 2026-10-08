@@ -276,6 +276,92 @@ enum("b_swaysync", "Blm Rate Sync", SYNC, "Free", help="Free at Bloom Rate, or s
 enum("b_swaydiv", "Blm Rate Div", BAR_DIVS, "8 Bars", help="one synced chord sway, 1/4 to 64 bars")
 popup_flag("b_swaydiv")
 
+# --- M2: Echo, Air and Weather (dsp/echo.h, dsp/air.h, dsp/weather.h) ---
+# Appended after the last sound parameter of 0.0.2, in this order, so a saved project keeps its indices; the plugin's
+# own parameters (the preset stepper and the browser) move up after them. Everything new is off in Init: Air's and
+# Weather's levels and every Echo send default to 0, so Init and the factory presets of 0.0.2 (whose files name none
+# of these) play bit for bit as they did. Echo's other defaults are initEcho()'s (dsp/echo.h), the strata's are their
+# patches'; test/params_test.cpp holds them to Patch{}. The option lists are the engine's names, entry by entry.
+ECHO_MODES = ["Stereo", "Ping-Pong", "Mono"]                                                # dsp/echo.h kEchoModeNames
+# dsp/common.h kDelayDivs: the synced Echo time, a 64th to a bar.
+DELAY_DIVS = ["1/64", "1/32T", "1/32", "1/16T", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4", "1/2T", "1/4.",
+              "1/2", "1/2.", "1 Bar"]
+AIR_SOUNDS = ["Glass", "Bowl", "Bar", "Bell", "Kalimba", "Felt"]                            # dsp/airvoices.h
+AIR_PATTERNS = ["Random", "Rise", "Fall", "Constellation", "Echo"]                          # dsp/airgen.h
+WEATHER_MODES = ["Cloud", "Stretch", "Stream"]                                              # dsp/weather.h
+TO_KEY = ["Off", "Scale", "Chord"]                                                          # dsp/weather.h ToKey
+MEMORY_TAPS = ["Strata", "Output"]                                                          # dsp/memory.h MemoryTap
+
+# Echo (dsp/echo.h): a tape delay between the strata and Space.
+enum("e_mode", "Echo Mode", ECHO_MODES, "Stereo", help="Stereo, Ping-Pong across the field, or Mono")
+enum("e_sync", "Echo Sync", SYNC, "Sync", help="Sync follows MPC's tempo, Free uses Echo Time")
+num("e_time", "Echo Time", "log", 1, 2000, 450, "ms", help="the time between repeats when Free, 1 ms to 2 s")
+enum("e_div", "Echo Div", DELAY_DIVS, "1/4.", help="the synced time between repeats, a 64th to a bar")
+popup_flag("e_div")
+num("e_feedback", "Echo Repeats", "lin", 0, 1, 0.45, "pct", help="feedback: how much comes round again")
+num("e_lowcut", "Echo Low Cut", "log", 20, 2000, 150, "hz", help="keeps the lows out of the repeats")
+num("e_highcut", "Echo High Cut", "log", 500, 20000, 4500, "hz", help="darkens the repeats, more each pass")
+num("e_wow", "Echo Wow", "lin", 0, 1, 0.3, "pct", help="tape wow and flutter on the repeats")
+num("e_duck", "Echo Duck", "lin", 0, 1, 0.3, "pct", help="the repeats step back while the strata play")
+num("e_diffuse", "Echo Diffuse", "lin", 0, 1, 0.3, "pct", help="smears the repeats, more with every pass")
+num("e_return", "Echo Level", "lin", 0, 1, 0.7, "pct", help="how loud the repeats come back into the mix")
+num("e_space", "Echo Space", "lin", 0, 1, 0.3, "pct", help="how much of Echo goes into the reverb")
+num("g_echo", "Ground Echo", "lin", 0, 1, 0, "pct", help="how much of the drone goes into Echo")
+num("b_echo", "Bloom Echo", "lin", 0, 1, 0, "pct", help="how much of the chords goes into Echo")
+
+# Air (dsp/air.h): sparse, generative glass, bowls, bells, plucks and felt over the harmony.
+enum("a_listen", "Air Listen", LISTEN, "Harmony", help="the keys, the harmony's chord, or the tonic")
+enum("a_mute", "Air Mute", ON_OFF, "Off", help="silences Air, gliding, at next to no CPU")
+num("a_level", "Air Level", "lin", 0, 1, 0, "pct", help="Air's level; 0 leaves it asleep, as in Init")
+num("a_tone", "Air Tone", "log", 200, 16000, 6000, "hz", help="the strike's brightness: darker down, brighter up")
+enum("a_sound", "Air Sound", AIR_SOUNDS, "Glass", help="glass, bowl, bar, bell, plucked string or felt")
+popup_flag("a_sound")
+num("a_decay", "Air Decay", "log", 0.1, 20, 4, "time", help="how long a note rings, 0.1 to 20 s")
+num("a_density", "Air Density", "pow", 0, 60, 12, "permin", help="notes Air plays on its own, 0 to 60 a minute")
+enum("a_pattern", "Air Pattern", AIR_PATTERNS, "Constellation", help="how notes are picked, from Random to Echo")
+popup_flag("a_pattern")
+enum("a_reg", "Air Reg", ["Low", "Mid", "High"], "Mid",                                     # registerOct 4..6
+     help="the octave Air's notes start in: 4, 5 or 6")
+num("a_range", "Air Range", "lin", 0.5, 3, 2, "octr", help="how far above the register the notes reach")
+num("a_gravity", "Air Gravity", "lin", 0, 1, 0.6, "pct", help="how strongly the chord's notes are favoured")
+num("a_motif", "Air Motif", "int", 3, 8, 5, "count", help="the notes in a Constellation's figure, 3 to 8")
+num("a_mutate", "Air Mutate", "lin", 0, 1, 0.3, "pct", help="the chance a pass swaps a note for a neighbour")
+enum("a_loop", "Air Loop", ON_OFF, "Off", help="On records what Air plays and plays it round again")
+num("a_looplen", "Loop Length", "log", 2, 120, 16, "time", help="the loop's length when Free, 2 to 120 s")
+enum("a_loopsync", "Loop Sync", SYNC, "Free", help="Free at Loop Length, or Sync to MPC's bars")
+enum("a_loopdiv", "Loop Div", BAR_DIVS, "4 Bars", help="one synced loop: a quarter note to 64 bars")
+popup_flag("a_loopdiv")
+num("a_rubato", "Air Rubato", "lin", 0, 1, 0.2, "pct", help="loosens a loop's timing and the notes' velocity")
+num("a_vel", "Air Vel", "lin", 0, 1, 0.5, "pct", help="how much velocity sets the level of played notes")
+num("a_width", "Air Width", "lin", 0, 1, 0.7, "pct", help="how far apart the notes fall in the stereo field")
+num("a_space", "Air Space", "lin", 0, 1, 0.5, "pct", help="how much of Air goes into the reverb")
+num("a_echo", "Air Echo", "lin", 0, 1, 0, "pct", help="how much of Air goes into Echo")
+num("a_pan", "Air Pan", "lin", -1, 1, 0, "pan", help="where Air sits, left to right")
+num("h_split", "Split", "int", 0, 127, 0, "note", help="keys from this note up play Air as melody; Off: none")
+
+# Weather (dsp/weather.h): a cloud of grains over a source. Which source (the stepper, Remember and Keep) comes with
+# the loader, not with these.
+enum("w_listen", "Wthr Listen", LISTEN, "Free", help="held keys, the chord, or from the first key")
+enum("w_mute", "Weather Mute", ON_OFF, "Off", help="silences Weather, gliding, at no CPU")
+num("w_level", "Wthr Level", "lin", 0, 1, 0, "pct", help="Weather's level; 0 leaves it asleep, as in Init")
+enum("w_mode", "Weather Mode", WEATHER_MODES, "Cloud", help="grains scattered, stretched or streamed")
+num("w_position", "Position", "lin", 0, 1, 0.5, "pct", help="where in the source the grains gather, start to end")
+num("w_drift", "Weather Drift", "lin", 0, 1, 0.2, "pct", help="how fast Position wanders")
+num("w_spray", "Wthr Spray", "lin", 0, 1, 0.3, "pct", help="how far the grains scatter around Position")
+num("w_size", "Grain Size", "log", 0.02, 2, 0.25, "time", help="one grain's length, 20 ms to 2 s")
+num("w_grains", "Grains", "int", 1, 16, 8, "count", help="how many grains overlap, 1 to 16; costs CPU")
+num("w_pitch", "Weather Pitch", "int", -24, 24, 0, "semi", help="transposes the grains by up to 2 octaves")
+enum("w_tokey", "To Key", TO_KEY, "Off", help="tunes each grain to the key's scale, or to the chord")
+num("w_reverse", "Wthr Reverse", "lin", 0, 1, 0, "pct", help="the share of grains that play backwards")
+num("w_width", "Wthr Width", "lin", 0, 1, 0.7, "pct", help="how far the grains spread in the stereo field")
+num("w_tilt", "Weather Tilt", "lin", -1, 1, 0, "bipct", help="tips Weather darker (-) or brighter (+)")
+num("w_hp", "Weather HP", "log", 20, 2000, 20, "hz", help="thins Weather's lows; 20 Hz is off")
+num("w_duck", "Weather Duck", "lin", 0, 1, 0, "pct", help="Weather steps back while Bloom plays")
+num("w_space", "Wthr Space", "lin", 0, 1, 0.3, "pct", help="how much of Weather goes into the reverb")
+num("w_echo", "Weather Echo", "lin", 0, 1, 0, "pct", help="how much of Weather goes into Echo")
+num("w_pan", "Weather Pan", "lin", -1, 1, 0, "pan", help="where Weather sits, left to right")
+enum("w_memtap", "Memory From", MEMORY_TAPS, "Output", help="records the four strata, or the output")
+
 # No RANDOMIZE: an instant jump of every sound value under a drone that holds for minutes is not music. The
 # instrument's answer is Evolve (docs/CONCEPT.md 7.3): mutation ranges declared here, taken from the preset's
 # own state and glided to through a scene, never jumped.
@@ -481,11 +567,12 @@ LABEL_Y = 89                                      # the centre of a list's label
 LIST_Y = LABEL_Y + SEG_V_LABEL                    # where its segments or field start
 SEG_MIN, CELL_MIN = 80, 44                        # a segment's width at least: a finger's; a cell in a row of them
 SPANS = {"full": (35, 1229), "left": (35, 621), "right": (659, 1245)}   # x0..x1 of the controls in a card
-STRATA = ("Ground", "Bloom", "Space")             # the strata whose cards name them
+STRATA = ("Ground", "Bloom", "Air", "Weather", "Wthr", "Space", "Echo")   # what a card names: a list's label drops it
 SEG_ROWS = {"g_colint": 2}                        # six short options: two rows of three
 LIST_LABELS = {"g_reg": "REGISTER", "g_colint": "COLOR", "s_shint": "INTERVAL", "s_mode": "TYPE",
                "b_tableb": "TABLE B", "b_fmode": "FILTER", "g_breathsync": "SYNC", "g_breathdiv": "DIV",
-               "g_swaysync": "SYNC", "g_swaydiv": "DIV", "b_swaysync": "SYNC", "b_swaydiv": "DIV"}
+               "g_swaysync": "SYNC", "g_swaydiv": "DIV", "b_swaysync": "SYNC", "b_swaydiv": "DIV",
+               "a_reg": "REGISTER", "a_loopsync": "SYNC", "a_loopdiv": "DIV"}
 
 
 def list_label(key):
@@ -570,34 +657,63 @@ def build_layout():
     L = Layout()
 
     # PLAY: the page you live on (docs/CONCEPT.md 9): the four macros first, under the first four Q-Links, then
-    # Freeze and Hold, Bloom's Age and the volume; below, the levels and Bloom's swell, and the harmony. The
-    # preset in the header. The tones, Decay and Shimmer the page had before are what Glow and Horizon bend.
+    # Freeze and Hold, Bloom's Age and the volume; below, the four strata's levels, and the harmony with Air's
+    # Density. The preset in the header. The tones, Decay and Shimmer the page had before are what Glow and Horizon
+    # bend; Space Level, Bloom's Swell and Gravity are on their own pages.
     L.group("PLAY")
     macros, perform = ["m_horizon", "m_motion", "m_glow", "m_density"], ["s_freeze", "h_hold", "b_age", "volume"]
-    levels, harmony = ["g_level", "b_level", "s_return", "b_swell"], ["h_key", "h_scale", "h_chord", "g_gravity"]
+    levels, harmony = ["g_level", "b_level", "a_level", "w_level"], ["h_key", "h_scale", "h_chord", "a_density"]
     L.page("PLAY", macros + perform + levels + harmony)
     L.header(status_w=700)
     L.stepper(998, 121, 516, "preset")
     bank_halves(L, R1, ("MACROS", macros), ("PERFORM", perform))
-    bank_halves(L, R2, ("LEVELS AND SWELL", levels), ("HARMONY", harmony))
+    bank_halves(L, R2, ("LEVELS", levels), ("HARMONY AND AIR", harmony))
 
-    # HARMONY: the harmony brain (CONCEPT 6); then how long it remembers, what Stop does, and who listens.
+    # HARMONY: the harmony brain (CONCEPT 6); then how long it remembers, what Stop does, where the keys split off
+    # to Air, and who listens.
     harmony = ["h_key", "h_scale", "h_tuning", "h_input", "h_chord", "h_voicing", "h_leading", "h_strum"]
-    memory = ["h_memory", "h_hold", "h_onstop", "g_listen", "b_listen", "volume", "g_gravity", "b_swell"]
+    memory = ["h_memory", "h_hold", "h_onstop", "h_split", "g_listen", "b_listen", "a_listen", "w_listen"]
     L.page("HARMONY", harmony + memory)
     L.header()
     bank_card(L, R1, "HARMONY", harmony)
-    bank_card(L, R2, "MEMORY AND LISTEN", memory, {"g_listen": "GROUND", "b_listen": "BLOOM"})
+    bank_card(L, R2, "MEMORY, SPLIT AND LISTEN", memory,
+              {"g_listen": "GROUND", "b_listen": "BLOOM", "a_listen": "AIR", "w_listen": "WEATHER"})
 
-    # STRATA: a page per stratum, then one for its details. The stratum pages share their first bank (CONCEPT 9):
-    # Level, Tone, Shape, Motion, Character, then Gravity / Swell where Echo goes in M2, Space, Width.
+    # STRATA: the four strata first, then their details in the same order, so a tap on the tab moves your hands
+    # from one stratum to the next (CONCEPT 9). The stratum pages share their first bank: Level, Tone, Shape,
+    # Motion, Character, Echo, Space, Width.
     L.group("STRATA")
-    ground = ["g_level", "g_cutoff", "g_age", "g_sway", "g_beat", "g_gravity", "g_space", "g_width"]
-    ground2 = ["g_table", "g_swayrate", "g_fade", "g_body", "g_breath", "g_reg", "g_listen", "g_mute"]
+    ground = ["g_level", "g_cutoff", "g_age", "g_sway", "g_beat", "g_echo", "g_space", "g_width"]
+    ground2 = ["g_table", "g_gravity", "g_fade", "g_body", "g_breath", "g_reg", "g_listen", "g_mute"]
     L.page("GROUND", ground + ground2)
     L.header()
     bank_card(L, R1, "GROUND", ground)
     bank_card(L, R2, "TABLE AND VOICE", ground2)
+
+    bloom = ["b_level", "b_cutoff", "b_age", "b_sway", "b_blend", "b_echo", "b_space", "b_width"]
+    bloom2 = ["b_table", "b_release", "b_swell", "b_reso", "b_fmode", "b_tail", "b_listen", "b_mute"]
+    L.page("BLOOM", bloom + bloom2)
+    L.header()
+    bank_card(L, R1, "BLOOM", bloom)
+    bank_card(L, R2, "TABLE, ENVELOPE AND FILTER", bloom2)
+
+    # AIR: level, tone, how long a note rings, how loose, how many; then the sound, how notes are picked, and who
+    # plays.
+    air = ["a_level", "a_tone", "a_decay", "a_rubato", "a_density", "a_echo", "a_space", "a_width"]
+    air2 = ["a_sound", "a_pattern", "a_range", "a_gravity", "a_mutate", "a_loop", "a_listen", "a_mute"]
+    L.page("AIR", air + air2)
+    L.header()
+    bank_card(L, R1, "AIR", air)
+    bank_card(L, R2, "SOUND AND PATTERN", air2)
+
+    # WEATHER: level, tilt, the grains' size, drift and count; then the mode and where in the source the grains
+    # fall. The bottom bank's first slot is the Source stepper's; until the loader it holds the high-pass.
+    weather = ["w_level", "w_tilt", "w_size", "w_drift", "w_grains", "w_echo", "w_space", "w_width"]
+    weather2 = ["w_hp", "w_mode", "w_position", "w_spray", "w_pitch", "w_tokey", "w_listen", "w_mute"]
+    L.page("WEATHER", weather + weather2)
+    L.header()
+    bank_card(L, R1, "WEATHER", weather)
+    bank_card(L, R2, "MODE, POSITION AND PITCH", weather2)
 
     # DRONE: Ground's five partials, its place and its beating; then its motion: the breath and the sway, each with
     # its depth, its free rate and whether it runs free or on the bars.
@@ -609,23 +725,35 @@ def build_layout():
     bank_card(L, R1, "PARTIALS", partials)
     bank_halves(L, R2, ("BREATH", breath), ("SWAY", sway))
 
-    bloom = ["b_level", "b_cutoff", "b_age", "b_sway", "b_blend", "b_swell", "b_space", "b_width"]
-    bloom2 = ["b_table", "b_release", "b_reso", "b_fmode", "b_tail", "b_vel", "b_listen", "b_mute"]
-    L.page("BLOOM", bloom + bloom2)
-    L.header()
-    bank_card(L, R1, "BLOOM", bloom)
-    bank_card(L, R2, "TABLE, FILTER AND TAIL", bloom2)
-
     # BLOOM OSC: Table B and how it couples to the first table and blends with it, unison, the breath noise; then
     # the sway (depth, free rate, free or on the bars) and the voice's place in its life and in the stereo field.
     osc = ["b_tableb", "b_boct", "b_couple", "b_camt", "b_blend", "b_unison", "b_detune", "b_breath"]
-    sway, voice = ["b_sway", "b_swayrate", "b_swaysync", "b_swaydiv"], ["b_age", "b_smear", "b_pan", "b_width"]
+    sway, voice = ["b_sway", "b_swayrate", "b_swaysync", "b_swaydiv"], ["b_vel", "b_smear", "b_pan", "b_width"]
     L.page("BLOOM OSC", osc + sway + voice)
     L.header()
     bank_card(L, R1, "OSCILLATORS", osc)
     bank_halves(L, R2, ("SWAY", sway), ("VOICE", voice))
 
-    # SPACE: the reverb; then its tail (Freeze, Shimmer, Rise) and the levels into and out of it.
+    # AIR LOOP: the loop (on, its length free or on the bars) and the figures it plays; then where the notes lie, how
+    # velocity and place shape them, the key split, and the sound.
+    loop, motif = ["a_loop", "a_looplen", "a_loopsync", "a_loopdiv"], ["a_motif", "a_mutate", "a_pattern", "a_rubato"]
+    notes, voice = ["a_reg", "a_range", "a_vel", "a_pan"], ["h_split", "a_sound", "a_decay", "a_tone"]
+    L.page("AIR LOOP", loop + motif + notes + voice)
+    L.header()
+    bank_card(L, R1, "LOOP AND MOTIF", loop + motif)
+    bank_halves(L, R2, ("NOTES", notes), ("SPLIT AND SOUND", voice))
+
+    # GRAINS: where the grains gather and how they are tuned and shaped; then the source, the mode and the cloud's
+    # size. The Source stepper, Remember and Keep take the slots of Drift, Tilt and Width when the loader arrives.
+    scatter, shape = ["w_position", "w_spray", "w_pitch", "w_tokey"], ["w_reverse", "w_hp", "w_duck", "w_pan"]
+    source = ["w_drift", "w_mode", "w_memtap", "w_tilt", "w_width", "w_size", "w_grains", "w_level"]
+    L.page("GRAINS", scatter + shape + source)
+    L.header()
+    bank_halves(L, R1, ("SCATTER AND PITCH", scatter), ("SHAPE AND PLACE", shape))
+    bank_card(L, R2, "SOURCE AND CLOUD", source)
+
+    # SPACE: the reverb; then its tail (Freeze, Shimmer, Rise) and the levels into and out of it. ECHO: the delay
+    # between the strata and the reverb; then what ducks, smears and returns it, and the four strata's sends.
     L.group("SPACE")
     space = ["s_mode", "s_size", "s_decay", "s_predelay", "s_damp", "s_lowcut", "s_mod", "s_width"]
     tail, levels = ["s_freeze", "s_shimmer", "s_shint", "s_rise"], ["s_return", "g_space", "b_space", "o_tilt"]
@@ -634,20 +762,28 @@ def build_layout():
     bank_card(L, R1, "SPACE", space)
     bank_halves(L, R2, ("TAIL", tail), ("LEVELS AND TILT", levels))
 
-    # MIX: each stratum's level, place, send and mute; then the return, the output, and the widths.
-    mix_g, mix_b = ["g_level", "g_pan", "g_space", "g_mute"], ["b_level", "b_pan", "b_space", "b_mute"]
-    out, width = ["s_return", "o_tilt", "volume", "s_freeze"], ["g_width", "b_width", "s_width", "s_shimmer"]
-    L.page("MIX", mix_g + mix_b + out + width)
+    time, repeats = ["e_mode", "e_sync", "e_time", "e_div"], ["e_feedback", "e_lowcut", "e_highcut", "e_wow"]
+    back, sends = ["e_duck", "e_diffuse", "e_return", "e_space"], ["g_echo", "b_echo", "a_echo", "w_echo"]
+    L.page("ECHO", time + repeats + back + sends)
     L.header()
-    bank_halves(L, R1, ("GROUND", mix_g), ("BLOOM", mix_b))
-    bank_halves(L, R2, ("RETURN AND OUTPUT", out), ("WIDTH AND SHIMMER", width))
+    bank_halves(L, R1, ("TIME", time), ("REPEATS", repeats))
+    bank_halves(L, R2, ("DUCK AND RETURN", back), ("SENDS", sends))
+
+    # MIX: the four strata's levels and their sends to Space and to Echo side by side, then the returns and the
+    # output. The pans and mutes are on their strata's pages.
+    lv, sp = ["g_level", "b_level", "a_level", "w_level"], ["g_space", "b_space", "a_space", "w_space"]
+    ec, out = ["g_echo", "b_echo", "a_echo", "w_echo"], ["s_return", "e_return", "o_tilt", "volume"]
+    L.page("MIX", lv + sp + ec + out)
+    L.header()
+    bank_halves(L, R1, ("LEVELS", lv), ("SPACE SENDS", sp))
+    bank_halves(L, R2, ("ECHO SENDS", ec), ("RETURNS AND OUTPUT", out))
 
     # BROWSE: categories left, presets right, the loaded preset and actions below. The browser has no knobs of
     # its own: the Q-Links keep the preset stepper, the macros (to bend a preset while auditioning it), the
     # volume and PLAY's other main controls between them.
     L.group("BROWSE")
     L.page("PRESETS", ["preset", "m_horizon", "m_motion", "m_glow", "m_density", "b_age", "s_freeze", "volume",
-                       "h_key", "h_scale", "h_chord", "g_gravity", "g_level", "b_level", "s_return", "b_swell"])
+                       "h_key", "h_scale", "h_chord", "a_density", "g_level", "b_level", "a_level", "w_level"])
     L.header()
     L.card(24, R1, 360, 552, "CATEGORIES")
     L.tiles(44, 206, 320, 2, 8, 48, 8, "cat")
@@ -1142,7 +1278,8 @@ def check_layout(text, groups):
 CURVE = {"readout": "Readout", "enum": "Enum", "lin": "Lin", "log": "Log", "int": "Int", "pow": "Pow"}
 FMT = {"none": "None", "enum": "Enum", "pct": "Percent", "bipct": "Bipolar", "hz": "Hz", "time": "Time",
        "semi": "Semi", "count": "Count", "db": "Db", "text": "Text", "lfohz": "LfoHz", "period": "Period",
-       "hz2": "Hz2", "cents": "Cents", "oct": "Oct", "ms": "Ms", "pan": "Pan"}
+       "hz2": "Hz2", "cents": "Cents", "oct": "Oct", "ms": "Ms", "pan": "Pan", "permin": "PerMin", "note": "Note",
+       "octr": "OctRange"}
 KIND = {"synth": "Synth", "ui": "Ui", "readout": "Readout", "stepper": "Stepper", "button": "Button",
         "tile": "Tile", "toggle": "Toggle", "popup": "Popup", "meter": "Meter"}
 

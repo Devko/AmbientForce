@@ -33,7 +33,8 @@ struct Transport {
 };
 
 // Sync divisions in quarter-note beats, shortest first (a Q-Link turn walks them in order). The
-// names are the options surface.py shows, same order.
+// names are the options surface.py shows, same order, and spell the bars as kBarDivNames does ("1 Bar").
+// No state stores them: a saved value is the option's number.
 struct Division {
     const char* name;
     double beats;
@@ -41,13 +42,13 @@ struct Division {
 inline constexpr Division kDelayDivs[] = {
     {"1/64", 0.0625}, {"1/32T", 1.0 / 12}, {"1/32", 0.125}, {"1/16T", 1.0 / 6}, {"1/16", 0.25}, {"1/8T", 1.0 / 3},
     {"1/16.", 0.375}, {"1/8", 0.5}, {"1/4T", 2.0 / 3}, {"1/8.", 0.75}, {"1/4", 1.0}, {"1/2T", 4.0 / 3},
-    {"1/4.", 1.5}, {"1/2", 2.0}, {"1/2.", 3.0}, {"1 bar", 4.0},
+    {"1/4.", 1.5}, {"1/2", 2.0}, {"1/2.", 3.0}, {"1 Bar", 4.0},
 };
 inline constexpr int kNumDelayDivs = static_cast<int>(sizeof kDelayDivs / sizeof kDelayDivs[0]);
 inline constexpr Division kLfoDivs[] = {
     {"1/16", 0.25}, {"1/8T", 1.0 / 3}, {"1/8", 0.5}, {"1/4T", 2.0 / 3}, {"1/8.", 0.75}, {"1/4", 1.0},
-    {"1/4.", 1.5}, {"1/2", 2.0}, {"1/2.", 3.0}, {"1 bar", 4.0}, {"2 bars", 8.0}, {"4 bars", 16.0},
-    {"8 bars", 32.0}, {"16 bars", 64.0},
+    {"1/4.", 1.5}, {"1/2", 2.0}, {"1/2.", 3.0}, {"1 Bar", 4.0}, {"2 Bars", 8.0}, {"4 Bars", 16.0},
+    {"8 Bars", 32.0}, {"16 Bars", 64.0},
 };
 inline constexpr int kNumLfoDivs = static_cast<int>(sizeof kLfoDivs / sizeof kLfoDivs[0]);
 
