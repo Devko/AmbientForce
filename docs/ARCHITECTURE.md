@@ -15,9 +15,9 @@
 AmbientForce is a single shared object, `ambientforce.so`, that MPC loads through its VST2 host as an
 instrument (no inputs, 2 outputs), plus a touchscreen skin generated at build time. The plugin side
 (VST2 glue, the touchscreen logic, the preset library, saved state, the build, test and bench
-tooling) is SubForce's, renamed; the page groups and the reverb are EffectForce's; the wavetable
-layout is PolyForce's. The harmony brain, the lifetime tables and their oscillator, Ground, Bloom
-and the engine that routes one MIDI stream through them are AmbientForce's own.
+tooling) is SubForce's, renamed; the page groups, the reverb and the delay are EffectForce's; the
+wavetable layout is PolyForce's. The harmony brain, the lifetime tables and their oscillator,
+Ground, Bloom and the engine that routes one MIDI stream through them are AmbientForce's own.
 
 ```mermaid
 flowchart LR
@@ -45,13 +45,20 @@ flowchart LR
 |---|---|
 | `dsp/engine.*` | The engine: Listen routing from the keys and the harmony to Ground and Bloom, the pedal and Hold, Stop, the mix and sends, Space's decay hold, the output (tilt, volume, the guard, the limiter, Stop's fade), idling. Its header is the best single summary of how the instrument behaves |
 | `dsp/harmony.*` | The harmony brain: scales, Input mapping, diatonic chords, voicings, voice leading, the tunings, and the harmony memory (keys and their mapped notes, the current chord, the memory's timer). Also the `Listen` modes every stratum shares |
+| `dsp/airgen.*` | Air's generator: when Air plays and which note. The Poisson clock, the candidates and Gravity (never the last two notes, and how that gives way), Random, Rise, Fall, Constellation with Mutate, Echo of the player's notes, the Loop (record, replay with Rubato, overdub, free or synced to the bar), Rubato's velocity; one random sequence that no setting shifts |
 | `dsp/ground.*` | Ground, the drone: five partials on one table, beating in Hz, Gravity, the root's octave and Register, the fade, Body, Breath, Tone, Width |
 | `dsp/bloom.*` | Bloom, the chord voices: six voices of coupled oscillators, breath, the SVF, the envelope, unison, allocation and owners, the strum, voice-led moves, the tail handoff |
+| `dsp/airvoices.*` | Air's voices: six that ring once struck. Glass, Bowl, Bar and Bell as six decaying complex one-poles each, four to a vector; Kalimba, a Karplus-Strong pluck (an allpass for the period's fraction, the loop low-pass at Tone, a burst of noise); Felt on the Felt Piano table, Age moving as it fades. Allocation and the steal's fade, pans, sleeping |
 | `dsp/lifeosc.h` | The lifetime oscillator (header-only): the Hermite and linear table reads, frame crossfade and mip choice, `LifeScan` (Age, Sway, Smear), the Couple modes |
 | `dsp/lifetime.*` | The table library: eight life models (additive, every harmonic its own decay, beating and formant path) and four digital waves; `TableSet`, the atomic slots the audio thread reads |
 | `dsp/wavetable.*` | PolyForce's wavetable layout: 11 mip levels of their own lengths, 16-bit samples with a scale per frame, `mipFor`, and the band-limited frame builder (an inverse FFT per level) |
 | `dsp/space.*` | Space: the Reverb as a send / return (wet only), Rise, `silent()` |
+| `dsp/weather.*` | Weather: EffectForce's grain voices over a fixed source, Cloud, Stretch and Stream, the anchor and its drift, To Key, the gate, Duck, the tilt and high-pass, the copies a source change leaves the fading grains |
+| `dsp/grainsrc.*` | A Weather source: 16-bit stereo at three rates, looping through its guard frames (`GrainSource`, which Memory fills too); `buildSource()` makes one of any signal at load time (the loop's crossfade, the level, the decimated levels) |
+| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels |
 | `dsp/reverb.*`, `pitch.h` | EffectForce's Reverb: predelay, low cut, diffusion, an 8-line feedback delay network with modulation, freeze and shimmer; the Haze and Abyss modes added. The shimmer's pitch shifter |
+| `dsp/echo.*` | Echo: the Delay as a send / return (wet only), ducking under the send, `silent()`, its defaults (`initEcho()`). Not in the signal path until M2's engine task |
+| `dsp/delay.*` | EffectForce's Delay: two lines read at free or synced times (Tape glides or Fade crossfades), Stereo, Ping-Pong and Mono, the cuts, drive and limiter in the loop, wow and flutter, ducking; Diffuse added (four allpasses a side in the loop, blended in by the amount) |
 | `dsp/svf.h` | Andrew Simper's trapezoidal state-variable filter (Bloom's filter, Ground's Tone and formants) |
 | `dsp/common.h`, `fastmath.h`, `simd.h` | The rate and the control chunk, `Transport`, smoothing; fast exp2, log2, tan, soft clip and random numbers; four-float vectors (NEON on the Force, GCC's generic vectors on x86, so the tests run the same arithmetic) |
 | `dsp/stages.h` | Stage timers for the profiling build (`-DAF_STAGE_TIMING`): ground, bloom, space, out |
@@ -71,7 +78,10 @@ flowchart LR
 | `surface/fonts/` | Titillium Web (SIL OFL), the skin's font; the layout check measures text with its advance table |
 | `presets/Factory/` | Factory presets: `NN_Category/NN_Name.afp`, a folder per browser category |
 | `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `airgen_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `weather_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
 | `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
@@ -184,32 +194,48 @@ of 32, so MPC's 128-sample blocks never cut one; only a MIDI event does, at its 
 events play the same samples whatever the block size.
 
 Ground and Bloom are rendered a control step at a time. Before each piece the engine gives them
-MPC's tempo and its position at the piece's first sample (the block's, moved on by the samples
-since); each keeps a `BeatClock` (`dsp/common.h`) that takes that position while the transport
-plays and runs on at the tempo while it is stopped, and moves it on by each step's samples. A synced
-cycle (Ground's Breath, a sway: `breathBeats`, `LifePos::swayBeats`) takes its target phase from
-that clock (a Bloom voice's plus its stagger, voice i at i / 6 of a cycle), so it sits on the bar
-whatever the blocks; a free one's target is its own phase, which
-moves on at its rate all the time, as it always did. The phase used is never set, only pulled
-toward the target (`pullPhase`, 50 ms, the short way round, landing exactly within 1e-9): a lock,
-a locate, a loop or Free <-> Sync glides instead of stepping, a locked cycle is exactly the
-clock's, and a free one exactly its own, bit for bit as before Sync existed. A division faster than
-4 Hz (a sway) or 8 Hz (a breath) at the tempo doubles. Each step they read their table pointers
-(`TableSet::get`), step their `LifeScan` positions, envelopes, glides, fades and filter targets;
-every gain then moves in a straight line across the step and the filters' coefficients glide per
-sample (the cutoffs evenly in octaves), so nothing steps. Bloom also ends a step where a strummed
-note's start falls, so each note starts on its own sample. Space runs the Reverb in its own
-32-sample chunks.
+MPC's tempo and its one beat count at the piece's first sample (`Engine::clockStrata`): MPC's
+position while the transport plays (the block's, moved on by the samples since), and on from where
+it was at the tempo while it is stopped. The count runs on the sample count, asleep or awake, and
+every piece gives both strata the same one, rendered or not, so they keep to one grid; each sets its
+`BeatClock` (`dsp/common.h`) to it and moves it on by each step's samples.
+
+A synced cycle (Ground's Breath, a sway: `breathBeats`, `LifePos::swayBeats`) takes its target
+phase from that clock (a Bloom voice's plus its stagger, voice i at i / 6 of a cycle), so it sits on
+the bar whatever the blocks; a free one's target is its own phase, which moves on at its rate
+whenever the cycle is stepped, as it always did. Both kinds are one `PulledCycle` (`dsp/common.h`),
+each caller moving its own phase on in its own arithmetic. The phase used is never set while it is
+heard, only pulled toward the target (`pullPhase`: a 50 ms time constant, the short way round,
+landing exactly within 1e-9, about a second after a jump of half a cycle): a lock, a locate, a loop
+or Free <-> Sync glides instead of stepping (at Breath 100% a jump moves the gain at most about
+0.2 dB a step: 0.16 dB at 120 BPM, 0.20 at 300), a locked cycle is exactly the clock's, and a free
+one exactly its own, bit for bit as before Sync existed. A cycle nobody steps stands still (a Ground
+the engine skips, a Bloom voice not in use), so the first step from silence (Ground's gain at 0, a
+note starting afresh in a voice) lands on the target at once instead of gliding from where it
+stood. A free cycle starting from silence has no place to be on but its own phase, which paused
+with it: it goes on from there. A division faster than 4 Hz (a sway) or 8 Hz (a breath) at the
+tempo doubles.
+
+Each step the strata read their table pointers (`TableSet::get`), step their `LifeScan` positions,
+envelopes, glides, fades and filter targets; every gain then moves in a straight line across the
+step and the filters' coefficients glide per sample (the cutoffs evenly in octaves), so nothing
+steps. Bloom also ends a step where a strummed note's start falls, so each note starts on its own
+sample. Space runs the Reverb in its own 32-sample chunks.
 
 **Idle.** Asleep, or awake with nothing to hear (Ground not audible, Bloom with no voice in use)
 and Space `silent()`, `render()` writes zeros and runs no DSP. Space can stay unsilent for minutes
 (Abyss at Decay 30), and a change that lengthens its reach can make it unsilent again with no
-input; it then simply runs that much longer. A muted Ground isn't rendered; a muted Bloom renders
-no voices, only its envelopes and starts move on.
+input; it then simply runs that much longer. Once silent, the Reverb's predelay forgets what came
+in before, so a longer predelay plays nothing from before the silence, and nothing the network
+wrote before it is read again; at very short decays in long lines (Haze and Space at Decay 0.1 to
+0.2 s) what it wrote during the silence can come out under Freeze or a longer Decay
+(`dsp/space.h`, `dsp/reverb.h`). A muted Ground isn't rendered; a muted Bloom renders no voices,
+only its envelopes and starts move on.
 
 **Time** is 64-bit or double wherever it can run for hours: the engine's sample count, the
 harmony's beats, the oscillators' phases (32-bit fixed point, which wraps exactly), the sway's
-phase; Space's quiet counts saturate. Installations run for days.
+phase, Air's clock and its loop's place and passes; Space's quiet counts saturate. Installations
+run for days.
 
 ## Threads and real-time rules
 
@@ -221,7 +247,7 @@ phase; Space's quiet counts saturate. Installations run for days.
 
 - Nothing on the audio thread allocates, locks or throws. Every `dsp/` class allocates in its
   constructor (Space's Reverb buffers, about 870 KB); `render()` and `process()` never do. The
-  harmony keeps its keys in fixed arrays.
+  harmony keeps its keys in fixed arrays, Air's generator its motifs and its loop's recording.
 - Host callbacks happen only from `processReplacing`; never from `setParameter` or the dispatcher.
 - A `try`/`catch` stands between every entry point and MPC: an exception never reaches the host.
 - The patch reaches the audio thread as a snapshot of every parameter (a seqlock: a preset half

@@ -168,13 +168,14 @@ public:
     // release, the new ones start (with the strum).
     void moveTo(const Chord& c, float vel);
     void reset();                         // every voice free and silent at once; the seed's numbers again
-    // MPC's tempo and, while it plays (locked), its position at the next render's first sample: a
-    // synced sway's clock (LifePos swayBeats). Synced, the voices are staggered on it, voice i a
+    // MPC's tempo, and the beat count at the next render's first sample: a synced sway's clock
+    // (LifePos swayBeats; the engine gives every stratum its one count, MPC's position while it
+    // plays, on at the tempo while it is stopped). Synced, the voices are staggered on it, voice i a
     // sixth of a cycle times i after the bar's phase, so a chord still shimmers while it stays on
-    // the bar, and each voice keeps its place from note to note. Not locked, the clock runs on at
-    // the tempo. Each voice keeps its own free phase meanwhile, and goes back to it, gliding, when
-    // the sway is Free again (LifeScan).
-    void setTransport(double bpm, double beats, bool locked) { clock_.set(bpm, beats, locked); }
+    // the bar, and each voice keeps its place from note to note: a note starting afresh in a voice
+    // starts its sway on that place (LifeScan::land), however long the voice was free. Each voice
+    // keeps its own free phase meanwhile, and goes back to it, gliding, when the sway is Free again.
+    void setTransport(double bpm, double beats) { clock_.set(bpm, beats); }
     // Adds the dry into outL/outR and the send, at spaceSend 0..1 (gliding across the call from the
     // last call's), into sendL/sendR. n <= kMaxBlock (more is rendered kMaxBlock at a time).
     void render(const TableSet& tables, float* outL, float* outR, float* sendL, float* sendR,

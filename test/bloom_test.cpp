@@ -1064,11 +1064,11 @@ void testNoAllocation() {
 #endif
 }
 
-} // namespace
-
 // A synced sway (LifePos swayBeats on Bloom's clock, MPC playing): every voice of a chord on the bar, staggered,
 // voice i reading where the bar's phase plus i / 6 of a cycle puts it, and staying there. Back on Free, each glides off
-// to its own phase: off those places.
+// to its own phase: off those places. Synced again, a chord after 1.3 s of silence (nothing rendered, every voice's
+// sway standing still) starts each voice on its place at its first control step, within 1e-6 of the table: from
+// silence a sway lands there instead of gliding from where it stood.
 void testSwaySync() {
     std::printf("== bloom: a synced sway, staggered, and back to Free\n");
     Bloom b;
@@ -1076,19 +1076,21 @@ void testSwaySync() {
     af::BloomPatch p = plain();
     p.table = af::TB_FELT_PIANO;
     p.pos = af::LifePos{0.5f, 1.0f, 0.3f, 0.0f, 4.0f};   // full sway, one per bar
+    p.releaseS = 0.05f;
     b.set(p, af::HarmonyPatch{});
     b.play(chordOf({60, 64, 67}), 1, 1.0f);
     Run r;
     double beat = 0.0;
     // How far the chord's voices read from their staggered places on the bar (-1: a voice missing), and how far
     // apart they read.
-    const auto offBar = [&b, &beat](float& spread) {
+    const auto offBar = [&b, &beat](std::initializer_list<int> notes, float& spread) {
         float off = 0.0f, lo = 1.0f, hi = 0.0f;
-        for (int note : {60, 64, 67}) {
+        for (int note : notes) {
             const int v = voiceOf(b, note);
             if (v < 0) return -1.0f;
-            const double ph = beat / 4.0 + static_cast<double>(v) / Bloom::kVoices;
-            const float want = 0.5f + 0.25f * static_cast<float>(std::sin(2.0 * kPi * ph));
+            double ph = beat / 4.0 + static_cast<double>(v) / Bloom::kVoices;
+            ph -= std::floor(ph);
+            const float want = 0.5f + 0.25f * af::sinCycle(static_cast<float>(ph));
             off = std::max(off, std::fabs(b.voice(v).pos - want));
             lo = std::min(lo, b.voice(v).pos);
             hi = std::max(hi, b.voice(v).pos);
@@ -1096,29 +1098,45 @@ void testSwaySync() {
         spread = hi - lo;
         return off;
     };
-    const auto play = [&](double seconds) {
-        for (int k = 0; k < samples(seconds) / kBlk; ++k) {
-            b.setTransport(120.0, beat, true);
-            render(b, r, kBlk);
-            beat += kBlk * 2.0 / af::kRate;
+    // `n` samples in blocks of up to kBlk, the beats moving on at 120 BPM.
+    const auto play = [&](int n) {
+        for (int k = 0; k < n; k += kBlk) {
+            b.setTransport(120.0, beat);
+            render(b, r, std::min(kBlk, n - k));
+            beat += std::min(kBlk, n - k) * 2.0 / af::kRate;
         }
     };
-    play(1.5);
+    play(samples(1.5));
     float spread = 0.0f;
-    const float locked = offBar(spread);
-    play(1.0);
+    const float locked = offBar({60, 64, 67}, spread);
+    play(samples(1.0));
     float later = 0.0f;
-    const float stillLocked = offBar(later);
+    const float stillLocked = offBar({60, 64, 67}, later);
     p.pos.swayBeats = 0.0f;
     b.set(p, af::HarmonyPatch{});
-    play(1.0);
+    play(samples(1.0));
     float apart = 0.0f;
-    const float freed = offBar(apart);
+    const float freed = offBar({60, 64, 67}, apart);
     std::printf("  synced: %.6f off their places (%.3f apart), a second on %.6f; a second after Free %.3f off them\n", locked,
                 spread, stillLocked, freed);
     CHECK(locked >= 0.0f && locked < 1e-4f && stillLocked >= 0.0f && stillLocked < 1e-4f && spread > 0.05f);
     CHECK(freed > 0.01f && apart > 0.01f);
+    // Synced again; released; 1.3 s of silence; a chord, one control step.
+    p.pos.swayBeats = 4.0f;
+    b.set(p, af::HarmonyPatch{});
+    play(samples(1.0));
+    b.release(1);
+    play(samples(1.3));
+    CHECK(b.active() == 0);
+    b.play(chordOf({62, 65, 69}), 2, 1.0f);
+    play(af::kChunk);
+    float unused = 0.0f;
+    const float fresh = offBar({62, 65, 69}, unused);
+    std::printf("  a chord after 1.3 s of silence: %.7f of the table off their places at the first step\n", fresh);
+    CHECK(fresh >= 0.0f && fresh < 1e-6f);
 }
+
+} // namespace
 
 void bloomTests() {
     testSwaySync();

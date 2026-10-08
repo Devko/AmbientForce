@@ -8,6 +8,7 @@
 #include "../tools/phrase.h"
 #include "factory_presets.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -395,8 +396,8 @@ void testFactory() {
 }
 
 // Every macro at both ends, the demo phrase each time: none makes a preset lean on the limiter (it may work on at
-// most 1% of the phrase, as at 0) or drops it by more than 10 LU (Horizon's far end is the quietest, a few LU
-// down: the dry steps back). On Init, and on the hottest preset (the highest peak on its phrase, testFactory) of
+// most 1% of the phrase, as at 0) or drops it by more than 10 LU (Horizon moves the level most: far a few LU down,
+// the dry stepping back, and on Frozen Sky, nearly all reverb, 8.0 LU near and 7.1 far). On Init, and on the hottest preset (the highest peak on its phrase, testFactory) of
 // each Space type: the ones nearest the limiter, in every reverb, whichever presets there are. x86 only: under
 // qemu a phrase takes 7.6 s. AF_FULL_MACRO_SWEEP=1 sweeps them all instead (every factory preset at both ends of
 // each macro, and the 16 corners of all four at +-1 on the three hottest presets): minutes more, so it is run by
@@ -409,11 +410,13 @@ void testMacroLevels() {
     constexpr double kMaxDropLu = 10.0;
     CHECK(afl::waitForTables());
     const int macros[] = {af::P_M_HORIZON, af::P_M_MOTION, af::P_M_GLOW, af::P_M_DENSITY};
-    // The phrase with macro `id` at x (none: id < 0): its loudness and the share of it the limiter worked on.
-    const auto play = [](const std::string& text, int id, float x, double& limited) {
+    using Ends = std::array<float, 4>;   // Horizon, Motion, Glow, Density; 0: as the preset has it
+    // The phrase with the macros at m: its loudness and the share of it the limiter worked on.
+    const auto play = [&macros](const std::string& text, const Ends& m, double& limited) {
         Host h;
         h.load(text);
-        if (id >= 0) h.set(id, x);
+        for (int k = 0; k < 4; ++k)
+            if (m[static_cast<size_t>(k)] != 0.0f) h.set(macros[k], m[static_cast<size_t>(k)]);
         std::vector<float> L, R;
         const uint32_t was = af::limitedSamples();
         afl::render(h.e, h.log.time, afl::phrase(text), L, R);
@@ -424,9 +427,7 @@ void testMacroLevels() {
     const bool full = sweep && *sweep && *sweep != '0';
     std::vector<int> pick;   // Init, then the hottest of each Space type; or all of them
     for (const Played& p : g_played)
-        if (full) pick.push_back(p.index);
-    for (const Played& p : g_played)
-        if (!full && std::string(af::kFactoryPresets[p.index].name) == "Init") pick.push_back(p.index);
+        if (full || std::string(af::kFactoryPresets[p.index].name) == "Init") pick.push_back(p.index);
     for (int mode = 0; mode < af::PARAM_INFO[af::P_S_MODE].nopts; ++mode) {
         const Played* hottest = nullptr;
         for (const Played& p : g_played)
@@ -440,13 +441,16 @@ void testMacroLevels() {
     for (int i : pick) {
         const std::string text = af::kFactoryPresets[i].text;
         double limited = 0.0;
-        const double base = play(text, -1, 0.0f, limited);
+        const double base = play(text, Ends{}, limited);
         char line[160];
         int at = std::snprintf(line, sizeof line, "  %-18s", af::kFactoryPresets[i].name);
         bool ok = true;
-        for (int id : macros)
+        for (int k = 0; k < 4; ++k)
             for (float x : {-1.0f, 1.0f}) {
-                const double lufs = play(text, id, x, limited);
+                const int id = macros[k];
+                Ends m{};
+                m[static_cast<size_t>(k)] = x;
+                const double lufs = play(text, m, limited);
                 worstDrop = std::max(worstDrop, base - lufs);
                 worstLimited = std::max(worstLimited, limited);
                 const bool good = limited <= afl::kMaxLimitedShare && lufs >= base - kMaxDropLu;
@@ -467,18 +471,13 @@ void testMacroLevels() {
     for (const Played& p : hot) {
         const std::string text = af::kFactoryPresets[p.index].text;
         double limited = 0.0;
-        const double base = play(text, -1, 0.0f, limited);
+        const double base = play(text, Ends{}, limited);
         std::string line = std::string("  corners ") + af::kFactoryPresets[p.index].name + ":";
         bool ok = true;
         for (int corner = 0; corner < 16; ++corner) {
-            Host h;
-            h.load(text);
-            for (int m = 0; m < 4; ++m) h.set(macros[m], corner >> m & 1 ? 1.0f : -1.0f);
-            std::vector<float> L, R;
-            const uint32_t was = af::limitedSamples();
-            afl::render(h.e, h.log.time, afl::phrase(text), L, R);
-            limited = static_cast<double>(af::limitedSamples() - was) / static_cast<double>(L.size());
-            const double lufs = afl::lufs(L, R);
+            Ends m;
+            for (int k = 0; k < 4; ++k) m[static_cast<size_t>(k)] = corner >> k & 1 ? 1.0f : -1.0f;
+            const double lufs = play(text, m, limited);
             cornerDrop = std::max(cornerDrop, base - lufs);
             cornerLimited = std::max(cornerLimited, limited);
             const bool good = limited <= afl::kMaxLimitedShare && lufs >= base - kMaxDropLu;

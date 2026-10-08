@@ -97,8 +97,34 @@ public:
     // The longest anything takes to come out once it has gone in, or to go round the network once:
     // the predelay, the longest line (at the larger size, fully modulated) with the diffusers' and
     // allpasses' build-up, and the shimmer's shifter while it runs. In and out both silent for
-    // this long: the reverb holds nothing.
+    // this long, nothing the network wrote before then is read again, whatever the settings
+    // become: its buffers hold older samples, but a larger size moves the reads back slower than
+    // the writes move on (0.1 sample a sample at most), the modulation's full depth is in the reach
+    // already, a new mode starts the network afresh, and the shifter starts afresh when the shimmer
+    // comes on. What it wrote during the silence is as quiet as what came out, but for one
+    // exception: very short decays in long lines. Each pass then loses far more than 120 dB, so
+    // the output falls silent while the input diffusers still ring into the lines (and the in-loop
+    // allpasses on what they read there); a reverb no longer run keeps that ring, and Freeze or a
+    // longer Decay lets it out once it runs again. After a -6 dBFS burst at Decay 0.1 s (the
+    // louder of the two): Haze -92 dBFS at size 0, -78 at 0.5, -59 at 1; Space -111, -110 and -91;
+    // Haze at Decay 0.2 s still -105 to -113. Under -120 dBFS at Decay 0.33 s and longer, and in
+    // Room, Hall, Plate and Abyss at any. The predelay is another matter: its buffer keeps the last
+    // 370 ms that went in, and a longer predelay reads up to 250 ms back at once. forgetInput()
+    // hides what is older than the silence.
     int reachSamples() const;
+
+    // The input has been silent for the last `quiet` samples, and the caller may stop running the
+    // reverb (Space calls this once a silence begins, at the end of a process() call or at a set()
+    // that shortens the reach, as the engine may skip it from then on): the predelay forgets what
+    // came in before them, as after reset(), so a longer predelay set while the reverb isn't run
+    // reads zeros there, not a ghost of what played before the silence (minutes old, maybe, at its
+    // own level). Nothing is cleared: the predelay's age, which hides what came before a reset, is
+    // lowered. A clear would land in the block that wakes the reverb, usually the one a note starts
+    // in, on top of the reverb's own work: 128 KB for the predelay alone (8k NEON stores), 870 KB
+    // for all it holds (55k). A read within the last `quiet` samples finds what it would have
+    // found, and with `quiet` at least the reach, so does every read the settings then make: only
+    // a longer predelay's read past them changes.
+    void forgetInput(uint32_t quiet);
 
     // Whether the last chunk's loop gains or damping moved (the slower network loop), and whether
     // the shimmer's shifter ran: for tests.
@@ -118,7 +144,8 @@ private:
         float a1 = 1.0f, a2 = 0.0f, a3 = 0.0f;                       // its update while g is still
         Ramp g;                                // its g while it glides
         bool moving = false;
-        uint32_t age = 0;      // samples written since reset (up to the buffer's size)
+        uint32_t age = 0;      // how far back a tap may read: samples written since reset, or since
+                               // the silence forgetInput() was told of began (up to the buffer's size)
         float tiny = 1e-20f;   // flips sign every sample: keeps decaying states out of the denormals
 
         void tick(float xl, float xr, float& ol, float& or_);

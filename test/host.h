@@ -141,11 +141,15 @@ struct Turn {
 
 void engineTests();      // engine_test.cpp: the engine on its own (Listen routing, keys, Stop, the mix, the output)
 void reverbTests();      // reverb_test.cpp: the Reverb and Space on their own
+void echoTests();        // echo_test.cpp: the Delay and Echo on their own (EffectForce's checks, Diffuse, silent(), the return after it)
 void harmonyTests();     // harmony_test.cpp: the harmony brain on its own (scales, chords, memory)
+void airgenTests();      // airgen_test.cpp: Air's generator on its own (timing, Gravity, patterns, Echo, Loop)
 void tablesTests();      // tables_test.cpp: the table library, the life models, the builder thread
 void lifeoscTests();     // lifeosc_test.cpp: the lifetime oscillator on its own (read, glide, sway, smear, couple)
 void groundTests();      // ground_test.cpp: Ground on its own (partials, beat, gravity, fade, gains, stability)
 void bloomTests();       // bloom_test.cpp: Bloom on its own (chords, strum, steal, moves, the tail handoff)
+void airvoicesTests();   // airvoices_test.cpp: Air's voices on their own (pitch, decay, Tone, levels, steal, sleep)
+void weatherTests();     // weather_test.cpp: Weather and its sources on their own (pitch, To Key, Stream, Duck)
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
 void paramsTests();      // params_test.cpp: defaults and their text, formats, option lists, the patch map, extremes
 

@@ -60,32 +60,35 @@ inline constexpr float kBarDivBeats[] = {1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f, 6
 inline constexpr int kNumBarDivs = static_cast<int>(sizeof kBarDivBeats / sizeof kBarDivBeats[0]);
 static_assert(sizeof kBarDivNames / sizeof kBarDivNames[0] == kNumBarDivs, "a name per division");
 
-// A stratum's beat count for its synced cycles: MPC's song position while the transport plays
-// (set() before each render, at its first sample), and on from where it was at the tempo while it
-// is stopped, so a synced cycle keeps its length then and locks back to the bar when MPC plays.
-// The stratum moves it on by each control step's samples (advance()) and reads its cycles from it.
+// Where a synced cycle stands on a BeatClock (BeatClock::cycle): its phase, 0..1, and how far it
+// moves in a control step, in cycles.
+struct ClockCycle {
+    double phase = 0.0, adv = 0.0;
+};
+
+// A stratum's beat count for its synced cycles: the engine's one count (Engine::clockStrata), set
+// before each render at its first sample. That is MPC's song position while the transport plays,
+// and on from where it was at the tempo while it is stopped, the same for every stratum whether it
+// sounds or not, so the strata keep to one grid. The stratum moves it on by each control step's
+// samples (advance()) and reads its cycles at the step's end.
 struct BeatClock {
     double beats = 0.0;   // quarter notes
     double bpm = 120.0;
-    void set(double tempo, double songBeats, bool locked) {
+    void set(double tempo, double songBeats) {
         bpm = std::isfinite(tempo) && tempo >= 1.0 ? tempo : 120.0;
-        if (locked && std::isfinite(songBeats)) beats = songBeats;
+        if (std::isfinite(songBeats)) beats = songBeats;
     }
     void advance(int samples) { beats += static_cast<double>(samples) * bpm / (60.0 * static_cast<double>(kRate)); }
-    // A cycle of `periodBeats` quarter notes: where it stands (0..1), `offset` cycles on.
-    double phase(double periodBeats, double offset = 0.0) const {
-        const double c = beats / periodBeats + offset;
-        return c - std::floor(c);
-    }
-    // A synced cycle's length in quarter notes: the division, doubled until the cycle runs no
-    // faster than maxHz at this tempo (a sway at 1/4 runs 4 Hz at 240 BPM).
-    double cycleBeats(double divBeats, double maxHz) const {
+    // A synced cycle, one per division of divBeats quarter notes, the division doubled until the cycle
+    // runs no faster than maxHz at this tempo (a sway at 1/4 runs 4 Hz at 240 BPM, and at 300 BPM
+    // 2.5 Hz, as 1/2): where it stands now, and how far it moves in `seconds`.
+    ClockCycle cycle(double divBeats, double maxHz, double seconds) const {
+        const double perSecond = bpm / 60.0;   // quarter notes
         double b = divBeats > 0.0 ? divBeats : 1.0;
-        while (bpm / 60.0 / b > maxHz) b *= 2.0;
-        return b;
+        while (perSecond > maxHz * b) b *= 2.0;
+        const double inv = 1.0 / b, c = beats * inv;
+        return {c - floorFast(c), perSecond * inv * seconds};
     }
-    // How far a cycle of `periodBeats` moves in `seconds` at this tempo, in cycles.
-    double cycles(double periodBeats, double seconds) const { return bpm / 60.0 / periodBeats * seconds; }
 };
 constexpr double kMaxSyncSwayHz = 4.0;     // a synced sway runs no faster (a free one tops out at 2 Hz)
 constexpr double kMaxSyncBreathHz = 8.0;   // a synced breath no faster (Breath Rate tops out at 8.96 Hz free)
@@ -93,26 +96,94 @@ constexpr double kMaxSyncBreathHz = 8.0;   // a synced breath no faster (Breath 
 // A cycle's phase (0..1) drawn to where it should be, so it never jumps. `cur` moves on by `adv`
 // cycles (the target's own speed: following a target that moves leaves no lag), then a share of
 // what is left, the short way round, with a time constant of kPhasePullS: MPC starting, locating or
-// looping, or Free <-> Sync, is a glide of that order instead of a step. Within 1e-9 of the target
-// it lands on it exactly, so a locked cycle is exactly the clock's and a free one exactly its own.
+// looping, or Free <-> Sync, glides instead of stepping, close after about 50 ms. Within 1e-9 of
+// the target it lands on it exactly, so a locked cycle is exactly the clock's and a free one
+// exactly its own; from half a cycle away that takes about a second (0.05 s x ln(0.5 / 1e-9)).
+// The arguments of its floors stay within -2..2: floorFast, no library call.
 constexpr double kPhasePullS = 0.05;
-inline double pullPhase(double cur, double adv, double want, double seconds) {
+// 1 - e^-x by its series, which a constant can use (std::exp can't), for x well under 1: at a
+// control step's x, 0.0145, the terms fall under a double's last bit after eight (at x = 5 twenty
+// terms would still be 1e-5 off).
+constexpr double oneMinusExpNeg(double x) {
+    double sum = 0.0, term = -1.0;
+    for (int k = 1; k <= 20; ++k) {
+        term *= -x / k;
+        sum += term;
+    }
+    return sum;
+}
+// A full control step's share of what is left, worked out once: every step is one but those a MIDI
+// event or a strum cuts short, and exp() costs about 70 ARM instructions. The others work theirs
+// out with expm1, which agrees with the series to the last bit.
+constexpr double kPullSamples = static_cast<double>(kRate) * kPhasePullS;   // the time constant
+constexpr double kStepPull = oneMinusExpNeg(kChunk / kPullSamples);
+static_assert(kChunk / kPullSamples < 0.1, "the series is for x well under 1");
+// `samples`: the step's length (a negative one counts as 0).
+inline double pullPhase(double cur, double adv, double want, int samples) {
     const double next = cur + adv;
     double err = want - next;
-    err -= std::floor(err + 0.5);   // -0.5..0.5
+    err -= floorFast(err + 0.5);   // -0.5..0.5
     if (std::fabs(err) < 1e-9) return want;
-    const double to = next + err * (1.0 - std::exp(-seconds / kPhasePullS));
-    return to - std::floor(to);
+    const double share =
+        samples == kChunk ? kStepPull : -std::expm1(-static_cast<double>(std::max(samples, 0)) / kPullSamples);
+    const double to = next + err * share;
+    return to - floorFast(to);
 }
 
+// One of a stratum's cycles, Ground's Breath or a sway: a phase of its own, moving on at its free
+// rate every step (Free's target), and the phase it plays, pulled toward its target each step
+// (pullPhase): synced, the clock's, `offset` cycles on (Bloom staggers its voices by it, the breath
+// tops on the downbeat by it); free, its own. A cycle nobody steps (a stratum or a voice not
+// rendered) stands still, its own phase too, as a free cycle always has. So the first step after
+// silence lands on the target at once (land()) instead of gliding from where it stood: there is
+// nothing to hear jump, and a glide would start a synced cycle off its place. A free cycle has no
+// place to start on but its own phase, and goes on from where it stood.
+class PulledCycle {
+public:
+    // maxHz: a synced cycle's division doubles until the cycle runs no faster. offset: where it sits
+    // against the clock, in cycles (not finite: 0).
+    explicit PulledCycle(double maxHz, double offset = 0.0) : maxHz_(maxHz) { setOffset(offset); }
+    void setOffset(double cycles) { offset_ = std::isfinite(cycles) ? cycles - std::floor(cycles) : 0.0; }
+
+    void reset(double p) {
+        phase_ = own_ = p;
+        landing_ = false;
+    }
+    void land() { landing_ = true; }   // the next step puts the phase on its target
+    // One control step, `samples` long; returns the phase. ownAdv: how far its own phase moves, in
+    // cycles, worked out by the caller in its own arithmetic (each keeps what its Free has always
+    // played, bit for bit). divBeats > 0: synced, a cycle per divBeats quarter notes on `clock`
+    // (moved on to this step's end).
+    double step(double ownAdv, int samples, const BeatClock& clock, double divBeats) {
+        const bool onOwn = phase_ == own_;
+        own_ += ownAdv;
+        own_ -= floorFast(own_);
+        if (divBeats > 0.0) {
+            const double seconds = static_cast<double>(samples) / static_cast<double>(kRate);
+            const ClockCycle c = clock.cycle(divBeats, maxHz_, seconds);
+            double want = c.phase + offset_;
+            want -= floorFast(want);
+            phase_ = landing_ ? want : pullPhase(phase_, c.adv, want, samples);
+        } else {
+            // On its own phase it stays there: the pull would land on it exactly (the same sum, so
+            // nothing is left to pull), and a free step costs about what it did before the pull.
+            phase_ = landing_ || onOwn ? own_ : pullPhase(phase_, ownAdv, own_, samples);
+        }
+        landing_ = false;
+        return phase_;
+    }
+    double phase() const { return phase_; }
+    double own() const { return own_; }
+
+private:
+    double maxHz_, offset_ = 0.0;
+    double phase_ = 0.0;     // the phase it plays, cycles 0..1
+    double own_ = 0.0;       // its own phase, 0..1
+    bool landing_ = false;
+};
+
+// A synced time's length in seconds (the Delay's sync: dsp/delay.cpp).
 inline double divSeconds(double beats, double bpm) { return beats * 60.0 / bpm; }
-
-// A synced LFO's phase (0..1) from MPC's song position: the LFO stays on the beat whatever happens
-// between (loops, jumps, tempo changes). `offset` in cycles.
-inline double lockedPhase(const Transport& t, double periodBeats, double offset = 0.0) {
-    const double c = t.beats / periodBeats + offset;
-    return c - std::floor(c);
-}
 
 // --- levels -----------------------------------------------------------------------------------
 

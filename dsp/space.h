@@ -18,6 +18,17 @@
 // gone, so the engine may stop running it. A frozen tail is never silent while it sounds. The
 // counts saturate: an installation running for days never wraps them.
 //
+// Silent doesn't mean empty: the Reverb's predelay still holds what went in before the quiet
+// stretch, and a longer predelay set while the engine skips Space would read it (the reach grows,
+// so silent() turns false and the engine runs Space again, with no note played): a ghost of the
+// last notes, at their level, however long ago they were. So once a silence begins, the Reverb
+// forgets it (Reverb::forgetInput(): nothing cleared, nothing else changed), once per silence. A
+// silence begins at the end of a process() call, or at a set(): the reach counts the larger of
+// where the size, the mode and the predelay are and where they are going, and a set() that turns
+// one back while it moves shortens it, so the engine's next look finds Space silent with no
+// process() since. Nothing the network wrote before the quiet stretch is read again
+// (Reverb::reachSamples()); what it wrote during it can come out at very short decays (there).
+//
 // Wet only from the start: a Space that has never been set() plays the Reverb's defaults at mix 1.
 //
 // Real-time rules: the constructor allocates (the Reverb's buffers); reset(), set() and process()
@@ -45,6 +56,8 @@ public:
     bool silent() const;   // the tail is under -120 dBFS and nothing is coming in
 
 private:
+    void forgetIfSilent();
+
     Reverb reverb_;
     Reverb::Params rev_;          // what the Reverb is given: the asked, wet only
     Transport t_;
@@ -53,6 +66,7 @@ private:
     float gain_ = 1.0f;           // the wet's gain, gliding to where Rise puts it
     uint32_t quietIn_ = 0;        // samples the send has stayed under -120 dBFS (saturating)
     uint32_t quietOut_ = 0;       // ... and the wet
+    bool held_ = false;           // a send came in since the Reverb last forgot its input
 };
 
 } // namespace af

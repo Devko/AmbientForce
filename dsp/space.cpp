@@ -41,6 +41,7 @@ void Space::reset() {
     env_ = 0.0f;
     gain_ = 1.0f;
     quietIn_ = quietOut_ = kQuietMax;
+    held_ = false;
 }
 
 void Space::set(const Params& p, const Transport& t) {
@@ -49,6 +50,19 @@ void Space::set(const Params& p, const Transport& t) {
     rise_ = clampParam(p.rise, 0.0f, 1.0f, 0.2f);
     t_ = t;
     reverb_.set(rev_, t_);   // now as well: silent() asks the Reverb how far it reaches with these
+    forgetIfSilent();        // a shorter reach can begin the silence here
+}
+
+// A silence has begun, at the end of a process() call or at a set() that shortened the reach: from
+// now on the engine may skip Space, for minutes, and a longer predelay set meanwhile would read what
+// went in before the quiet stretch. The Reverb forgets that (space.h). Once a silence: after it the
+// predelay's age and the quiet count grow together, until something comes in again. While anything
+// sounds a count is 0, and once forgotten held_ is false: either way reachSamples() isn't asked.
+void Space::forgetIfSilent() {
+    if (held_ && quietIn_ > 0 && quietOut_ > 0 && silent()) {
+        reverb_.forgetInput(quietIn_);
+        held_ = false;
+    }
 }
 
 void Space::process(const float* sendL, const float* sendR, float* outL, float* outR, int n) {
@@ -88,10 +102,16 @@ void Space::process(const float* sendL, const float* sendR, float* outL, float* 
         }
 
         const uint32_t um = static_cast<uint32_t>(m);
-        quietIn_ = in > kQuiet ? 0 : std::min(quietIn_ + um, kQuietMax);
+        if (in > kQuiet) {
+            quietIn_ = 0;
+            held_ = true;
+        } else {
+            quietIn_ = std::min(quietIn_ + um, kQuietMax);
+        }
         quietOut_ = tail ? 0 : std::min(quietOut_ + um, kQuietMax);
         if (t_.playing) t_.beats += m / static_cast<double>(kRate) * t_.bpm / 60.0;
     }
+    forgetIfSilent();
 }
 
 bool Space::silent() const {

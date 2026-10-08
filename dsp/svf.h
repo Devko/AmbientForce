@@ -108,6 +108,27 @@ inline float clampParam(float x, float lo, float hi, float nan) {
 // The prewarped g for a cutoff in Hz; libm's tan, so per chunk only.
 inline float svfG(float hz) { return std::tan(kPi * hz / kRate); }
 
+// The output's tilt (dsp/engine.cpp) and Weather's: one first-order shelf pivoting at 800 Hz, the
+// highs times `high` and the lows times `low` = 1 / high (+-6 dB at tilt +-1). A TPT one-pole
+// low-pass splits them, its pole at pivot x sqrt(high / low), so the shelf's middle (0 dB) sits on
+// the pivot and the highs reach `high` exactly at Nyquist. Per sample, with its state s:
+//   v = (x - s) G;  lp = v + s;  s = lp + v;  y = high x + (low - high) lp.
+// libm's tan: once per control step at most, while the tilt glides (kStep a step).
+struct TiltShelf {
+    static constexpr float kPivotHz = 800.0f;
+    static constexpr float kDb = 6.0f;        // the shelf's highs (and, the other way, lows) at tilt 1
+    static constexpr float kStep = 0.029f;    // a control step's glide: the whole range in 50 ms
+    float high = 1.0f, low = 1.0f, G = 0.0f;
+    static TiltShelf of(float tilt) {
+        TiltShelf s;
+        s.high = exp2Fast(tilt * kDb * 0.166096404744f);   // log2(10) / 20
+        s.low = 1.0f / s.high;
+        const float g = svfG(kPivotHz * s.high);
+        s.G = g / (1.0f + g);
+        return s;
+    }
+};
+
 // The state update for g and k.
 struct SvfUpdate {
     f2 a1, a2, a3;

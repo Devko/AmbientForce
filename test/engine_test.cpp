@@ -608,6 +608,95 @@ void testClock() {
     CHECK(!e.info().awake);
 }
 
+// The synced cycles run on the engine's one beat count (clockStrata): MPC's position while it plays, on at the tempo
+// while it is stopped, whether a stratum sounds or not. And a cycle that starts from silence starts on its place, not
+// gliding from where it stood: a chord after a second and more of silence (Bloom rendered nothing) has each voice on
+// its staggered place at its first control step, within 1e-6 of the table; the breath unmuted after a second and more
+// muted (Ground not rendered) is on the beat at its first step, within 0.1 dB of where the count puts it; and after 3 s
+// stopped with only Ground sounding, a chord's voices and the breath are on that one count together. Playing and
+// stopped. (Each stratum ran its own clock while stopped, only while rendered: after 3 s stopped a chord was 0.17
+// of the table off the drone's grid; and a stale phase glided: the chord from silence 0.41 of the table off at its
+// first step, the breath unmuted 3.1 dB.)
+void testSyncFromSilence() {
+    std::printf("== engine: the synced cycles on one count, from silence on their places\n");
+    constexpr double kBpm = 120.0;
+    for (bool stop : {false, true}) {
+        Engine e(sines());
+        Patch p = dry();
+        p.onStop = af::OS_KEEP;
+        p.ground.listen = af::LI_FREE;   // the drone on the tonic throughout; Bloom on the keys
+        p.ground.fadeS = 0.05f;
+        p.ground.breath = 1.0f;
+        p.ground.breathBeats = 1.0f;     // 1/4: two breaths a second, its top on each beat
+        p.bloom.pos = af::LifePos{0.5f, 1.0f, 0.3f, 0.0f, 4.0f};   // the full sway, one a bar, no smear
+        p.bloom.swellS = 0.005f;
+        p.bloom.releaseS = 0.05f;
+        p.bloom.tail = af::TL_VOICE;
+        e.setPatch(p);
+        double mpc = 37.3;    // MPC's position: it stands still while MPC is stopped
+        double count = mpc;   // where the strata's count should be: on at the tempo either way
+        bool playing = true;
+        float L[128], R[128];
+        const auto run = [&](double seconds) {
+            for (int b = 0; b < static_cast<int>(seconds * af::kRate / 128.0); ++b) {
+                e.setTransport(kBpm, mpc, playing, true);
+                e.render(L, R, 128);
+                count += 128.0 * kBpm / 60.0 / af::kRate;
+                if (playing) mpc = count;
+            }
+        };
+        // One control step (32 samples): the breath's gain off the count's, in dB; how far Bloom's voices read from
+        // their staggered places on it (the largest), and how many sound.
+        float off = 0.0f;
+        int voices = 0;
+        const auto step = [&]() {
+            e.setTransport(kBpm, mpc, playing, true);
+            e.render(L, R, af::kChunk);
+            count += af::kChunk * kBpm / 60.0 / af::kRate;
+            if (playing) mpc = count;
+            off = 0.0f;
+            voices = 0;
+            for (int i = 0; i < af::Bloom::kVoices; ++i) {
+                const af::Bloom::VoiceView v = e.bloom().voice(i);
+                if (v.stage != af::Bloom::ST_ATTACK) continue;
+                ++voices;
+                double ph = count / 4.0 + static_cast<double>(i) / af::Bloom::kVoices;
+                ph -= std::floor(ph);
+                off = std::max(off, std::fabs(v.pos - (0.5f + 0.25f * af::sinCycle(static_cast<float>(ph)))));
+            }
+            double ph = count + 0.25;
+            ph -= std::floor(ph);
+            return 20.0 * std::log10(e.ground().outputGain() / p.ground.level) - 3.0 * std::sin(2.0 * kPi * ph);
+        };
+        e.noteOn(60, 100);
+        run(1.0);
+        playing = !stop;
+        run(0.5);
+        e.noteOff(60);
+        p.ground.mute = true;
+        e.setPatch(p);
+        run(1.3);   // Bloom released and silent, Ground muted: neither rendered
+        CHECK(e.bloom().active() == 0 && !e.ground().audible());
+        p.ground.mute = false;
+        e.setPatch(p);
+        e.noteOn(64, 100);
+        const double breath = step();
+        const float bloom = off;
+        const int chord = voices;
+        e.noteOff(64);
+        run(3.0);   // Bloom silent, Ground sounding
+        CHECK(e.bloom().active() == 0 && e.ground().audible());
+        e.noteOn(62, 100);
+        const double together = step();
+        std::printf("  %s: from silence the breath %.3f dB off the count, the chord %.7f of the table off its places; "
+                    "3 s on, Bloom %.7f off and the breath %.3f dB\n",
+                    stop ? "stopped" : "playing", breath, bloom, off, together);
+        CHECK(chord >= 3 && voices >= 3);
+        CHECK(std::fabs(breath) < 0.1 && bloom < 1e-6f);
+        CHECK(std::fabs(together) < 0.1 && off < 1e-6f);
+    }
+}
+
 // The mix: pitch, velocity, volume, pan, tilt.
 void testMix() {
     std::printf("== engine: pitch, velocity, volume, pan, tilt\n");
@@ -1118,6 +1207,7 @@ void engineTests() {
     testListenChanges();
     testGuard();
     testClock();
+    testSyncFromSilence();
     testRise();
     testLimiter();
     testLimiterRelease();

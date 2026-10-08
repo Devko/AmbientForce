@@ -18,9 +18,7 @@ namespace {
 
 std::atomic<uint32_t> g_guardTrips{0}, g_limited{0};   // guardTrips(), limitedSamples()
 
-constexpr float kTiltPivotHz = 800.0f;
-constexpr float kTiltDb = 6.0f;             // the shelf's highs (and, the other way, lows) at tilt 1
-constexpr float kTiltStep = 0.029f;         // a control step's tilt glide: the whole range in 50 ms
+constexpr float kTiltStep = TiltShelf::kStep;   // a control step's tilt glide (svf.h's shelf, Weather's too)
 constexpr float kFloorDb = -60.0f;          // Stop's fade ends here, and resets
 constexpr float kLimitLand = 1e-3f;         // the limiter's release lands on 1 from here (0.009 dB)
 constexpr int kGlideSamples = 441;          // the volume, the return and the pans glide 10 ms
@@ -363,11 +361,15 @@ void Engine::route() {
 
 void Engine::setTransport(double bpm, double beats, bool playing, bool beatsValid) {
     const bool was = transport_.playing;
+    // The strata's count moves on to this block's first sample at the tempo it ran at, then takes
+    // MPC's position if MPC plays.
+    beats_ = beatsAt(samples_);
+    beatsAt_ = samples_;
     transport_.bpm = std::isfinite(bpm) && bpm >= 1.0 ? bpm : 120.0;
     transport_.valid = beatsValid && std::isfinite(beats);
     transport_.beats = transport_.valid ? beats : 0.0;
     transport_.playing = playing;
-    transportAt_ = samples_;   // the position is this block's first sample's
+    if (transport_.playing && transport_.valid) beats_ = transport_.beats;
     space_.set(spaceParams_, transport_);
     if (was && !playing) stop();
     else if (!was && playing) fading_ = false;   // playing again: a fade turns round
@@ -430,13 +432,12 @@ void Engine::reset() {
 
 // --- rendering ----------------------------------------------------------------------------------
 
+// The shelf's gains and its one-pole for t (svf.h's TiltShelf, which Weather shares).
 void Engine::tiltFor(float t) {
-    tiltHigh_ = exp2Fast(t * kTiltDb * 0.166096404744f);   // log2(10) / 20
-    tiltLow_ = 1.0f / tiltHigh_;
-    // The pole at pivot x sqrt(high / low), the zero at pivot / that: the shelf's middle (0 dB)
-    // on the pivot. A TPT one-pole, so the highs reach tiltHigh_ exactly at Nyquist.
-    const float g = svfG(kTiltPivotHz * tiltHigh_);
-    tiltG_ = g / (1.0f + g);
+    const TiltShelf s = TiltShelf::of(t);
+    tiltHigh_ = s.high;
+    tiltLow_ = s.low;
+    tiltG_ = s.G;
 }
 
 void Engine::control() {
@@ -492,14 +493,21 @@ void Engine::render(float* outL, float* outR, int n) {
     samples_ += static_cast<uint64_t>(n);
 }
 
-// The strata's synced cycles (Breath, the sways) read MPC's position at a piece's first sample: the
-// block's, moved on at the tempo by the samples since. Stopped, their clocks run on by themselves.
+// The strata's synced cycles (Breath, the sways) run on one beat count, the engine's: MPC's position
+// at the block's first sample while it plays, and on from where it was at the tempo while it is
+// stopped; moved on at the tempo by the samples since. It runs on the sample count, asleep or awake,
+// so every stratum, sounding or silent, finds it where the grid is: a stratum's own clock only moved
+// while it was rendered. A tempo change applies from the block that brings it.
+double Engine::beatsAt(uint64_t at) const {
+    const double since = static_cast<double>(static_cast<int64_t>(at - beatsAt_));
+    return beats_ + since * transport_.bpm / (60.0 * static_cast<double>(kRate));
+}
+
+// Each piece's first sample: the strata's clocks set to the count there.
 void Engine::clockStrata(uint64_t at) {
-    const bool locked = transport_.playing && transport_.valid;
-    const double since = static_cast<double>(static_cast<int64_t>(at - transportAt_));
-    const double beats = transport_.beats + since * transport_.bpm / (60.0 * static_cast<double>(kRate));
-    ground_.setTransport(transport_.bpm, beats, locked);
-    bloom_.setTransport(transport_.bpm, beats, locked);
+    const double beats = beatsAt(at);
+    ground_.setTransport(transport_.bpm, beats);
+    bloom_.setTransport(transport_.bpm, beats);
 }
 
 // One piece of n <= kChunk samples, all within one control step: the strata into the dry bus and

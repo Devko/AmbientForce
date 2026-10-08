@@ -416,6 +416,16 @@ void testStatusLine() {
     CHECK(changes >= 4 && changes <= 7);   // the first move at once, then every 0.5 s at most
     h.run(5 * kBlocksPerSec);
     CHECK(meter(h));
+    // A value echoed back rounded to MPC's 1/1000 (at most 0.0005 off) is no move; MPC's smallest move, 0.001, is one.
+    h.setN(af::P_B_AGE, h.get(af::P_B_AGE) + 0.0005f);
+    h.setN(af::P_B_AGE, h.get(af::P_B_AGE) - 0.0005f);
+    h.run(8);
+    CHECK(meter(h));
+    h.setN(af::P_B_AGE, h.get(af::P_B_AGE) + 0.001f);
+    h.run(4);
+    CHECK(h.display(af::P_STATUS) == bloomAge);
+    h.run(5 * kBlocksPerSec);
+    CHECK(meter(h));
 
     // A preset loaded: "NAME: its description" for 6 s, over any help, never the help of the values it set.
     std::string init;
@@ -701,12 +711,16 @@ int main() {
     };
 
     harmonyTests();
+    airgenTests();
     engineTests();
     tablesTests();   // early: it starts, stops and restarts the shared builder itself, from no instance alive
     lifeoscTests();
     groundTests();
     bloomTests();
+    airvoicesTests();
     reverbTests();
+    echoTests();
+    weatherTests();
     testBasics();
     testGetters();
     testPlay();

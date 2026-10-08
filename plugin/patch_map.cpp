@@ -113,7 +113,7 @@ std::string paramDisplay(int id, float n) {
         }
         case Fmt::Percent: std::snprintf(b, sizeof b, "%.0f%%", v * 100.0f); break;
         case Fmt::Bipolar:
-            std::snprintf(b, sizeof b, std::fabs(v) < 0.005f ? "0%%" : "%+.0f%%", v * 100.0f);
+            std::snprintf(b, sizeof b, std::fabs(v) < kBipolarZero ? "0%%" : "%+.0f%%", v * 100.0f);
             break;
         // Unit changes where the rounded text would reach the next unit ("1000 Hz" is "1.00 kHz").
         case Fmt::Hz:
@@ -179,12 +179,12 @@ Patch patchFromParams(const float* norm) {
 }
 
 Macros macrosFromParams(const float* norm) {
-    // Under half a percent is 0, as the knob reads ("0%"): a knob turned back by hand lands within
-    // MPC's 1/1000 of the middle, and the preset should play as saved then (not, say, a shimmer
-    // of 0.0006 woken up).
+    // Under half a percent is 0, as the knob reads ("0%", kBipolarZero): a knob turned back by hand
+    // lands within MPC's 1/1000 of the middle, and the preset should play as saved then (not, say, a
+    // shimmer of 0.0006 woken up).
     auto at = [norm](int id) {
         const float v = paramValue(id, norm[id]);
-        return std::fabs(v) < 0.005f ? 0.0f : v;
+        return std::fabs(v) < kBipolarZero ? 0.0f : v;
     };
     Macros m;
     m.horizon = at(P_M_HORIZON);
