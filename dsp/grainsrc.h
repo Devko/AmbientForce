@@ -27,14 +27,17 @@ namespace af {
 // A Weather source: stereo, 16 bit, at three rates (EffectForce's levels: a grain pitched up reads a
 // decimated copy, so what it would shift past 22 kHz was filtered out first). Interleaved L R. Each
 // level loops: GrainSource::kGuard frames after its end repeat its start, so a call's reads never wrap.
+// Ready only with all three levels and frames a multiple of 4: Weather has no fallback, since level
+// 0 read at up to 4 frames a sample would alias and outrun the copies it takes at a source change.
+// buildSource() makes all three, and Memory records all three.
 struct GrainSource {
     static constexpr int kLevels = 3;
     static constexpr int kGuard = 256;
     int frames = 0;            // level 0's frames, a multiple of 4; level k holds frames >> k (then the guard)
     int origin = 0;            // level 0's frame where the source starts (Memory's oldest); 0 for a file
     float gain = 1.0f / 32768.0f;          // a sample's value as a float
-    const int16_t* level[kLevels] = {};    // nullptr: empty
-    bool ready() const { return frames > 0 && level[0]; }
+    const int16_t* level[kLevels] = {};    // nullptr: empty (not ready)
+    bool ready() const { return frames > 0 && frames % 4 == 0 && level[0] && level[1] && level[2]; }
 };
 
 // A source that owns its samples (a field or a WAV, built at load time, never on the audio thread).

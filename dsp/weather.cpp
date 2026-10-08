@@ -179,6 +179,14 @@ constexpr float kDriftSpanS = 20.0f, kDirS = 0.5f;
 constexpr int kExactSteps = 16;                   // the window's recurrence starts exactly afresh this often
 constexpr int kCopyMargin = 48;                   // frames either side of a grain's last reads: a step's reach
 constexpr int kCopyStride = Weather::kCopyFrames + 64;
+// A step's reads reach kChunk + 2 staged samples (a group running past the step) at most kLevel1
+// frames a sample (level 0 is read up to 1.26, level 1 up to 1.1, level 2 up to 1 and a hair with
+// Cloud's detune), plus the cubic's taps and the base's frames: 34 x 1.26 + 3 = 45.8 frames from the
+// step's position, inside the margin. A released grain reads at most kModeFade samples more, which fit a copy with that
+// margin either side: 882 x 1.26 + 2 x 48 + 4 = 1211 frames of 1280.
+static_assert((kChunk + 2) * kLevel1 + 3 <= kCopyMargin, "a copy's margin covers a step's reach");
+static_assert(Weather::kModeFade * kLevel1 + 2 * kCopyMargin + 4 <= Weather::kCopyFrames,
+              "a copy holds what a released grain has left to read");
 constexpr uint32_t kSeedMix = 0x9E3779B1u;
 
 int levelOf(double speed) { return speed > kLevel2 ? 2 : (speed > kLevel1 ? 1 : 0); }
@@ -377,7 +385,7 @@ void Weather::render(const GrainSource* src, float duckPeak, float* outL, float*
     // The source is looked at only with something to hear: silent, Weather holds none (silence()),
     // and no grain starts.
     if (audible()) {
-        const bool ready = src && src->ready() && src->frames >= 4;
+        const bool ready = src && src->ready();
         if (ready != hasSrc_ || (ready && !sameSource(*src, src_))) changeSource(ready ? src : nullptr);
     }
     if (closed_) return;
@@ -563,8 +571,7 @@ void Weather::spawn(int k, double pos, float semis, bool back, int length, float
     if (!v) return;
     if (hook_) hook_(hookCtx_, semis);
     const double speed = static_cast<double>(exp2Fast(semis * (1.0f / 12.0f)));
-    int level = levelOf(speed);
-    while (level > 0 && !src_.level[level]) --level;   // (a source without its slower levels)
+    const int level = levelOf(speed);   // (a ready source has all three)
     const double scale = static_cast<double>(1 << level);
     const int frames = src_.frames >> level;
     v->start = wrapTo((src_.origin + pos - kOffset[level]) / scale, frames);
@@ -678,8 +685,9 @@ void Weather::step(int m, float d0, float dStep, float* outL, float* outR, float
 }
 
 // The reads, a group of four samples a turn, two samples a vector (L R of each). Every group is
-// whole: a grain's envelope is 0 past its end (and acc_ has room past the step's), so a group
-// running over adds nothing.
+// whole: a group running past the grain's end or the step's adds nothing (the envelope is 0 there,
+// and acc_ has room past the step), but it still reads, up to 3 samples past the step's last;
+// renderVoice's base and a copy's margin cover those reads too.
 template <bool Cross>
 AF_INLINE void Weather::readVoice(const Voice& v, int k0, int groups) {
 #if AF_NEON
@@ -710,8 +718,8 @@ AF_INLINE void Weather::readVoice(const Voice& v, int k0, int groups) {
 
 // A voice's part of a step: its positions and envelope four samples at a time, then the reads.
 // The positions go by the step (EffectForce's segment): its first position (in double) as a whole
-// frame `base` and a float offset that stays at least 1 across the step (so truncation is the
-// floor), base moved into the ring once (the guard frames past its end take what runs over; a
+// frame `base` and a float offset that stays at least 1 at every staged sample (so truncation is
+// the floor), base moved into the ring once (the guard frames past its end take what runs over; a
 // voice that has run past the ring's end is moved back by whole rings, so that is rare).
 //
 // The envelope of a grain not released is sin^2(pi t / L) itself, the Hann window the ramps make.
@@ -729,10 +737,15 @@ void Weather::renderVoice(Voice& v, int m) {
     const int k1 = std::min(m, std::min(v.end, v.relEnd) - t0);
     if (k1 <= k0) return;
     const int groups = (k1 - k0 + 3) >> 2;
+    const int last = k0 + 4 * groups - 1;   // the last sample staged: up to kChunk + 2 (a group running over)
     const double p = v.start + static_cast<double>(t0) * v.rate;   // where the step starts
-    // (Backwards, two frames below: the last read's offset is 1 in exact arithmetic, a hair under
-    // it in float, which must not truncate to 0.)
-    const int whole = v.rate < 0.0 ? floorInt(p + (kChunk - 1) * v.rate) - 2 : floorInt(p) - 1;
+    // The base sits a frame or more under every staged sample's position, so each offset is at
+    // least 1 and truncates as the floor: no tap reads before the ring, and on the device io << 2
+    // never shifts a negative. Forwards the step's first position less 1; backwards the last
+    // staged sample's less 2 (its offset is then 2 or more in exact arithmetic, a hair under in
+    // float). A grain starting part way into a step stages up to 3 samples past the step's end, so
+    // backwards the base must go by the last staged sample, not the step's last.
+    const int whole = v.rate < 0.0 ? floorInt(p + last * v.rate) - 2 : floorInt(p) - 1;
     int ib = whole;   // into the ring in integers
     if (ib >= v.frames || ib < 0) {
         ib = (ib % v.frames + v.frames) % v.frames;

@@ -188,13 +188,31 @@ void testSilenceWithoutSource() {
     Buf L(n), R(n), SL(n), SR(n);
     for (size_t i = 0; i < n; ++i) L[i] = R[i] = SL[i] = SR[i] = i % 7 ? 0.25f * static_cast<float>(i % 7) : -0.0f;
     const Buf L0 = L, R0 = R, SL0 = SL, SR0 = SR;
-    for (size_t i = 0; i < n; i += kBlk) w.render(nullptr, 0.0f, &L[i], &R[i], &SL[i], &SR[i], 0.5f, kBlk);
+    const auto over = [&](const af::GrainSource* s) {   // the whole buffer, in MPC's blocks
+        for (size_t i = 0; i < n; i += kBlk)
+            w.render(s, 0.0f, &L[i], &R[i], &SL[i], &SR[i], 0.5f, static_cast<int>(std::min<size_t>(kBlk, n - i)));
+    };
+    over(nullptr);
     CHECK(same(L, L0) && same(R, R0) && same(SL, SL0) && same(SR, SR0));
     CHECK(w.grainsOn() == 0);
     // A source with nothing ready in it is none.
     af::GrainSource empty;
-    for (size_t i = 0; i < n; i += kBlk) w.render(&empty, 0.0f, &L[i], &R[i], &SL[i], &SR[i], 0.5f, kBlk);
+    over(&empty);
     CHECK(same(L, L0) && same(R, R0));
+    // So is one without its slower levels, or of frames not a multiple of 4: there is no fallback
+    // (level 0 read at up to 4 frames a sample would alias, and outrun a source change's copies).
+    const auto sb = source(whiteNoise(kSec, 0.5f, 5));
+    af::GrainSource only0 = sb->src, odd = sb->src;
+    only0.level[1] = only0.level[2] = nullptr;
+    odd.frames -= 2;
+    CHECK(sb->src.ready() && !only0.ready() && !odd.ready());
+    af::WeatherPatch p = loud();
+    p.pitch = 24.0f;   // (level 2's reads)
+    w.set(p, af::HarmonyPatch{});
+    for (const af::GrainSource* s : {&only0, &odd}) {
+        over(s);
+        CHECK(same(L, L0) && same(R, R0) && w.grainsOn() == 0);
+    }
 }
 
 // 3. Pitch: +7 lands on the fifth within 3 cents; +24 on two octaves up with nothing else under
@@ -590,6 +608,36 @@ void testWindow() {
         }
 }
 
+// Backward grains born within a step's reach of a level's first frame: a grain starting part way
+// into a step still reads whole groups of four, past its first step's last sample, and every one
+// of those reads must stay inside the level (ASan watches the frames before it). The anchor 25 to
+// 40 frames in, short reversed grains at rate 1, at 1.26 (+4, the fastest level 0 is read at) and
+// on levels 1 and 2.
+void testBackwardsNearTheStart() {
+    std::printf("== weather: backward reads near a level's start\n");
+    const auto sb = source(whiteNoise(kSec, 0.5f, 95), whiteNoise(kSec, 0.5f, 96));
+    const double frames = static_cast<double>(sb->src.frames);
+    bool finite = true;
+    for (float semis : {0.0f, 4.0f, 12.0f, 24.0f})
+        for (double in = 25.5; in <= 40.0; in += 1.5) {
+            Weather w;
+            w.seed(71);
+            af::WeatherPatch p = loud();
+            p.reverse = 1.0f;
+            p.spray = 0.0f;
+            p.drift = 0.0f;
+            p.sizeS = 0.02f;
+            p.grains = 16;
+            p.pitch = semis;
+            p.position = static_cast<float>(in / frames);
+            w.set(p, af::HarmonyPatch{});
+            w.gate(true);
+            const Out o = play(w, &sb->src, kSec / 2);
+            finite &= allFinite(o.L) && allFinite(o.R);
+        }
+    CHECK(finite);
+}
+
 // Mute and level glide over 10 ms, no step; silent after.
 void testMute() {
     std::printf("== weather: mute\n");
@@ -833,6 +881,7 @@ void weatherTests() {
     testSourceChange();
     testOrigin();
     testWindow();
+    testBackwardsNearTheStart();
     testMute();
     testFreedWhileSilent();
     testBlocks();
