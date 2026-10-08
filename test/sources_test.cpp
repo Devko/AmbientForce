@@ -1973,6 +1973,53 @@ void testPost() {
     }
 }
 
+// The tick (loader.h): called on the worker every pass (about every 20 ms with nothing else to do), off the
+// loader's lock (it may want() and post(); a job it posts runs in the same pass), a throw ignored, and never
+// after stop() returns. The plugin's Keep button is polled so.
+void testTick() {
+    std::printf("== sources: the worker's tick\n");
+    Fake f;
+    Loader L({f.type()});
+    std::atomic<int> ticks{0}, posted{0}, ran{0}, samePass{0}, wants{0};
+    std::atomic<bool> threw{false};
+    std::set<std::thread::id> threads;
+    std::mutex m;
+    L.setTick([&] {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            threads.insert(std::this_thread::get_id());
+        }
+        const int k = ++ticks;
+        if (k == 2 && !threw.exchange(true)) throw std::runtime_error("tick");
+        if (k == 3) {   // asks the loader (its lock is free) and posts a job, which runs before the pass ends
+            L.view(0);
+            L.want(0, "x", true);
+            ++wants;
+            const int pass = L.rounds();
+            ++posted;
+            L.post([&, pass] {
+                ++ran;
+                if (L.rounds() == pass) ++samePass;
+            });
+        }
+    });
+    const auto t0 = Clock::now();
+    CHECK(until([&] { return ticks.load() >= 10; }));
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+    std::printf("  10 ticks in %lld ms\n", ms);
+    CHECK(ms >= 100 && ms < 1000 * kSlow);   // about every 20 ms, not spinning
+    CHECK(until([&] { return L.loads() == 1; }));
+    CHECK(threw && posted == 1 && ran == 1 && samePass == 1 && wants == 1);
+    {
+        std::lock_guard<std::mutex> lk(m);
+        CHECK(threads.size() == 1 && *threads.begin() != std::this_thread::get_id());
+    }
+    L.stop();
+    const int at = ticks.load();
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    CHECK(ticks.load() == at);
+}
+
 // The audio thread played by a thread of the test, against a thread that swaps as fast as it can.
 // Like Weather it keeps the pointer from the block before while it "holds" (and uses it first thing
 // in the next block, the copy from the old source), so a free that the rule allows too early is a read
@@ -2709,6 +2756,7 @@ void sourcesTests() {
     testPublishOom();
     testLoadOom();
     testPost();
+    testTick();
     testStress();
     testSourceSlot();
     testStale();

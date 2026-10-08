@@ -21,10 +21,10 @@
 //                position crossing frames all the time: the dearest read); Space Abyss with Shimmer
 //                100%, Freeze off; Tilt on
 //
-// M2's cases play the engine itself (dsp/engine.h, linked into afbench), not the plugin, until the
-// plugin has Air's, Weather's and Echo's parameters (M2's Task 9) and Weather's sources (Task 10):
-// their patch is the plugin's, made from the same parameters by the patch map (patchFromParams), with
-// M2's fields set on it; their keys go to the engine at the block's first sample, as the plugin hands
+// M2's cases play the engine itself (dsp/engine.h, linked into afbench), not the plugin: they were
+// written before the plugin had Air's, Weather's and Echo's parameters (M2's Task 9) and Weather's
+// sources (Task 10), and still play so (their counts stay comparable). Their patch is the plugin's,
+// made from the same parameters by the patch map (patchFromParams), with M2's fields set on it; their keys go to the engine at the block's first sample, as the plugin hands
 // over an event at offset 0; the transport is the bench's host's (120 BPM, stopped). What the plugin
 // adds around the engine (the parameters' snapshot, MIDI, the meter) isn't counted: `worst engine`
 // is `worst` played so, to measure it.

@@ -9,10 +9,12 @@
 #include "../plugin/patch_map.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 extern "C" AEffect* VSTPluginMain(audioMasterCallback master);
@@ -27,6 +29,8 @@ struct HostLog {
     std::map<int, float> automated;   // index -> last value pushed
     std::map<int, int> automateCount;
     VstTimeInfo time{};
+    bool record = true;               // false: what the plugin pushes isn't kept (a map insert allocates)
+    bool throwOnTime = false;         // the transport's callback throws (a block cut short)
 };
 
 intptr_t hostMaster(AEffect* e, int32_t op, int32_t index, intptr_t, void*, float opt);
@@ -126,6 +130,31 @@ struct Host {
 };
 
 std::string fixtureDir();   // per-run temp folder (removed at exit)
+
+// Weather's sources are made on each instance's loader thread, on the steady clock (not the surface's): a
+// wait for them is in real time, looking every millisecond, for at most `ms` (ten times that under qemu,
+// the build without ASan, where the same work takes a good deal longer).
+template <class F>
+bool waitFor(F f, int ms = 5000) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms * (AFT_COUNTS_ALLOCS ? 1 : 10));
+    while (!f()) {
+        if (std::chrono::steady_clock::now() > end) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+// The Source stepper's text comes to say `text` (a load published, its listener's refresh), within ms.
+inline bool showsSource(Host& h, const std::string& text, int ms = 5000) {
+    return waitFor([&] { return h.display(af::P_W_SOURCE) == text; }, ms);
+}
+// The status line comes to say `text`, a block at a time (the audio thread decides what it shows).
+inline bool statusSays(Host& h, const std::string& text, int ms = 5000) {
+    return waitFor([&] {
+        h.run(1);
+        return h.display(af::P_STATUS) == text;
+    }, ms);
+}
+std::string sourceDir();    // the AF_SOURCE_ROOTS of the plugin tests: <it>/plugin, <it>/ssd
 
 // The surface's clock moves this far per host event (plugin_test.cpp): a second, so separate
 // events never read as one gesture, whatever the machine's speed.

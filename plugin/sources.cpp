@@ -1,6 +1,7 @@
 // Weather's sources by key: see sources.h. The listing's walk is SubForce's plugin/library.cpp (8846421).
 #include "sources.h"
 
+#include "param_ids.h"
 #include "paths.h"
 #include "wav.h"
 #include "../dsp/fields.h"
@@ -37,6 +38,20 @@ struct Place {
 };
 constexpr Place kPlaces[] = {{"plugin", "Weather"}, {"ssd", "AmbientForce/Weather"}, {"ssd", "AmbientForce/Memories"}};
 constexpr const char* kMemoriesFolder = "AmbientForce/Memories";
+
+// surface.py's keys (what a factory preset may name, checked there) are these.
+constexpr bool same(const char* a, const char* b) {
+    while (*a && *a == *b) ++a, ++b;
+    return *a == *b;
+}
+constexpr bool sameFields() {
+    if (kNumSourceFields != FD_COUNT) return false;
+    for (int i = 0; i < FD_COUNT; ++i)
+        if (!same(kSourceFields[i], kFieldNames[i])) return false;
+    return true;
+}
+static_assert(sameFields(), "surface.py's SOURCE_FIELDS are not dsp/fields.h's kFieldNames");
+static_assert(same(kSourceMemoryKey, kMemoryKey), "surface.py's MEMORY_KEY is not kMemoryKey");
 
 std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));

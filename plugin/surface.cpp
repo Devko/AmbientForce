@@ -1,8 +1,10 @@
-// From SubForce plugin/surface.cpp (8846421), namespace sf -> af; without RANDOMIZE.
+// From SubForce plugin/surface.cpp (8846421), namespace sf -> af; without RANDOMIZE. Weather's source,
+// Remember, Keep and the messages: see surface.h.
 #include "surface.h"
 
 #include "patch_map.h"
 #include "presets.h"
+#include "sources.h"
 #include "state.h"
 
 #include <algorithm>
@@ -84,7 +86,7 @@ std::string upper(std::string s) {
 
 long long Surface::nowMs() { return clock ? clock() : steadyMs(); }
 
-Surface::Surface() : texts_(P_COUNT) {
+Surface::Surface(Loader& loader) : texts_(P_COUNT), loader_(loader) {
     for (int i = 0; i < P_COUNT; ++i) {
         want_[i].store(PARAM_INFO[i].def);
         shown_[i].store(PARAM_INFO[i].def);
@@ -92,6 +94,8 @@ Surface::Surface() : texts_(P_COUNT) {
         lastN_[i] = -1.0f;
     }
     presetLibrary().rescan();   // a new instance sees the preset files as they are now
+    // Weather's source is Init's; the plugin asks the loader for it once it listens to the loader.
+    sourceKey_ = defaultSourceKey();
     refresh();
 }
 
@@ -155,6 +159,91 @@ std::string Surface::aboutText() const {
     return about_;
 }
 
+// --- messages, Weather's source, Remember and Keep (surface.h) ------------------------------------
+
+void Surface::say(int message, uint32_t arg) {
+    const uint64_t n = (static_cast<uint64_t>(sayings_.fetch_add(1, std::memory_order_relaxed)) + 1u) & 0xFFFFFFu;
+    said_.store(n << 40 | static_cast<uint64_t>(message & 0xFF) << 32 | arg, std::memory_order_release);
+}
+
+std::string Surface::messageText() const {
+    const uint64_t m = message_.load(std::memory_order_acquire);
+    const int message = static_cast<int>(m >> 32 & 0xFF);
+    const uint32_t arg = static_cast<uint32_t>(m);
+    if (message >= MSG_COUNT) return {};
+    char a[24] = "";
+    if (message == MSG_REMEMBERED) {   // tenths of a second: "3.2" under 10 s, "16" from there
+        if (arg < 100) std::snprintf(a, sizeof a, "%u.%u", arg / 10, arg % 10);
+        else std::snprintf(a, sizeof a, "%u", (arg + 5) / 10);
+    }
+    if (message == MSG_KEPT) std::snprintf(a, sizeof a, "%03u", arg);   // the file's name: "Memory 007"
+    char b[160];
+    std::snprintf(b, sizeof b, kStatusMessages[message], a);
+    return b;
+}
+
+bool Surface::takeKeep() {
+    if (!keepAsked_.exchange(false, std::memory_order_acq_rel)) return false;
+    return !keepBusy_.exchange(true, std::memory_order_acq_rel);   // (one is being written: ignored)
+}
+
+void Surface::setSourceKey(const std::string& key, bool now) {
+    const std::vector<std::string> keys = sourceKeys();   // the disk, outside the lock (at most every 2 s)
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        pickSource(key, now, keys);
+    }
+    refresh();
+}
+
+std::string Surface::sourceKey() const {
+    std::lock_guard<std::mutex> lk(mtx_);
+    return sourceKey_;
+}
+
+void Surface::sourceLoaded() {
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        updateMemory();
+    }
+    refresh();
+}
+
+void Surface::pickSource(const std::string& key, bool now, const std::vector<std::string>& keys) {
+    sourceKey_ = key;
+    if (key != kMemoryKey) loader_.want(0, key, now);   // memory: is the engine's: the slot keeps what it has
+    const auto at = std::find(keys.begin(), keys.end(), key);
+    if (at != keys.end())   // the stepper where the key is (not listed: where it stands)
+        put(P_W_SOURCE, std::min(1.0f, static_cast<float>(at - keys.begin()) /
+                                           static_cast<float>(stepperRange(static_cast<int>(keys.size())))));
+    updateMemory();
+}
+
+int Surface::sourceCur(const std::vector<std::string>& keys) const {
+    const auto at = std::find(keys.begin(), keys.end(), sourceKey_);
+    if (at != keys.end()) return static_cast<int>(at - keys.begin());
+    const int items = static_cast<int>(keys.size());   // gone from the list: where the stepper stands
+    return clampi(static_cast<int>(std::lround(want_[P_W_SOURCE].load() * stepperRange(items))), 0, std::max(items - 1, 0));
+}
+
+void Surface::updateMemory() {
+    bool on = sourceKey_ == kMemoryKey;
+    if (!on && memory_.load(std::memory_order_relaxed)) {   // leaving Memory: on until the new key has come, or failed
+        const Loader::View v = loader_.view(0);
+        on = v.key != sourceKey_ || v.state == Loader::Loading;
+    }
+    memory_.store(on, std::memory_order_release);
+}
+
+std::string Surface::sourceText() const {
+    const std::string name = sourceName(sourceKey_);
+    if (sourceKey_ == kMemoryKey) return name;   // the engine's: never the loader's state
+    const Loader::View v = loader_.view(0);
+    if (v.key == sourceKey_ && v.state == Loader::Missing) return "MISSING " + name;
+    if (v.key != sourceKey_ || v.state == Loader::Loading) return name + " ...";
+    return name;
+}
+
 void Surface::beginBatch() {
     if (batchDepth_.fetch_add(1) == 0) {
         batchSeq_.fetch_add(1, std::memory_order_relaxed);   // odd: writing
@@ -210,6 +299,14 @@ void Surface::apply(int i, float n) {
                 const int pick = stepItem(n, stepperRange(items), items, cur);
                 if (pick != cur && pick < items) loadPreset(L->items[static_cast<size_t>(pick)].key);
             }
+            if (i == P_W_SOURCE) {   // a step is a scroll: the loader's debounce loads where a turn stops
+                const std::vector<std::string> keys = sourceKeys();   // the disk, outside the lock (at most every 2 s)
+                std::lock_guard<std::mutex> lk(mtx_);
+                const int items = static_cast<int>(keys.size());
+                const int cur = sourceCur(keys);
+                const int pick = stepItem(n, stepperRange(items), items, cur);
+                if (pick != cur && pick < items) pickSource(keys[static_cast<size_t>(pick)], false, keys);
+            }
             break;
         }
         case Kind::Button:
@@ -220,6 +317,18 @@ void Surface::apply(int i, float n) {
                 const int pick = clampi(cur + (i == P_PRESET_NEXT ? 1 : -1), 0, std::max(items - 1, 0));
                 if (pick != cur) loadPreset(L->items[static_cast<size_t>(pick)].key);   // the ends: nothing to load
             }
+            if (i == P_W_SOURCE_PREV || i == P_W_SOURCE_NEXT) {   // a tap is a pick: loaded at once
+                const std::vector<std::string> keys = sourceKeys();
+                std::lock_guard<std::mutex> lk(mtx_);
+                const int items = static_cast<int>(keys.size());
+                const int cur = sourceCur(keys);
+                const int pick = clampi(cur + (i == P_W_SOURCE_NEXT ? 1 : -1), 0, std::max(items - 1, 0));
+                if (pick != cur && pick < items) pickSource(keys[static_cast<size_t>(pick)], true, keys);
+            }
+            // Remember and Keep only ask (surface.h): the engine's Memory is the audio thread's, and Keep's
+            // job is posted from the loader's own thread, never from here.
+            if (i == P_W_REMEMBER) rememberAsked_.store(true, std::memory_order_release);
+            if (i == P_W_KEEP && !keepBusy_.load(std::memory_order_acquire)) keepAsked_.store(true, std::memory_order_release);
             if (i == P_PRE_INIT) loadPreset("builtin:Init");
             if (i == P_PRE_SAVE) savePreset();
             if (i == P_CAT_PREV || i == P_CAT_NEXT || i == P_ITEM_PREV || i == P_ITEM_NEXT || i == P_RND) browserAction(i);
@@ -437,6 +546,7 @@ void Surface::refresh() {
     const int idx = L->find(presetKey_);
     if (idx >= 0) put(P_PRESET, std::min(1.0f, static_cast<float>(idx) / static_cast<float>(stepperRange(static_cast<int>(L->items.size())))));
     t[P_PRESET] = presetKey_.empty() ? "PRESET  -" : "PRESET  " + L->label(presetKey_);
+    t[P_W_SOURCE] = sourceText();   // its value is pushed where it is picked (pickSource)
 
     // Browser: follow the preset when it changed from outside the browser.
     const std::string key = presetKey_;
@@ -555,6 +665,18 @@ void Surface::tickStatus(int frames) {
         touchedSeen_ = touched;
         pending_ = static_cast<int>(touched & ((1u << kTouchBits) - 1));
         pendingAt_ = now_;
+    }
+    // A message (say()): at once, as a description, over a press noted now or before (Remember's own help line,
+    // which would otherwise take the line half a second later).
+    const uint64_t said = said_.load(std::memory_order_acquire);
+    if (said != saidSeen_) {
+        saidSeen_ = said;
+        message_.store(said, std::memory_order_release);
+        line_ = kStatusMessage;
+        lineSince_ = now_;
+        lineUntil_ = now_ + samplesOf(kMessageS);
+        pending_ = -1;
+        changed = true;
     }
     if (pending_ >= 0) {
         if (pending_ == line_) {   // the control shown, moved again: it stays, kHelpS from its latest move

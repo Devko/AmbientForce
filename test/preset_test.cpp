@@ -142,6 +142,46 @@ void testState() {
     CHECK(d.run(4) > 0.05f);
 }
 
+// Weather's source is saved by its key (w_source=, after the sound values) in projects and presets alike: a
+// project restores it, an old project without one keeps the source playing, a preset without one (Init, 0.0.2's)
+// brings the default, a user preset saves and restores it, and a key that names nothing is kept and shows MISSING.
+void testSourceState() {
+    std::printf("== saved state: Weather's source\n");
+    const auto text = [](Host& h) { return h.display(af::P_W_SOURCE); };
+    Host a;
+    CHECK(showsSource(a, "Rain on Roof"));
+    for (int k = 0; k < 4; ++k) a.press(af::P_W_SOURCE_NEXT);   // Light Rain, Wind High, Wind Low, Surf
+    CHECK(showsSource(a, "Surf"));
+    const std::string s = a.chunk();
+    const size_t at = s.find("\nw_source=builtin:Surf\n");
+    CHECK(at != std::string::npos && at > s.find("\nw_memtap=") && s.find("w_source=") == s.rfind("w_source="));
+    Host b;
+    CHECK(b.load(s) == 1 && showsSource(b, "Surf"));
+    CHECK(b.load("ambientforce 1\nvolume=-3\n") == 1 && text(b) == "Surf");   // 0.0.2's project: the source stays
+    b.press(af::P_PRE_INIT);                                                  // a preset without one: the default
+    CHECK(showsSource(b, "Rain on Roof") && b.chunk().find("\nw_source=builtin:Rain on Roof\n") != std::string::npos);
+    // A user preset keeps its source.
+    b.load("ambientforce 1\nw_source=builtin:Embers\n");
+    CHECK(showsSource(b, "Embers"));
+    b.press(af::P_PRE_SAVE);
+    const std::string project = b.chunk();
+    const size_t p = project.find("\npreset=");
+    const std::string key = p == std::string::npos ? "" : project.substr(p + 8, project.find('\n', p + 8) - p - 8);
+    std::string saved;
+    CHECK(af::presetText(key, saved) && saved.find("\nw_source=builtin:Embers\n") != std::string::npos);
+    b.press(af::P_PRE_INIT);
+    CHECK(showsSource(b, "Rain on Roof"));
+    CHECK(b.load("ambientforce 1\npreset=" + key + "\n") == 1);   // the stepper on it (a project loads nothing of it)
+    b.press(af::P_PRESET_PREV);   // the preset before it (Init's is the first of all), then back onto it, loaded
+    b.press(af::P_PRESET_NEXT);
+    CHECK(b.display(af::P_PRESET) == "PRESET  " + af::presetLibrary().listing()->label(key) && showsSource(b, "Embers"));
+    // A key that names nothing: kept, saved back as it was, MISSING.
+    CHECK(b.load("ambientforce 1\nw_source=builtin:Hail\n") == 1 && showsSource(b, "MISSING Hail") &&
+          b.chunk().find("\nw_source=builtin:Hail\n") != std::string::npos);
+    b.run(4);
+    CHECK(b.finite);
+}
+
 void testPresets() {
     std::printf("== presets\n");
     const std::string root = fixtureDir() + "/presets";
@@ -588,6 +628,7 @@ void presetTests() {
     testStepping();
     testFactory();
     testMacroLevels();
+    testSourceState();   // last: its user preset would take testPresets' numbers
 }
 
 } // namespace aft

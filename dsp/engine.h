@@ -316,7 +316,7 @@ public:
     // none. Weather keeps pointing into it from block to block while it is audible, and the first
     // render() given another (or none) copies from the old one what its fading grains still read
     // (dsp/weather.h): so the old one must stay readable through the first block that gives the new
-    // one. The plugin's side of that (plugin/loader.h's graveyard; Task 10 wires it), every block:
+    // one. The plugin's side of that (plugin/loader.h's graveyard; plugin.cpp's processReplacing), every block:
     //   loader.blockStart();  engine.setWeatherSource(<live(slot)'s GrainSource>);  render ...;
     //   loader.blockDone(engine.holdsSource());
     // blockStart() before live(), exactly one blockDone() per blockStart(), holdsSource() asked
@@ -334,9 +334,12 @@ public:
     // Remember (the plugin's button, before a block): Memory's ring recording becomes Weather's
     // remembered source at the next control step (Memory::remember(); refused within 2 s of the
     // last, with under 0.5 s recorded, or while Keep writes: Info says whether the generation moved).
-    // Audio thread only: it sets a plain flag the render reads (Task 10 calls it from
-    // processReplacing, never from setParameter).
+    // Audio thread only: it sets a plain flag the render reads (the plugin calls it from
+    // processReplacing, never from setParameter: the button leaves an atomic request there).
     void remember() { rememberAsked_ = true; }
+    // A Remember asked and not yet applied (no control step since, awake). The plugin waits for it
+    // to go before it says what came of it (memory().generation() moved, or refusal() why not).
+    bool remembering() const { return rememberAsked_; }
 
     void render(float* outL, float* outR, int n);   // overwrites n samples (any n)
     int  activeVoices() const;                      // Bloom's and Air's voices in use, and Ground if it sounds

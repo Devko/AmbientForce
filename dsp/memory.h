@@ -104,6 +104,12 @@ public:
     // side, its guard written), and recording goes on in the other, empty. False (nothing changes)
     // within kRememberGapS of the last, with under kMinS recorded, or while pinned.
     bool remember();
+    // Audio thread: why a remember() now would be refused, for the plugin's status line (it asks after
+    // one was): RF_SOON within kRememberGapS of the last, RF_EMPTY with under kMinS recorded (the gap
+    // first, as remember() looks), RF_NONE neither (a pin may still refuse it, for the milliseconds
+    // Keep copies the ring).
+    enum Refusal : int { RF_NONE, RF_SOON, RF_EMPTY };
+    Refusal refusal() const;
     const GrainSource* remembered() const;       // nullptr: nothing remembered yet
     float fill() const;                          // 0..1: how much of 16 s the ring recording holds
     uint32_t generation() const;                 // +1 at every Remember (Keep says which it wrote)

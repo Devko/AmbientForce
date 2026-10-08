@@ -1516,6 +1516,46 @@
    "default": "Output"
   },
   {
+   "key": "w_source",
+   "name": "Source",
+   "min": 0,
+   "max": 1,
+   "display": "string",
+   "type": "stepper"
+  },
+  {
+   "key": "w_source_prev",
+   "name": "Source Prev",
+   "min": 0,
+   "max": 1,
+   "momentary": true,
+   "type": "trigger"
+  },
+  {
+   "key": "w_source_next",
+   "name": "Source Next",
+   "min": 0,
+   "max": 1,
+   "momentary": true,
+   "type": "trigger"
+  },
+  {
+   "key": "w_remember",
+   "name": "Remember",
+   "min": 0,
+   "max": 1,
+   "momentary": true,
+   "type": "trigger"
+  },
+  {
+   "key": "w_keep",
+   "name": "Keep",
+   "min": 0,
+   "max": 1,
+   "momentary": true,
+   "type": "trigger"
+  },
+  {
    "key": "preset",
    "name": "Preset",
    "min": 0,

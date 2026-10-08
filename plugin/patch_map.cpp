@@ -92,8 +92,10 @@ static_assert(PARAM_SPECS[P_W_GRAINS].lo == 1.0f && PARAM_SPECS[P_W_GRAINS].hi =
 static_assert(PARAM_SPECS[P_A_MOTIF].lo == 3.0f && PARAM_SPECS[P_A_MOTIF].hi == static_cast<float>(AirGen::kMotifMax),
               "Motif runs from 3 to AirGen::kMotifMax");
 // A saved project stores its values by key, but MPC stores them by index: the parameters of 0.0.2 keep theirs (the
-// sound ones to b_swaydiv's popup flag), M2's follow, and the preset stepper and the browser move up behind them.
-static_assert(P_B_SWAYDIV__OPEN == 97 && P_E_MODE == 98 && P_W_MEMTAP == 159 && P_PRESET == 160,
+// sound ones to b_swaydiv's popup flag), M2's follow (its sound values, then Weather's Source stepper, Remember and
+// Keep), and the preset stepper and the browser move up behind them.
+static_assert(P_B_SWAYDIV__OPEN == 97 && P_E_MODE == 98 && P_W_MEMTAP == 159 && P_W_SOURCE == 160 && P_W_KEEP == 164 &&
+                  P_PRESET == 165,
               "MPC stores values by index: a parameter moved or added here moves saved projects' values (surface.py)");
 static_assert(PARAM_SPECS[P_E_DIV].hi == static_cast<float>(kNumDelayDivs - 1), "an option for every Echo division");
 
