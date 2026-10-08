@@ -28,12 +28,16 @@ These run into Space, a reverb with Haze and Abyss modes. Air and Weather are M2
 
 ## Where things stand
 
-- **Branches:** `main` = `m1` = the commit that adds this file. The version is 0.0.2, unreleased;
-  `CHANGELOG.md` has the notes.
-- **Tests:** `make test` passes 1908 checks (x86, ASan/UBSan) and `make test-arm` passes 1758
-  (qemu). `AF_FULL_MACRO_SWEEP=1 build/plugin_test` passes 1932. A 1 h soak passes.
-- **Device:** the M1.1 build up to commit `4788a5d` is installed on the author's Force. The last
-  commit's fixes (`8c94203`) are tested but **not yet on the device**.
+- **Branches and release** (updated 2026-10-08): `main` has M1/M1.1, the M2 plan and M2's Tasks
+  1–5 (Echo, Air's voices and generator, Weather's grains) as standalone DSP modules, every review
+  finding on them closed, **not yet wired into the engine**. It is released as **v0.0.2**, the
+  first release (tag `v0.0.2`; CI publishes the package). M2 goes on from Task 6 on `m2`;
+  Devko/AmbientForce#1 has the account of Tasks 1–5 and what Task 8 must decide.
+- **Tests:** `make test` passes 3504 checks (x86, ASan/UBSan) and `make test-arm` passes 3350
+  (qemu). `AF_FULL_MACRO_SWEEP=1 build/plugin_test` passes 3528. A 1 h soak passes.
+- **Device:** v0.0.2 is installed on the author's Force (192.168.1.116, 2026-10-08): a local
+  profile-guided build of the tag (Ubuntu 24.04's cross compiler, so it needs glibc 2.38, which MPC
+  OS 3.x has). CI's release package (GCC 11, glibc 2.31) is the one for `tested.json`.
 - **Device bench** (MPC OS 3.9, PGO build), p99 of the 2902 µs block:
   - idle 0.13%
   - Init chord 5.4%
@@ -54,19 +58,17 @@ These run into Space, a reverb with Haze and Abyss modes. Air and Weather are M2
 
 ## Open items
 
-1. **Re-review `8c94203`** (the M1.1 review fixes): phase pull, echo tolerance, the full macro
-   sweep and its two mapping changes, synced-rate caps, and the staggered synced Bloom. Its review
-   was interrupted. Do a spec and code-quality review of `git diff 4788a5d 8c94203` against the
-   findings it answers (listed in its commit body and in `CHANGELOG.md` 0.0.2), and fix anything
-   real.
+1. **M2 from Task 6** (fields and Memory), in the plan's order. The re-review of `8c94203` is
+   done (merged in `d1296fb`). A follow-up from M1, not planned yet: at Space Decay near 0.1 s
+   with Haze's long lines, Freeze set after a silence can let out a faint ring (documented in
+   `dsp/reverb.h`).
 2. **Device-only, leave for the author** (no device in the cloud):
    - `make plugin-install FORCE=root@<ip>`; the Force's DHCP address changes, and was
-     192.168.1.135 last.
+     192.168.1.116 last.
    - `make bench-device`, the listening session, and the Phase 0 probe (ROADMAP: trace with
      `touch /tmp/ambientforce.trace`; it logs MIDI with channels, suspend/resume, table build times
      and thread ids).
-   - `tested.json` and a `v0.0.2` release tag (CI builds releases; drop "(unreleased)" from the
-     CHANGELOG heading first).
+   - `tested.json` for v0.0.2, once it has been played.
 3. **Small ideas noted, not planned:**
    - A Decay stage for Bloom (Felt Keys sustains rather than decays like a piano).
    - "1 Bar" is 4 quarter notes (MPC's time signature is ignored).
