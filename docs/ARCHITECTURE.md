@@ -55,7 +55,9 @@ flowchart LR
 | `dsp/space.*` | Space: the Reverb as a send / return (wet only), Rise, `silent()` |
 | `dsp/weather.*` | Weather: EffectForce's grain voices over a fixed source, Cloud, Stretch and Stream, the anchor and its drift, To Key, the gate, Duck, the tilt and high-pass, the copies a source change leaves the fading grains |
 | `dsp/grainsrc.*` | A Weather source: 16-bit stereo at three rates, looping through its guard frames (`GrainSource`, which Memory fills too); `buildSource()` makes one of any signal at load time (the loop's crossfade, the level, the decimated levels) |
-| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels |
+| `dsp/fields.*` | Weather's eight procedural fields (Rain on Roof, Light Rain, Wind High, Wind Low, Surf, Stream, Embers, Night), each rendered on the loader thread into a source: a 12 s loop, decorrelated stereo, its pitched parts on C, its peaks under a soft knee |
+| `dsp/memory.*` | Memory: the last 16 s recorded at the grains' three levels into one of two rings; Remember makes that ring Weather's source (its seam faded, its guard written) and records on in the other; pins for Keep |
+| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels; `FrameDecimator`, the same filter over a run of frames, for Memory's recording |
 | `dsp/reverb.*`, `pitch.h` | EffectForce's Reverb: predelay, low cut, diffusion, an 8-line feedback delay network with modulation, freeze and shimmer; the Haze and Abyss modes added. The shimmer's pitch shifter |
 | `dsp/echo.*` | Echo: the Delay as a send / return (wet only), ducking under the send, `silent()`, its defaults (`initEcho()`). Not in the signal path until M2's engine task |
 | `dsp/delay.*` | EffectForce's Delay: two lines read at free or synced times (Tape glides or Fade crossfades), Stereo, Ping-Pong and Mono, the cuts, drive and limiter in the loop, wow and flutter, ducking; Diffuse added (four allpasses a side in the loop, blended in by the amount) |

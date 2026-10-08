@@ -721,6 +721,7 @@ int main() {
     reverbTests();
     echoTests();
     weatherTests();
+    fieldsTests();
     testBasics();
     testGetters();
     testPlay();
