@@ -15,8 +15,8 @@
 // side). Every block, on every path through processReplacing: blockStart(), live(0) read once and given
 // to the engine (setWeatherSource(), so Weather has it in every block in which it is audible), and at the
 // end blockDone(holds), holds being engine.holdsSource() asked after the block's last render. A block
-// always renders whole: the host's transport callback, the one call into MPC in a block, is caught
-// where it is made (readTransport: a throw there plays the block on the transport as it last was). A
+// always renders whole: the host's transport callback, the one call into MPC before the block's
+// blockDone(), is caught where it is made (readTransport: a throw there plays the block on the transport as it last was). A
 // block cut short by anything else has the engine reset before its blockDone(), so Weather has let go of
 // everything it held and holds is false and true: the loader counts the first block to read a new
 // pointer as the one in which Weather copied what it needed from the old, and a block that read it but
@@ -650,8 +650,11 @@ void processReplacing(AEffect* e, float** /*in*/, float** out, int32_t n) {
         holds = p->engine.holdsSource();
     }
     p->loader.blockDone(holds);
-    p->surface.notify(hostAutomate, hostUpdate, p, n);
-    meter(p, threadCpuUs() - t0, n);
+    try {   // the host's callbacks, after the block's end: a throw from MPC goes no further either
+        p->surface.notify(hostAutomate, hostUpdate, p, n);
+        meter(p, threadCpuUs() - t0, n);
+    } catch (...) {
+    }
 }
 
 // Legacy accumulating entry point (MPC uses processReplacing): sub-blocks of kScratch, each

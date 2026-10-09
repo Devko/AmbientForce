@@ -138,11 +138,12 @@ public:
     bool        memorySource() const { return memory_.load(std::memory_order_acquire); }
     // Audio thread: a Remember happened, and Weather follows it onto Memory (the engine moved it in that
     // block): something is remembered from now on, Memory is the choice until a pick after it, and
-    // Memory's flag is up (atomics).
+    // Memory's flag is up (atomics). Counted before the flag goes up, both seq_cst: updateMemory() stores
+    // the flag and then reads the count, so one of the two sees the other (updateMemory()).
     void        rememberedHere() {
         remembered_.store(true, std::memory_order_release);
-        remembers_.fetch_add(1, std::memory_order_acq_rel);
-        memory_.store(true, std::memory_order_release);
+        remembers_.fetch_add(1, std::memory_order_seq_cst);
+        memory_.store(true, std::memory_order_seq_cst);
     }
     // The loader's thread (its tick): a Remember since the last pick makes memory: the key (the stepper's
     // text, what is saved); a pick after the Remember stands. True if it did.

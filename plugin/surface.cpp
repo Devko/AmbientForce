@@ -248,16 +248,24 @@ int Surface::sourceCur(const std::vector<std::string>& keys) const {
 }
 
 void Surface::updateMemory() {
-    // Memory: the key, or a Remember since the last pick (the audio thread moved Weather there; the key
-    // follows at the loader's next tick).
-    bool on = sourceKey_ == kMemoryKey || remembers_.load(std::memory_order_acquire) != pickRemembers_;
-    // Leaving Memory with something remembered: on until the new key has come, or failed. With nothing
-    // remembered Memory is silence: the slot's source at once.
-    if (!on && memory_.load(std::memory_order_acquire) && remembered_.load(std::memory_order_acquire)) {
-        const Loader::View v = loader_.view(0);
-        on = v.key != sourceKey_ || v.state == Loader::Loading;
+    // A Remember on the audio thread between the count read here and the store below would have its flag
+    // stored over: the count read again after the store, and the flag worked out again if it moved. Store
+    // then read here, count then raise there, all seq_cst: either this read sees the Remember, or the
+    // audio thread's raise comes after this store.
+    for (;;) {
+        const uint32_t seen = remembers_.load(std::memory_order_seq_cst);
+        // Memory: the key, or a Remember since the last pick (the audio thread moved Weather there; the key
+        // follows at the loader's next tick).
+        bool on = sourceKey_ == kMemoryKey || seen != pickRemembers_;
+        // Leaving Memory with something remembered: on until the new key has come, or failed. With nothing
+        // remembered Memory is silence: the slot's source at once.
+        if (!on && memory_.load(std::memory_order_acquire) && remembered_.load(std::memory_order_acquire)) {
+            const Loader::View v = loader_.view(0);
+            on = v.key != sourceKey_ || v.state == Loader::Loading;
+        }
+        memory_.store(on, std::memory_order_seq_cst);
+        if (remembers_.load(std::memory_order_seq_cst) == seen) return;
     }
-    memory_.store(on, std::memory_order_release);
 }
 
 std::string Surface::sourceText() const {

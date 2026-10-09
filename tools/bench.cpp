@@ -175,14 +175,21 @@ int threads() {
 
 // Weather's source in (the Source stepper's text no longer "...": in, Memory or MISSING), as the tools
 // wait for it (tools/phrase.h): before it is, the instance's loader thread is at work, and its publish
-// would land somewhere in the blocks (a display update: not the same count on every run).
+// would land somewhere in the blocks (a display update: not the same count on every run). Not in
+// after kTablesWaitS fails the bench (g_sourceLate; the case still runs, for what it is worth).
+bool g_sourceLate = false;
 void waitForSource(AEffect* e) {
     const double t0 = wallS();
     for (;;) {
         char b[256] = {};
         e->dispatcher(e, vst::effGetParamDisplay, af::P_W_SOURCE, 0, b, 0.0f);
         const size_t n = std::strlen(b);
-        if (n < 4 || std::strcmp(b + n - 4, " ...") != 0 || wallS() - t0 > kTablesWaitS) return;
+        if (n < 4 || std::strcmp(b + n - 4, " ...") != 0) return;
+        if (wallS() - t0 > kTablesWaitS) {
+            std::printf("  FAIL: Weather's source wasn't in after %.0f s: its publish lands in the blocks\n", kTablesWaitS);
+            g_sourceLate = true;
+            return;
+        }
         const timespec nap{0, 5 * 1000 * 1000};
         nanosleep(&nap, nullptr);
     }
@@ -548,6 +555,7 @@ int icount(const char* so, int c, int blocks) {
             }
             ok = waitForTables(lib, true);
             e = openCase(lib, c);
+            ok = ok && !g_sourceLate;
         }
         if (ok && threads() != alone) {
             std::printf("%s", others);
@@ -605,9 +613,10 @@ int main(int argc, char** argv) {
         CPU_SET(cpu, &set);
         if (sched_setaffinity(0, sizeof set, &set) != 0) std::printf("(could not pin to cpu %d)\n", cpu);
     }
-    // Hermetic: no user folders, nothing saved, no trace (its flag file looked for where there is
-    // none), the same random numbers every run.
+    // Hermetic: no user folders (presets, Weather's WAVs), nothing saved, no trace (its flag file
+    // looked for where there is none), the same random numbers every run.
     setenv("AF_PRESET_ROOTS", "/nonexistent-afbench", 1);
+    setenv("AF_SOURCE_ROOTS", "/nonexistent-afbench:/nonexistent-afbench", 1);
     setenv("AF_DATA_DIR", "", 1);
     setenv("AF_TRACE_DIR", "/nonexistent-afbench", 1);
     setenv("AF_FIXED_SEED", "1", 1);
@@ -638,5 +647,5 @@ int main(int argc, char** argv) {
         }
     }
     dlclose(lib);
-    return fail ? 1 : 0;
+    return fail || g_sourceLate ? 1 : 0;
 }
