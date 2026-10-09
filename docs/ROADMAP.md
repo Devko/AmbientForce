@@ -25,7 +25,8 @@ The milestones come from the [concept](CONCEPT.md#14-roadmap); M1's tasks from
 - ✅ **0.0.2, the first release** (2026-10-08, tag `v0.0.2`; 0.0.1 was never released): on the
   Force from a local build of the tag. 🔜 Played, then a `tested.json` entry for CI's release
   package and the plugin catalog's.
-- 🔜 **M2: Weather**, from [its plan](plans/2026-10-07-m2-weather.md), on branch `m2`:
+- 🔜 **M2: Weather**, from [its plan](plans/2026-10-07-m2-weather.md), on branch `m2` (merged into `main`
+  through Task 11 on 2026-10-09, unreleased):
   - **Done:** Tasks 1–11 (2026-10-08 and 09). Air, Weather, Echo and Memory are in the engine, with
     their pages and the macros, and Weather's source picker, Remember and Keep.
   - **On the Force:** a build of `m2`, packaged as 0.0.3, for the author to play.

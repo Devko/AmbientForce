@@ -31,7 +31,8 @@ on branch `m2`.
 6. [`docs/plans/2026-10-08-m2-presets-proposal.md`](plans/2026-10-08-m2-presets-proposal.md):
    Task 12's 24 presets, **approved by the author**.
 7. [`docs/USER_GUIDE.md`](USER_GUIDE.md) and [`docs/PERFORMANCE.md`](PERFORMANCE.md) as needed.
-8. The draft PR Devko/AmbientForce#2 (`m2` → `main`): M2's status, task by task.
+8. Devko/AmbientForce#2 (`m2` → `main`, merged on 2026-10-09): M2's status through Task 11, task
+   by task.
 
 ## Where things stand
 
@@ -41,8 +42,10 @@ on branch `m2`.
   - the M2 plan and M2's Tasks 1–5 as standalone modules;
   - the fix for a Space ghost that 0.0.2 would otherwise have shipped with.
 
-- **`m2`** (pushed; draft PR Devko/AmbientForce#2) has M2's Tasks 1–11 merged, plus the approved
-  presets proposal.
+  **On 2026-10-09 the author had `m2` merged into `main`**: `main` now also has everything below
+  through Task 11. It is unreleased; 0.0.3 comes after Task 13.
+- **`m2`** (pushed) has M2's Tasks 1–11 merged, plus the approved presets proposal. Tasks 12 and 13
+  go on `m2`, with a new draft PR.
   - Every task was reviewed twice, once for the spec and once adversarially, and every fix was
     re-reviewed.
   - **Air, Weather, Echo and Memory sound in the engine and have their pages.** Weather's Source
@@ -166,7 +169,8 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
 ## Rules
 
 - **Branches:** work on **`m2`** and push it.
-  - Keep the draft PR Devko/AmbientForce#2 (`m2` → `main`) saying what's done, decided and open.
+  - Keep a draft PR (`m2` → `main`) saying what's done, decided and open. Devko/AmbientForce#2
+    was merged with Tasks 1–11; open a new one when Task 12 starts.
   - **Merge into `main` or tag only when the author asks.**
 - **No device:** no `bench-device` or `plugin-install`. Never invent device numbers; mark them
   "(device: pending)".
