@@ -3,21 +3,57 @@
 // its VST2 entry points the way MPC drives it (128-frame blocks, events with deltaFrames, 0..1
 // params). Built with ASan/UBSan by `make test`, for the Force's CPU under qemu by `make test-arm`.
 #include "host.h"
+#include "../plugin/loader.h"
 #include "../plugin/presets.h"
+#include "../plugin/sources.h"
 #include "../plugin/surface.h"
 #include "../plugin/trace.h"
+#include "../plugin/wav.h"
+#include "../dsp/fields.h"
 
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+
+// Counting locks (processReplacing takes none: testAudioThreadQuiet). pthread_mutex_lock and trylock, which
+// std::mutex and every lock of the C++ library come to, are this binary's own and count the locks taken on
+// the thread that counts while it counts, then hand on to the real ones (dlsym's next: the sanitizer's, then
+// libc's). Under ASan only, where the allocation counter is too.
+#if AFT_COUNTS_ALLOCS
+#include <dlfcn.h>
+#include <pthread.h>
+namespace aft {
+thread_local bool t_countingLocks = false;
+int g_locks = 0;
+}
+extern "C" int pthread_mutex_lock(pthread_mutex_t* m) noexcept {
+    using Fn = int (*)(pthread_mutex_t*);
+    static Fn real = nullptr;   // (no guard: dlsym may lock on its first call)
+    if (!real) real = reinterpret_cast<Fn>(dlsym(RTLD_NEXT, "pthread_mutex_lock"));
+    if (aft::t_countingLocks) ++aft::g_locks;
+    return real(m);
+}
+extern "C" int pthread_mutex_trylock(pthread_mutex_t* m) noexcept {
+    using Fn = int (*)(pthread_mutex_t*);
+    static Fn real = nullptr;
+    if (!real) real = reinterpret_cast<Fn>(dlsym(RTLD_NEXT, "pthread_mutex_trylock"));
+    if (aft::t_countingLocks) ++aft::g_locks;
+    return real(m);
+}
+#endif
 
 namespace aft {
 int g_fail = 0, g_pass = 0;
@@ -27,11 +63,14 @@ intptr_t hostMaster(AEffect* e, int32_t op, int32_t index, intptr_t, void*, floa
     if (op == 1) return 2400;   // audioMasterVersion
     if (!log) return 0;
     if (op == vst::audioMasterUpdateDisplay) ++log->updates;
-    if (op == vst::audioMasterAutomate) {
+    if (op == vst::audioMasterAutomate && log->record) {
         log->automated[index] = opt;
         ++log->automateCount[index];
     }
-    if (op == vst::audioMasterGetTime) return reinterpret_cast<intptr_t>(&log->time);
+    if (op == vst::audioMasterGetTime) {
+        if (log->throwOnTime) throw std::runtime_error("the host's transport");
+        return reinterpret_cast<intptr_t>(&log->time);
+    }
     return 0;
 }
 
@@ -43,6 +82,8 @@ std::string fixtureDir() {
     }();
     return dir;
 }
+
+std::string sourceDir() { return fixtureDir() + "/sources"; }
 
 double pitchHz(const std::vector<float>& x, size_t from, size_t to) {
     if (to == 0 || to > x.size()) to = x.size();
@@ -691,6 +732,650 @@ void testStress() {
     CHECK(worst <= 0.8913f);   // the limiter's ceiling
 }
 
+// --- Weather's source, Remember and Keep through the plugin (plugin/surface.h, plugin.cpp) ---------------
+
+// A WAV of a sine in the test's source roots, listed at once.
+void makeWav(const std::string& path, double seconds, double hz) {
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    const int frames = static_cast<int>(seconds * 44100.0);
+    std::vector<int16_t> pcm(2 * static_cast<size_t>(frames));
+    for (size_t i = 0; i < static_cast<size_t>(frames); ++i)
+        pcm[2 * i] = pcm[2 * i + 1] =
+            static_cast<int16_t>(std::lround(8000.0 * std::sin(2.0 * M_PI * hz * static_cast<double>(i) / 44100.0)));
+    std::string err;
+    CHECK(af::writeWav(path, pcm.data(), frames, &err));
+    af::rescanSources();
+}
+
+std::string sourceText(Host& h) { return h.display(af::P_W_SOURCE); }
+
+// How many cached sources something still holds (a loader's slot or its graveyard): a cap of nothing drops every
+// other one (the cache never drops one in use), and the cap goes back to its 48 MB.
+size_t sourcesInUse() {
+    af::SourceCache& c = af::SourceCache::get();
+    c.setCap(0);
+    const size_t n = c.entries();
+    c.setCap(48u << 20);
+    return n;
+}
+
+// The loader's thread held where a hook calls (a Keep's write, a source's load), the test's to let go.
+struct Gate {
+    std::mutex m;
+    std::condition_variable cv;
+    bool in = false, open = false;
+    std::string key;   // a load hook holds only this key's load
+    void hold() {
+        std::unique_lock<std::mutex> lk(m);
+        in = true;
+        cv.notify_all();
+        cv.wait(lk, [this] { return open; });
+    }
+    bool entered() {   // the loader's thread is held (within 10 s)
+        std::unique_lock<std::mutex> lk(m);
+        return cv.wait_for(lk, std::chrono::seconds(AFT_COUNTS_ALLOCS ? 10 : 100), [this] { return in; });
+    }
+    void release() {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            open = true;
+        }
+        cv.notify_all();
+    }
+};
+void holdKeepWrite(void* ctx, int stage) {
+    if (stage == af::KS_WRITE) static_cast<Gate*>(ctx)->hold();
+}
+void holdLoad(void* ctx, const std::string& key) {
+    Gate* g = static_cast<Gate*>(ctx);
+    if (key == g->key) g->hold();
+}
+// A load of `key` held for the scope's life (let go, and the hook taken away, at its end).
+struct HeldLoad {
+    Gate gate;
+    explicit HeldLoad(const std::string& key) {
+        gate.key = key;
+        af::setLoadHook(holdLoad, &gate);
+    }
+    ~HeldLoad() {
+        gate.release();
+        af::setLoadHook(nullptr, nullptr);
+    }
+};
+// A raw tap on a button (Host::press waits for Weather's source, which a held load keeps from coming).
+void tap(Host& h, int id) { h.setN(id, 1.0f); }
+// Weather's part of the last run (its 220 Hz, A3's, which no field has, and a test WAV's 1 kHz) against its RMS.
+struct Heard {
+    double rms, a220, k1;
+};
+Heard heard(Host& h, int blocks) {
+    h.run(blocks);
+    const double r = rms(h.L);
+    return {r, r > 0.0 ? toneAmp(h.L, 220.0) / r : 0.0, r > 0.0 ? toneAmp(h.L, 1000.0) / r : 0.0};
+}
+// Only Weather heard: Ground and Bloom muted, the reverb's return closed, Weather up.
+void weatherAlone(Host& h) {
+    h.set(af::P_G_MUTE, 1.0f);
+    h.set(af::P_B_MUTE, 1.0f);
+    h.set(af::P_S_RETURN, 0.0f);
+    h.set(af::P_W_LEVEL, 1.0f);
+}
+
+// Check 1: the stepper walks sourceKeys() one per detent, each source named at once and loaded (a field within
+// 2 s); a turn inside the loader's debounce loads only where it stops (a step is a scroll); a file deleted under
+// its key shows MISSING at its next pick, its key kept.
+void testSourceStepper() {
+    std::printf("== Weather's source: the stepper\n");
+    makeWav(sourceDir() + "/plugin/Weather/Creek.wav", 2.0, 330.0);
+    Host h;
+    CHECK(showsSource(h, "Rain on Roof"));   // Init's
+    const std::vector<std::string> keys = af::sourceKeys();
+    CHECK(keys.size() == static_cast<size_t>(af::FD_COUNT) + 2 && keys[0] == af::defaultSourceKey() &&
+          keys[af::FD_COUNT] == af::kMemoryKey && keys.back() == "plugin:Weather/Creek.wav");
+    bool named = true, loaded = true;
+    long long slowest = 0;
+    for (size_t k = 1; k < keys.size(); ++k) {
+        h.detent(af::P_W_SOURCE, +1);
+        const std::string name = af::sourceName(keys[k]), now = sourceText(h);
+        const bool memory = keys[k] == af::kMemoryKey;
+        if (now != (memory ? name : name + " ...")) std::printf("  %s, the step: \"%s\"\n", keys[k].c_str(), now.c_str());
+        named = named && now == (memory ? name : name + " ...");
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool in = showsSource(h, name, 2000);
+        slowest = std::max<long long>(slowest, std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                   std::chrono::steady_clock::now() - t0).count());
+        if (!in) std::printf("  %s: \"%s\"\n", keys[k].c_str(), sourceText(h).c_str());
+        loaded = loaded && in;
+    }
+    std::printf("  %zu sources a detent each, the slowest in %lld ms\n", keys.size(), slowest);
+    CHECK(named && loaded);
+    h.detent(af::P_W_SOURCE, +1);   // the end: nothing further
+    CHECK(sourceText(h) == "Creek");
+    h.detent(af::P_W_SOURCE, -1);
+    CHECK(sourceText(h) == "Memory");
+    h.press(af::P_W_SOURCE_NEXT);   // an arrow: a pick, the same way
+    CHECK(showsSource(h, "Creek") && h.finite);
+
+    // Four files the cache hasn't seen, turned through faster than the debounce: one is made, where the turn stops.
+    // (A machine too slow to turn four detents within the debounce, qemu at its worst, may make more.)
+    for (int k = 1; k <= 4; ++k) makeWav(sourceDir() + "/plugin/Weather/Pebble " + std::to_string(k) + ".wav", 1.0, 200.0 * k);
+    af::sourceKeys();   // the listing made before the turn, as a stepper's first look would
+    const int made = af::sourcesMade();
+    const auto turn = std::chrono::steady_clock::now();
+    for (int k = 0; k < 4; ++k) h.detent(af::P_W_SOURCE, +1);
+    const long long turnMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - turn).count();
+    CHECK(sourceText(h) == "Pebble 4 ...");
+    CHECK(showsSource(h, "Pebble 4"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(AFT_COUNTS_ALLOCS ? 200 : 2000));   // anything else in flight lands
+    std::printf("  a turn through four new files in %lld ms: %d made\n", turnMs, af::sourcesMade() - made);
+    CHECK(turnMs >= af::Loader::kDebounceMs ? af::sourcesMade() - made >= 1 : af::sourcesMade() == made + 1);
+
+    // A file deleted under its key: what plays stays, and the next pick of the key (the project loaded again)
+    // finds it gone: MISSING, the key kept.
+    h.press(af::P_W_SOURCE_PREV);
+    h.press(af::P_W_SOURCE_PREV);
+    h.press(af::P_W_SOURCE_PREV);
+    h.press(af::P_W_SOURCE_PREV);
+    CHECK(showsSource(h, "Creek"));
+    std::filesystem::remove(sourceDir() + "/plugin/Weather/Creek.wav");
+    af::rescanSources();
+    const std::string project = h.chunk();
+    CHECK(project.find("\nw_source=plugin:Weather/Creek.wav\n") != std::string::npos);
+    CHECK(h.load(project) == 1);
+    CHECK(showsSource(h, "MISSING Creek") && h.chunk().find("\nw_source=plugin:Weather/Creek.wav\n") != std::string::npos);
+    h.run(8);
+    CHECK(h.finite);
+    for (int k = 1; k <= 4; ++k) std::filesystem::remove(sourceDir() + "/plugin/Weather/Pebble " + std::to_string(k) + ".wav");
+    af::rescanSources();
+}
+
+// memory: is the engine's: the Source stepper says "Memory" (never MISSING, never loading), and the loader is
+// never asked for it, so the source it had is still there to go back to, at once.
+void testMemoryKey() {
+    std::printf("== Weather's source: Memory is the engine's\n");
+    Host h;
+    CHECK(showsSource(h, "Rain on Roof"));
+    CHECK(h.load("ambientforce 1\nw_source=memory:\n") == 1 && sourceText(h) == "Memory");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));   // past the debounce, many of the loader's passes
+    h.run(4);
+    CHECK(sourceText(h) == "Memory" && h.chunk().find("\nw_source=memory:\n") != std::string::npos);
+    CHECK(h.load("ambientforce 1\nw_source=builtin:Rain on Roof\n") == 1 && sourceText(h) == "Rain on Roof");
+}
+
+// Check 3, and the button's way to the engine: a Remember pressed through setParameter reaches the engine at the
+// next block (the audio thread's), says what came of it, and makes Memory Weather's source; Weather turned up then
+// plays what was remembered. Refused, it says why and leaves the source.
+void testRemember() {
+    std::printf("== Remember through the plugin\n");
+    Host a;   // nothing heard yet
+    CHECK(showsSource(a, "Rain on Roof"));
+    a.press(af::P_W_REMEMBER);
+    a.run(1);
+    CHECK(a.display(af::P_STATUS) == "REMEMBER: nothing heard yet");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(sourceText(a) == "Rain on Roof");
+
+    // A3 (220 Hz, Bloom's root, Ground under it) for 3 s, then Remember; c the same without.
+    Host h, c;
+    for (Host* x : {&h, &c}) {
+        CHECK(showsSource(*x, "Rain on Roof"));
+        x->on(57);
+        x->run(3 * kBlocksPerSec);
+    }
+    h.press(af::P_W_REMEMBER);
+    h.run(1);
+    CHECK(h.display(af::P_STATUS) == "REMEMBER: the last 3.0 s are Weather's source");
+    CHECK(showsSource(h, "Memory"));
+    h.press(af::P_W_REMEMBER);   // within 2 s of the last
+    h.run(1);
+    CHECK(h.display(af::P_STATUS) == "REMEMBER: again in a moment" && sourceText(h) == "Memory");
+    // The rest silent, Weather up: from Memory, A3's 220 Hz (no field has it); c plays Rain on Roof.
+    double tone[2] = {}, level[2] = {};
+    int k = 0;
+    for (Host* x : {&h, &c}) {
+        x->set(af::P_G_MUTE, 1.0f);
+        x->set(af::P_B_MUTE, 1.0f);
+        x->set(af::P_S_RETURN, 0.0f);
+        x->set(af::P_W_LEVEL, 1.0f);
+        x->run(kBlocksPerSec);
+        x->run(2 * kBlocksPerSec);
+        level[k] = rms(x->L);
+        tone[k] = toneAmp(x->L, 220.0);
+        ++k;
+    }
+    std::printf("  Weather from Memory: %.1f dBFS RMS, 220 Hz at %.2f of it; from Rain on Roof: %.1f dBFS, %.3f\n",
+                db(level[0]), tone[0] / level[0], db(level[1]), tone[1] / level[1]);
+    CHECK(h.finite && c.finite && level[0] > 0.003 && level[1] > 0.003);
+    CHECK(tone[0] > 0.1 * level[0] && tone[1] < 0.03 * level[1]);
+
+    // The move to Memory is the audio thread's, in the Remember's own block: with the loader's thread held in a
+    // load (its tick can't run), Weather plays Memory all the same, and the key follows once the thread is free
+    // (a Remember after a pick is the choice: the file that comes in meanwhile doesn't take Weather from Memory).
+    makeWav(sourceDir() + "/plugin/Weather/Held.wav", 1.0, 1000.0);
+    Host m;
+    CHECK(showsSource(m, "Rain on Roof"));
+    m.on(57);
+    m.run(3 * kBlocksPerSec);
+    {
+        HeldLoad held("plugin:Weather/Held.wav");
+        m.loadRaw("ambientforce 1\nw_source=plugin:Weather/Held.wav\n");
+        CHECK(held.gate.entered());
+        tap(m, af::P_W_REMEMBER);
+        m.run(1);
+        CHECK(m.display(af::P_STATUS) == "REMEMBER: the last 3.0 s are Weather's source");
+        weatherAlone(m);
+        m.run(kBlocksPerSec);
+        const Heard w = heard(m, 2 * kBlocksPerSec);
+        std::printf("  Remembered with the loader's thread held: Weather's 220 Hz at %.2f of it, \"%s\"\n", w.a220,
+                    sourceText(m).c_str());
+        CHECK(w.rms > 0.003 && w.a220 > 0.1 && sourceText(m) == "Held ...");
+    }
+    CHECK(showsSource(m, "Memory"));
+    const Heard after = heard(m, kBlocksPerSec);
+    CHECK(after.a220 > 0.1 && after.k1 < 0.05 && m.finite);
+}
+
+// Leaving Memory: with something remembered, Weather plays it on until the source picked has loaded (then that
+// source); with nothing remembered there is nothing to hold, and Weather goes straight to the source the loader
+// has, rather than silence for the whole load.
+void testLeavingMemory() {
+    std::printf("== Weather's source: leaving Memory\n");
+    makeWav(sourceDir() + "/plugin/Weather/Held.wav", 1.0, 1000.0);
+    {
+        Host a;   // nothing remembered
+        CHECK(showsSource(a, "Rain on Roof"));
+        weatherAlone(a);
+        a.on(57);
+        a.run(kBlocksPerSec);
+        CHECK(a.load("ambientforce 1\nw_source=memory:\n") == 1);
+        a.run(kBlocksPerSec / 2);   // (the grains fading)
+        const Heard onMemory = heard(a, kBlocksPerSec);
+        af::SourceCache::get().clear();   // Held.wav to be read: its load held
+        HeldLoad held("plugin:Weather/Held.wav");
+        a.loadRaw("ambientforce 1\nw_source=plugin:Weather/Held.wav\n");
+        CHECK(held.gate.entered());
+        const Heard loading = heard(a, kBlocksPerSec);
+        std::printf("  nothing remembered: on Memory %.1f dBFS, while Held.wav loads %.1f dBFS (the field the loader has)\n",
+                    db(onMemory.rms), db(loading.rms));
+        CHECK(onMemory.rms < 1e-4 && loading.rms > 0.003 && loading.k1 < 0.05);
+    }
+    {
+        Host b;   // something remembered
+        CHECK(showsSource(b, "Rain on Roof"));
+        b.on(57);
+        b.run(3 * kBlocksPerSec);
+        tap(b, af::P_W_REMEMBER);
+        b.run(1);
+        CHECK(showsSource(b, "Memory"));
+        weatherAlone(b);
+        b.run(kBlocksPerSec);
+        af::SourceCache::get().clear();
+        Heard loading{}, loaded{};
+        {
+            HeldLoad held("plugin:Weather/Held.wav");
+            b.loadRaw("ambientforce 1\nw_source=plugin:Weather/Held.wav\n");
+            CHECK(held.gate.entered());
+            loading = heard(b, kBlocksPerSec);
+        }
+        CHECK(showsSource(b, "Held"));
+        b.run(kBlocksPerSec / 2);
+        loaded = heard(b, kBlocksPerSec);
+        std::printf("  remembered: while Held.wav loads 220 Hz at %.2f and 1 kHz at %.2f; loaded, %.2f and %.2f\n", loading.a220,
+                    loading.k1, loaded.a220, loaded.k1);
+        CHECK(loading.a220 > 0.1 && loading.k1 < 0.05 && loaded.k1 > 0.1 && loaded.a220 < 0.05 && b.finite);
+    }
+}
+
+// Check 4, and Keep's in-flight flag: with nothing remembered nothing is written and the status line says so; with
+// something, Memory 001.wav appears on the SSD, the source becomes it, and a project saved then reloads it from the
+// file. A Keep pressed while one writes is ignored (queued, it would write the same audio again as Memory 003).
+// No SSD: it says it couldn't write.
+void testKeep() {
+    std::printf("== Keep through the plugin\n");
+    const std::string memories = sourceDir() + "/ssd/AmbientForce/Memories";
+    std::error_code ec;
+    std::filesystem::remove_all(memories, ec);
+    Host a;
+    a.press(af::P_W_KEEP);
+    CHECK(statusSays(a, "KEEP: nothing remembered yet") && !std::filesystem::exists(memories + "/Memory 001.wav"));
+
+    Host h;
+    h.on(57);
+    h.run(3 * kBlocksPerSec);
+    h.press(af::P_W_REMEMBER);
+    h.run(1);
+    CHECK(showsSource(h, "Memory"));
+    h.press(af::P_W_KEEP);
+    CHECK(statusSays(h, "KEEP: Memory 001 on the SSD") && std::filesystem::exists(memories + "/Memory 001.wav"));
+    CHECK(showsSource(h, "Memory 001"));
+    const std::string key = "ssd:AmbientForce/Memories/Memory 001.wav";
+    const std::string project = h.chunk();
+    CHECK(project.find("\nw_source=" + key + "\n") != std::string::npos);
+    af::WavData w;
+    std::string err;
+    CHECK(af::readWav(memories + "/Memory 001.wav", w, 60.0f, &err) && std::labs(static_cast<long>(w.l.size()) - 3 * kBlocksPerSec * kBlock) <= 4);
+    // Reloaded from the file, not from the cache.
+    af::SourceCache::get().clear();
+    const int made = af::sourcesMade();
+    {
+        Host r;
+        CHECK(r.load(project) == 1 && showsSource(r, "Memory 001") && af::sourcesMade() == made + 1);
+    }
+
+    // A Keep pressed while one writes: ignored. (Back on Memory first: Keep's file becomes the source only in
+    // place of Memory.)
+    CHECK(h.load("ambientforce 1\nw_source=memory:\n") == 1);
+    Gate gate;
+    af::setKeepHook(holdKeepWrite, &gate);
+    h.press(af::P_W_KEEP);
+    CHECK(gate.entered());
+    h.press(af::P_W_KEEP);
+    h.run(2);
+    h.press(af::P_W_KEEP);
+    gate.release();
+    CHECK(statusSays(h, "KEEP: Memory 002 on the SSD"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(AFT_COUNTS_ALLOCS ? 300 : 3000));   // many of the loader's passes
+    h.run(4);
+    af::setKeepHook(nullptr, nullptr);
+    CHECK(std::filesystem::exists(memories + "/Memory 002.wav") && !std::filesystem::exists(memories + "/Memory 003.wav"));
+    CHECK(showsSource(h, "Memory 002"));
+
+    // No SSD.
+    const char* had = std::getenv("AF_SOURCE_ROOTS");
+    const std::string roots = had ? had : "";
+    setenv("AF_SOURCE_ROOTS", (sourceDir() + "/plugin:" + sourceDir() + "/no-ssd").c_str(), 1);
+    af::rescanSources();
+    h.press(af::P_W_KEEP);
+    CHECK(statusSays(h, "KEEP: couldn't write to the SSD"));
+    setenv("AF_SOURCE_ROOTS", roots.c_str(), 1);
+    af::rescanSources();
+    CHECK(h.finite && !std::filesystem::exists(memories + "/Memory 003.wav"));
+}
+
+// Keep's file becomes the source only in place of Memory, and only if nothing newer was remembered while it was
+// written: a source picked during the write stays, and so does Memory after a Remember during the write.
+void testKeepSwitch() {
+    std::printf("== Keep: what the player chose meanwhile stays\n");
+    const auto kept = [](const std::string& s) {
+        return s.compare(0, 13, "KEEP: Memory ") == 0 && s.size() > 24 && s.compare(s.size() - 11, 11, " on the SSD") == 0;
+    };
+    {
+        Host h;
+        h.on(57);
+        h.run(3 * kBlocksPerSec);
+        tap(h, af::P_W_REMEMBER);
+        h.run(1);
+        CHECK(showsSource(h, "Memory"));
+        Gate gate;
+        af::setKeepHook(holdKeepWrite, &gate);
+        tap(h, af::P_W_KEEP);
+        CHECK(gate.entered());
+        h.loadRaw("ambientforce 1\nw_source=builtin:Surf\n");   // picked while the file is written
+        gate.release();
+        CHECK(waitFor([&] {
+            h.run(1);
+            return kept(h.display(af::P_STATUS));
+        }));
+        af::setKeepHook(nullptr, nullptr);
+        CHECK(showsSource(h, "Surf"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(AFT_COUNTS_ALLOCS ? 200 : 2000));
+        CHECK(sourceText(h) == "Surf" && h.chunk().find("\nw_source=builtin:Surf\n") != std::string::npos);
+    }
+    {
+        Host g;
+        g.on(57);
+        g.run(3 * kBlocksPerSec);
+        tap(g, af::P_W_REMEMBER);
+        g.run(1);
+        CHECK(showsSource(g, "Memory"));
+        Gate gate;
+        af::setKeepHook(holdKeepWrite, &gate);
+        tap(g, af::P_W_KEEP);
+        CHECK(gate.entered());
+        g.run(5 * kBlocksPerSec / 2);   // 2.5 s more: a Remember may come again (and the ring is let go before the write)
+        tap(g, af::P_W_REMEMBER);
+        g.run(1);
+        CHECK(g.display(af::P_STATUS).compare(0, 19, "REMEMBER: the last ") == 0);
+        gate.release();
+        CHECK(waitFor([&] {
+            g.run(1);
+            return kept(g.display(af::P_STATUS));
+        }));
+        af::setKeepHook(nullptr, nullptr);
+        std::this_thread::sleep_for(std::chrono::milliseconds(AFT_COUNTS_ALLOCS ? 200 : 2000));
+        CHECK(sourceText(g) == "Memory" && g.chunk().find("\nw_source=memory:\n") != std::string::npos && g.finite);
+    }
+}
+
+// The Source stepper after the list has changed under its key: twenty files listed before it since the value was
+// pushed, a detent to the right goes one on from the key, to the right; and a name too long for the stepper is cut
+// to fit (fitText; surface.py checks the cases, params_test holds fitText to them).
+void testStepperListing() {
+    std::printf("== Weather's source: the stepper over a list that changed\n");
+    makeWav(sourceDir() + "/plugin/Weather/Bb.wav", 1.0, 300.0);
+    makeWav(sourceDir() + "/plugin/Weather/Cc.wav", 1.0, 400.0);
+    Host h;
+    CHECK(h.load("ambientforce 1\nw_source=plugin:Weather/Bb.wav\n") == 1 && sourceText(h) == "Bb");
+    for (int k = 0; k < 20; ++k) {
+        char name[64];
+        std::snprintf(name, sizeof name, "/plugin/Weather/A%02d.wav", k);
+        makeWav(sourceDir() + name, 0.6, 500.0);
+    }
+    h.detent(af::P_W_SOURCE, +1);
+    std::printf("  one detent right from Bb, twenty files listed before it: \"%s\"\n", sourceText(h).c_str());
+    CHECK(sourceText(h) == "Cc ...");
+    h.detent(af::P_W_SOURCE, -1);
+    CHECK(showsSource(h, "Bb"));
+    // A long name, cut.
+    const std::string longName = "Rain on the tin roof of the boathouse";
+    makeWav(sourceDir() + "/plugin/Weather/" + longName + ".wav", 1.0, 600.0);
+    CHECK(h.load("ambientforce 1\nw_source=plugin:Weather/" + longName + ".wav\n") == 1);
+    const std::string shown = sourceText(h);
+    std::printf("  \"%s\" shows as \"%s\"\n", longName.c_str(), shown.c_str());
+    CHECK(shown == af::fitText("", longName, "", af::kSourceTextRoom) && shown.size() < longName.size() &&
+          shown.compare(shown.size() - 2, 2, "..") == 0 && longName.compare(0, shown.size() - 2, shown, 0, shown.size() - 2) == 0);
+    for (int k = 0; k < 20; ++k) {
+        char name[64];
+        std::snprintf(name, sizeof name, "/plugin/Weather/A%02d.wav", k);
+        std::filesystem::remove(sourceDir() + name);
+    }
+    for (const char* f : {"Bb", "Cc", "Rain on the tin roof of the boathouse"})
+        std::filesystem::remove(sourceDir() + "/plugin/Weather/" + f + ".wav");
+    af::rescanSources();
+}
+
+// Every block ends on the loader's count (plugin.cpp: one blockDone() for every blockStart(), with what Weather
+// holds), so the loader frees a replaced source when it may: here the host's transport callback throwing, and a
+// suspend with Weather silent and with Weather sounding.
+void testSourceBlocks() {
+    std::printf("== Weather's source: every block on the loader's count\n");
+    // Long enough for the loader to have made many passes (each frees what it may): what is still in use then
+    // is kept. What may be freed is waited for.
+    const auto passes = [] { std::this_thread::sleep_for(std::chrono::milliseconds(AFT_COUNTS_ALLOCS ? 150 : 1500)); };
+    const auto inUse = [](size_t n) { return waitFor([n] { return sourcesInUse() == n; }, 2000); };
+    af::SourceCache::get().clear();
+    {
+        // Weather sounding on Surf, Stream picked, then the host's transport callback throwing for three blocks.
+        // A block cut short there would have read Stream without giving it to Weather, still on Surf, and told
+        // the loader it was done: Surf freed (here by the cache's cap, taken down), and the next block's copy from
+        // Surf a read of freed memory (ASan stops the run). The throw is caught where it is made, so each block
+        // plays whole, on the transport as it last was: Weather sounds on, Surf is let go of in the first.
+        Host w;
+        w.set(af::P_W_LEVEL, 1.0f);
+        CHECK(w.load("ambientforce 1\nw_source=builtin:Surf\n") == 1 && showsSource(w, "Surf"));
+        w.on(60);
+        w.run(kBlocksPerSec);
+        CHECK(w.load("ambientforce 1\nw_source=builtin:Stream\n") == 1 && showsSource(w, "Stream"));
+        w.log.throwOnTime = true;
+        const float during = w.run(3);
+        w.log.throwOnTime = false;
+        passes();
+        const size_t n = sourcesInUse();   // what isn't held is dropped from the cache: freed
+        const float after = w.run(kBlocksPerSec / 4);
+        std::printf("  the host throwing for three blocks: peak %.3f in them, %zu sources in use, then peak %.3f\n", during,
+                    n, after);
+        CHECK(during > 0.0f && after > 0.0f && n == 1 && w.finite);
+    }
+    {
+        Host h;   // Weather silent (level 0): its blocks hold nothing, the throw changes none of that
+        CHECK(h.load("ambientforce 1\nw_source=builtin:Surf\n") == 1 && showsSource(h, "Surf"));
+        h.run(4);
+        h.log.throwOnTime = true;
+        CHECK(h.run(3) == 0.0f && h.finite);
+        h.log.throwOnTime = false;
+        CHECK(h.load("ambientforce 1\nw_source=builtin:Stream\n") == 1 && showsSource(h, "Stream"));
+        CHECK(inUse(1));
+    }
+    {
+        Host q;   // suspended, Weather silent: a source picked meanwhile frees the one before at once
+        CHECK(q.load("ambientforce 1\nw_source=builtin:Surf\n") == 1 && showsSource(q, "Surf"));
+        q.run(4);
+        q.e->dispatcher(q.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
+        CHECK(q.load("ambientforce 1\nw_source=builtin:Stream\n") == 1 && showsSource(q, "Stream"));
+        CHECK(inUse(1));
+        q.e->dispatcher(q.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);
+    }
+    {
+        Host w;   // suspended with Weather sounding: the source it reads stays until a block has run
+        w.set(af::P_W_LEVEL, 1.0f);
+        CHECK(w.load("ambientforce 1\nw_source=builtin:Surf\n") == 1 && showsSource(w, "Surf"));
+        w.on(60);
+        w.run(kBlocksPerSec);
+        w.e->dispatcher(w.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
+        CHECK(w.load("ambientforce 1\nw_source=builtin:Stream\n") == 1 && showsSource(w, "Stream"));
+        passes();
+        CHECK(sourcesInUse() == 2);
+        w.e->dispatcher(w.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);
+        w.run(2);
+        CHECK(inUse(1) && w.finite);
+    }
+}
+
+// Check 5: an instance closed while its loader is making a source joins it cleanly (ASan: nothing leaked, nothing
+// read after it was freed): held in a load, the close waits for the load and goes once it is let go; held in a
+// Keep's write, likewise (on the device MPC's thread waits as long as the SSD takes: device-pending); and forty
+// opened and closed while loading, one after another and twenty at once.
+void testSourceLifetime() {
+    std::printf("== Weather's source: instances closed while loading\n");
+    for (int k = 0; k < 20; ++k) makeWav(sourceDir() + "/plugin/Weather/Lot " + std::to_string(k) + ".wav", 2.0, 100.0 + k);
+    af::SourceCache::get().clear();
+    const auto waitsThenGoes = [](Host* h, Gate& gate) {   // closed on another thread: it waits for the gate, then goes
+        std::atomic<bool> closed{false};
+        std::thread closer([&] {
+            delete h;
+            closed = true;
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        const bool waited = !closed.load();
+        gate.release();
+        closer.join();
+        return waited && closed.load();
+    };
+    {
+        HeldLoad held("plugin:Weather/Lot 0.wav");
+        Host* h = new Host;
+        h->loadRaw("ambientforce 1\nw_source=plugin:Weather/Lot 0.wav\n");
+        CHECK(held.gate.entered());
+        CHECK(waitsThenGoes(h, held.gate));
+    }
+    {
+        Host* k = new Host;
+        k->on(57);
+        k->run(kBlocksPerSec);
+        tap(*k, af::P_W_REMEMBER);
+        k->run(1);
+        Gate gate;
+        af::setKeepHook(holdKeepWrite, &gate);
+        tap(*k, af::P_W_KEEP);
+        CHECK(gate.entered());
+        CHECK(waitsThenGoes(k, gate));
+        af::setKeepHook(nullptr, nullptr);
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int k = 0; k < 20; ++k) {
+        Host h;
+        h.loadRaw("ambientforce 1\nw_source=plugin:Weather/Lot " + std::to_string(k) + ".wav\n");
+        h.run(1);
+    }
+    {
+        std::vector<std::unique_ptr<Host>> hs;
+        af::SourceCache::get().clear();
+        for (int k = 0; k < 20; ++k) {
+            hs.push_back(std::make_unique<Host>());
+            hs.back()->loadRaw("ambientforce 1\nw_source=plugin:Weather/Lot " + std::to_string(19 - k) + ".wav\n");
+            hs.back()->run(1);
+        }
+    }
+    const long long ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("  40 instances opened and closed mid-load in %lld ms\n", ms);
+    CHECK(ms < 60000);
+    for (int k = 0; k < 20; ++k) std::filesystem::remove(sourceDir() + "/plugin/Weather/Lot " + std::to_string(k) + ".wav");
+    af::rescanSources();
+}
+
+// Check 6: nothing in processReplacing allocates or locks, whatever the loader, Remember and Keep do around it (the
+// loader's handoff is atomics only; the buttons leave atomics; the messages are atomics). Counted on the thread
+// playing the audio thread (allocations and pthread mutex locks, above), with the host keeping nothing of what it
+// is pushed. (Waits: the same calls, none of which waits on anything.)
+void testAudioThreadQuiet() {
+    std::printf("== processReplacing: nothing allocated, nothing locked\n");
+#if AFT_COUNTS_ALLOCS
+    CHECK(hookAllocations());
+    Host h;
+    h.log.record = false;
+    float L[kBlock], R[kBlock];
+    float* out[2] = {L, R};
+    int allocs = 0, blocks = 0;
+    g_locks = 0;
+    {   // the counter counts: a lock taken while it counts is seen
+        std::mutex probe;
+        t_countingLocks = true;
+        probe.lock();
+        probe.unlock();
+        t_countingLocks = false;
+        CHECK(g_locks == 1);
+        g_locks = 0;
+    }
+    const auto play = [&](int n) {   // n blocks, counted
+        countAllocations();
+        t_countingLocks = true;
+        for (int b = 0; b < n; ++b) h.e->processReplacing(h.e, nullptr, out, kBlock);
+        t_countingLocks = false;
+        allocs += allocationsCounted();
+        blocks += n;
+    };
+    const auto until = [&](const std::function<bool()>& f) {
+        return waitFor([&] {
+            play(2);
+            return f();
+        });
+    };
+    h.set(af::P_W_LEVEL, 1.0f);
+    h.set(af::P_W_ECHO, 0.5f);
+    h.on(57);
+    play(kBlocksPerSec);
+    CHECK(until([&] { return sourceText(h) == "Rain on Roof"; }));
+    h.press(af::P_W_SOURCE_NEXT);   // a source swapped under Weather as it plays
+    CHECK(until([&] { return sourceText(h) == "Light Rain"; }));
+    play(kBlocksPerSec);
+    h.press(af::P_W_REMEMBER);   // Remember, and Weather moved to Memory
+    CHECK(until([&] { return sourceText(h) == "Memory"; }));
+    play(kBlocksPerSec);
+    h.press(af::P_W_KEEP);   // Keep writing on the loader's thread, then Weather moved to the file
+    CHECK(until([&] { return sourceText(h).compare(0, 8, "Memory 0") == 0 && sourceText(h).find("...") == std::string::npos; }));
+    play(kBlocksPerSec);
+    h.load("ambientforce 1\nw_source=builtin:Surf\n");   // away from the file
+    CHECK(until([&] { return sourceText(h) == "Surf"; }));
+    play(kBlocksPerSec / 2);
+    std::printf("  %d blocks: %d allocations, %d locks\n", blocks, allocs, g_locks);
+    CHECK(allocs == 0 && g_locks == 0);
+#else
+    std::printf("  (counted under ASan: make test)\n");
+#endif
+}
+
 } // namespace
 
 long long aft::g_msPerEvent = 1000;
@@ -700,8 +1385,11 @@ int main() {
     const std::string root = fixtureDir();
     std::filesystem::create_directories(root + "/presets");
     std::filesystem::create_directories(root + "/data");
+    std::filesystem::create_directories(sourceDir() + "/plugin/Weather");
+    std::filesystem::create_directories(sourceDir() + "/ssd");
     setenv("AF_PRESET_ROOTS", (root + "/presets").c_str(), 1);
     setenv("AF_DATA_DIR", (root + "/data").c_str(), 1);
+    setenv("AF_SOURCE_ROOTS", (sourceDir() + "/plugin:" + sourceDir() + "/ssd").c_str(), 1);   // never the real SSD
     setenv("AF_FIXED_SEED", "1", 1);   // every instance the same random numbers: they are compared
     // Host events a second apart unless a test says otherwise (aft::Turn): stepping never
     // mistakes two of them for one turn, whatever the machine's speed (and qemu's).
@@ -721,6 +1409,8 @@ int main() {
     reverbTests();
     echoTests();
     weatherTests();
+    fieldsTests();
+    sourcesTests();
     testBasics();
     testGetters();
     testPlay();
@@ -730,6 +1420,16 @@ int main() {
     testProcessLegacy();
     testMidiMapping();
     testSync();
+    testSourceStepper();
+    testStepperListing();
+    testMemoryKey();
+    testRemember();
+    testLeavingMemory();
+    testKeep();
+    testKeepSwitch();
+    testSourceBlocks();
+    testSourceLifetime();
+    testAudioThreadQuiet();
     paramsTests();
     presetTests();
     testStress();

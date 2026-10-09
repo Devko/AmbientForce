@@ -1,7 +1,8 @@
-// From SubForce plugin/state.cpp (8846421), namespace sf -> af, unchanged otherwise.
+// From SubForce plugin/state.cpp (8846421), namespace sf -> af; Weather's source (w_source=) added.
 #include "state.h"
 
 #include "patch_map.h"
+#include "sources.h"
 
 #include <algorithm>
 #include <charconv>
@@ -50,19 +51,21 @@ std::string saveState(const Surface& s, bool asPreset) {
         out += number(paramValue(i, s.get(i)));
         out += '\n';
     }
+    out += std::string(kSourceStateKey) + "=" + s.sourceKey() + "\n";   // Weather's source, by its key
     if (!asPreset && !s.presetKey().empty()) out += "preset=" + s.presetKey() + "\n";
     return out;
 }
 
-bool loadState(Surface& s, const std::string& textIn, bool asPreset) {
-    if (!isStateText(textIn)) return false;
-    const std::string text = textIn.compare(0, 3, "\xEF\xBB\xBF") == 0 ? textIn.substr(3) : textIn;
-    Surface::Batch batch(s);   // the audio thread never plays a half-loaded sound
+namespace {
+// The sound values (and, for a project, the preset's key) as one batch: the audio thread never plays a
+// half-loaded sound. Weather's source comes back for after it.
+void loadValues(Surface& s, const std::string& text, bool asPreset, std::string& source) {
+    Surface::Batch batch(s);
+    std::string preset;
     if (asPreset)
         for (int i = 0; i < P_COUNT; ++i)
             if (PARAM_INFO[i].kind == Kind::Synth) s.setValue(i, PARAM_INFO[i].def);
     // A preset is complete (what it doesn't name is the default); a project changes only what it lists.
-    std::string preset;
     size_t at = text.find('\n');
     while (at != std::string::npos && at + 1 < text.size()) {
         const size_t end = text.find('\n', at + 1);
@@ -77,6 +80,10 @@ bool loadState(Surface& s, const std::string& textIn, bool asPreset) {
             continue;
         }
         if (key == "about") continue;   // a preset's description, not a sound value (presets.h presetAbout)
+        if (key == kSourceStateKey) {
+            source = val;
+            continue;
+        }
         for (int i = 0; i < P_COUNT; ++i)
             if (PARAM_INFO[i].kind == Kind::Synth && key == PARAM_INFO[i].key) {
                 float v = 0.0f;
@@ -85,7 +92,21 @@ bool loadState(Surface& s, const std::string& textIn, bool asPreset) {
             }
     }
     if (!asPreset) s.setPresetKey(preset);   // a project without one came from no preset
-    s.refresh();
+}
+} // namespace
+
+bool loadState(Surface& s, const std::string& textIn, bool asPreset) {
+    if (!isStateText(textIn)) return false;
+    const std::string text = textIn.compare(0, 3, "\xEF\xBB\xBF") == 0 ? textIn.substr(3) : textIn;
+    std::string source;
+    loadValues(s, text, asPreset, source);
+    // Weather's source, after the batch (the listing it reads may walk a slow SSD: the sound values don't wait
+    // for it), as a pick (a file loaded already is looked at again): a preset without one has the default, as
+    // any value it doesn't name; a project without one (0.0.2's) keeps the source playing. A key that names
+    // nothing is kept, and shows MISSING (the loader's), as a deleted file's does.
+    if (!source.empty()) s.setSourceKey(source, true);
+    else if (asPreset) s.setSourceKey(defaultSourceKey(), true);
+    else s.refresh();
     return true;
 }
 

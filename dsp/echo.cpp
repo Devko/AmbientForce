@@ -127,6 +127,4 @@ void Echo::process(const float* sendL, const float* sendR, float* outL, float* o
     asleep_ = held_ && silent();
 }
 
-bool Echo::silent() const { return quiet_ >= static_cast<uint32_t>(delay_.reachSamples()); }
-
 } // namespace af

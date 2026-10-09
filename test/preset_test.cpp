@@ -4,14 +4,17 @@
 // values back to MPC, every factory preset playing the demo phrase at its level, and the macros at
 // both ends of their range keeping the hottest presets off the limiter.
 #include "host.h"
+#include "../plugin/loader.h"
 #include "../plugin/presets.h"
 #include "../tools/phrase.h"
 #include "factory_presets.h"
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -45,7 +48,9 @@ void testState() {
             CHECK(false);
         }
     // Every sound value, each somewhere of its own, comes back from a saved project where it was: options and
-    // whole numbers exactly, the rest within 1e-5 of their 0..1 (a value is saved to 6 digits).
+    // whole numbers exactly (as the value they play: a range of 48 steps or more, Weather Pitch and Split, follows
+    // MPC's raw 0..1, and is saved as the whole number it plays), the rest within 1e-5 of their 0..1 (a value is
+    // saved to 6 digits).
     {
         Host r;
         uint32_t seed = 777;
@@ -64,10 +69,52 @@ void testState() {
         for (int i = 0; i < af::P_COUNT; ++i) {
             if (af::PARAM_INFO[i].kind != af::Kind::Synth) continue;
             const bool stepped = af::PARAM_SPECS[i].curve == af::Curve::Enum || af::PARAM_SPECS[i].curve == af::Curve::Int;
-            if (stepped ? r.get(i) == r2.get(i) : std::fabs(r.get(i) - r2.get(i)) <= 1e-5f) ++same;
+            if (stepped ? r.value(i) == r2.value(i) : std::fabs(r.get(i) - r2.get(i)) <= 1e-5f) ++same;
             else std::printf("  %s: %g saved, %g loaded\n", af::PARAM_INFO[i].key, r.value(i), r2.value(i));
         }
         CHECK(same == synth);
+    }
+    // M2's values are saved under their keys and come back: Air, Weather and Echo, a split and a division among them.
+    {
+        Host m;
+        m.set(af::P_A_LEVEL, 0.8f);
+        m.set(af::P_H_SPLIT, 72.0f);
+        m.set(af::P_E_DIV, 3.0f);
+        m.set(af::P_W_PITCH, -7.0f);
+        m.set(af::P_W_MEMTAP, 0.0f);
+        const std::string t = m.chunk();
+        CHECK(t.find("a_level=0.8\n") != std::string::npos && t.find("h_split=72\n") != std::string::npos &&
+              t.find("e_div=3\n") != std::string::npos && t.find("w_pitch=-7\n") != std::string::npos &&
+              t.find("w_memtap=0\n") != std::string::npos);
+        Host n;
+        CHECK(n.load(t) == 1 && std::fabs(n.value(af::P_A_LEVEL) - 0.8f) < 1e-3f && n.value(af::P_H_SPLIT) == 72.0f &&
+              n.value(af::P_E_DIV) == 3.0f && n.value(af::P_W_PITCH) == -7.0f && n.value(af::P_W_MEMTAP) == 0.0f &&
+              n.display(af::P_H_SPLIT) == "C5" && n.display(af::P_E_DIV) == "1/16T");
+    }
+    // A project or preset of 0.0.2 names none of M2's parameters. Over a fresh instance the new strata are off and
+    // every new value at its default; a project changes only what it lists, so over an instance that has them moved
+    // it leaves them; a preset names every sound value, so loading one brings them back.
+    {
+        const std::string old = "ambientforce 1\nvolume=-3\nh_key=2\ng_level=0.5\nb_swell=1.5\n";
+        const auto atDefaults = [](Host& h) {
+            int off = 0;
+            for (int i = af::P_E_MODE; i <= af::P_W_MEMTAP; ++i)
+                if (af::PARAM_INFO[i].kind == af::Kind::Synth && std::fabs(h.get(i) - af::PARAM_INFO[i].def) > 1e-5f) ++off;
+            return off == 0;
+        };
+        Host fresh;
+        CHECK(fresh.load(old) == 1 && atDefaults(fresh) && std::fabs(fresh.value(af::P_VOLUME) + 3.0f) < 1e-3f);
+        CHECK(fresh.value(af::P_A_LEVEL) == 0.0f && fresh.value(af::P_W_LEVEL) == 0.0f && fresh.value(af::P_G_ECHO) == 0.0f &&
+              fresh.value(af::P_B_ECHO) == 0.0f && fresh.value(af::P_A_ECHO) == 0.0f && fresh.value(af::P_W_ECHO) == 0.0f &&
+              fresh.value(af::P_H_SPLIT) == 0.0f);
+        Host moved;
+        moved.set(af::P_A_LEVEL, 0.8f);
+        moved.set(af::P_E_TIME, 900.0f);
+        moved.set(af::P_H_SPLIT, 60.0f);
+        CHECK(moved.load(old) == 1 && !atDefaults(moved) && std::fabs(moved.value(af::P_A_LEVEL) - 0.8f) < 1e-3f &&
+              moved.value(af::P_H_SPLIT) == 60.0f && std::fabs(moved.value(af::P_VOLUME) + 3.0f) < 1e-3f);
+        moved.press(af::P_PRE_INIT);
+        CHECK(atDefaults(moved));
     }
     // A project's state changes only what it lists; unknown keys and bad numbers are skipped.
     Host c;
@@ -94,6 +141,46 @@ void testState() {
     CHECK(d.load("ambientforce 1\nvolume=0\n") == 1);
     d.run(3 * kBlocksPerSec);   // past Bloom's swell
     CHECK(d.run(4) > 0.05f);
+}
+
+// Weather's source is saved by its key (w_source=, after the sound values) in projects and presets alike: a
+// project restores it, an old project without one keeps the source playing, a preset without one (Init, 0.0.2's)
+// brings the default, a user preset saves and restores it, and a key that names nothing is kept and shows MISSING.
+void testSourceState() {
+    std::printf("== saved state: Weather's source\n");
+    const auto text = [](Host& h) { return h.display(af::P_W_SOURCE); };
+    Host a;
+    CHECK(showsSource(a, "Rain on Roof"));
+    for (int k = 0; k < 4; ++k) a.press(af::P_W_SOURCE_NEXT);   // Light Rain, Wind High, Wind Low, Surf
+    CHECK(showsSource(a, "Surf"));
+    const std::string s = a.chunk();
+    const size_t at = s.find("\nw_source=builtin:Surf\n");
+    CHECK(at != std::string::npos && at > s.find("\nw_memtap=") && s.find("w_source=") == s.rfind("w_source="));
+    Host b;
+    CHECK(b.load(s) == 1 && showsSource(b, "Surf"));
+    CHECK(b.load("ambientforce 1\nvolume=-3\n") == 1 && text(b) == "Surf");   // 0.0.2's project: the source stays
+    b.press(af::P_PRE_INIT);                                                  // a preset without one: the default
+    CHECK(showsSource(b, "Rain on Roof") && b.chunk().find("\nw_source=builtin:Rain on Roof\n") != std::string::npos);
+    // A user preset keeps its source.
+    b.load("ambientforce 1\nw_source=builtin:Embers\n");
+    CHECK(showsSource(b, "Embers"));
+    b.press(af::P_PRE_SAVE);
+    const std::string project = b.chunk();
+    const size_t p = project.find("\npreset=");
+    const std::string key = p == std::string::npos ? "" : project.substr(p + 8, project.find('\n', p + 8) - p - 8);
+    std::string saved;
+    CHECK(af::presetText(key, saved) && saved.find("\nw_source=builtin:Embers\n") != std::string::npos);
+    b.press(af::P_PRE_INIT);
+    CHECK(showsSource(b, "Rain on Roof"));
+    CHECK(b.load("ambientforce 1\npreset=" + key + "\n") == 1);   // the stepper on it (a project loads nothing of it)
+    b.press(af::P_PRESET_PREV);   // the preset before it (Init's is the first of all), then back onto it, loaded
+    b.press(af::P_PRESET_NEXT);
+    CHECK(b.display(af::P_PRESET) == "PRESET  " + af::presetLibrary().listing()->label(key) && showsSource(b, "Embers"));
+    // A key that names nothing: kept, saved back as it was, MISSING.
+    CHECK(b.load("ambientforce 1\nw_source=builtin:Hail\n") == 1 && showsSource(b, "MISSING Hail") &&
+          b.chunk().find("\nw_source=builtin:Hail\n") != std::string::npos);
+    b.run(4);
+    CHECK(b.finite);
 }
 
 void testPresets() {
@@ -345,6 +432,29 @@ struct Played {
 };
 std::vector<Played> g_played;   // testFactory's, for testMacroLevels
 
+// A render's fingerprint (FNV-1a over the samples' bits, L then R, -0 as 0), and a run of them
+// folded into one (FNV-1a over each fingerprint's eight bytes, in order).
+uint64_t fingerprint(const std::vector<float>& L, const std::vector<float>& R) {
+    uint64_t h = 1469598103934665603ull;
+    for (const std::vector<float>* b : {&L, &R})
+        for (float v : *b) {
+            uint32_t bits;
+            const float x = v == 0.0f ? 0.0f : v;
+            std::memcpy(&bits, &x, sizeof bits);
+            for (int k = 0; k < 4; ++k) {
+                h ^= (bits >> (8 * k)) & 0xffu;
+                h *= 1099511628211ull;
+            }
+        }
+    return h;
+}
+void fold(uint64_t& into, uint64_t h) {
+    for (int k = 0; k < 8; ++k) {
+        into ^= (h >> (8 * k)) & 0xffu;
+        into *= 1099511628211ull;
+    }
+}
+
 void testFactory() {
     std::printf("== factory presets: the demo phrase at -16 LUFS\n");
     CHECK(af::kNumFactoryPresets >= 1);
@@ -368,6 +478,7 @@ void testFactory() {
     const std::vector<std::string> only;   // every one
 #endif
     size_t played = 0;
+    uint64_t prints = 1469598103934665603ull;   // every phrase's fingerprint, folded in order
     for (int i = 0; i < af::kNumFactoryPresets; ++i) {
         const std::string name = af::kFactoryPresets[i].name;
         if (!only.empty() && std::find(only.begin(), only.end(), name) == only.end()) continue;
@@ -391,8 +502,23 @@ void testFactory() {
         CHECK(peak <= afl::kPeakCap);
         CHECK(limited <= afl::kMaxLimitedShare);
         g_played.push_back({i, peak});
+        fold(prints, fingerprint(L, R));
     }
     CHECK(played == (only.empty() ? static_cast<size_t>(af::kNumFactoryPresets) : only.size()));   // none renamed away
+    // Off is off (M2's Task 8): Air, Weather and Echo off in every preset of 0.0.2 (their files name
+    // none of them), the phrases play 0.0.2's samples, bit for bit: the fingerprints folded above,
+    // taken from 0.0.2's own build (3e1fb35) of these presets: x86's all 28, the device's (NEON
+    // fuses multiply-adds) the five qemu plays. The plain builds only; against profile-guided objects
+    // (make test-arm-pgo) the profile moves the fusing. A preset added or changed moves it: then it
+    // is taken again.
+    std::printf("  the phrases' fingerprints, folded: %016llx\n", static_cast<unsigned long long>(prints));
+#if AF_PGO_OBJECTS
+    std::printf("  (checked in the plain builds, not against profile-guided objects)\n");
+#elif defined(__arm__)
+    CHECK(prints == 0x85132c48c2712eccull);
+#else
+    CHECK(prints == 0x17654dd27920e4e0ull);
+#endif
 }
 
 // Every macro at both ends, the demo phrase each time: none makes a preset lean on the limiter (it may work on at
@@ -496,6 +622,30 @@ void testMacroLevels() {
 
 } // namespace
 
+// Weather's source is in before the phrase plays (tools/phrase.h waitForSource, at the top of afl::render, as demos,
+// preset-levels and the preset checks above render): a sound with Weather on renders the same samples every time,
+// whenever the instance's loader thread gets its source in (here a field made afresh each time, from an empty cache,
+// and loaded straight in, as a project is: no wait of the test host's own).
+void testWeatherRendersAlike() {
+    std::printf("== the phrase with Weather on: the same samples every time\n");
+    CHECK(afl::waitForTables());
+    const std::string text = "ambientforce 1\nw_level=0.8\nw_source=builtin:Embers\ng_level=0\nb_level=0\n";   // Weather alone
+    uint64_t prints[2] = {};
+    double weather = 0.0;
+    for (int k = 0; k < 2; ++k) {
+        af::SourceCache::get().clear();
+        Host h;
+        CHECK(h.loadRaw(text) == 1);
+        std::vector<float> L, R;
+        afl::render(h.e, h.log.time, afl::phrase(text), L, R);
+        prints[k] = fingerprint(L, R);
+        weather = rms(std::vector<float>(L.begin() + 3 * 44100, L.begin() + 4 * 44100));   // past its gate's fade in
+    }
+    std::printf("  fingerprints %016llx and %016llx, Weather at %.1f dBFS\n", static_cast<unsigned long long>(prints[0]),
+                static_cast<unsigned long long>(prints[1]), db(weather));
+    CHECK(prints[0] == prints[1] && weather > 0.003);
+}
+
 void presetTests() {
     testState();
     testPresets();
@@ -503,6 +653,8 @@ void presetTests() {
     testStepping();
     testFactory();
     testMacroLevels();
+    testSourceState();   // last: its user preset would take testPresets' numbers
+    testWeatherRendersAlike();
 }
 
 } // namespace aft

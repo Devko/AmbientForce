@@ -163,7 +163,8 @@
 // moves it in time. (Its note can still differ: the last two notes and a motif's place depend on
 // what was played.)
 //
-// USE (Air, Task 8): setTransport() once a block, before the block's first step(). A note the
+// USE (Air, Task 8): setTransport() before step(): the engine gives Air its one beat count before
+// each piece Air renders (and none while it skips Air: the clock then stands). A note the
 // player gives Air is struck by Air and passed on as played(note, vel, 0): the plugin splits its
 // blocks at every MIDI event, so the note sounds at the next step()'s first sample.
 //

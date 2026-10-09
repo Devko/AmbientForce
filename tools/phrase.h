@@ -131,10 +131,31 @@ inline bool waitForTables(double limitS = 300.0) {
     }
 }
 
+// Weather's source loaded (plugin/surface.h): the Source stepper's text no longer ends in " ..." (the
+// source is in, or it is Memory, or MISSING). A phrase played before then would have Weather come in
+// whenever the instance's loader thread got there, and no two renders would be alike. Every tool that
+// renders a preset waits for it after loading one. False if not within `limitS` (ten times that on ARM,
+// where the tools run under qemu).
+inline bool waitForSource(AEffect* e, double limitS = 60.0) {
+#if defined(__arm__)
+    limitS *= 10.0;
+#endif
+    const auto t0 = std::chrono::steady_clock::now();
+    for (;;) {
+        char b[256] = {};
+        e->dispatcher(e, vst::effGetParamDisplay, af::P_W_SOURCE, 0, b, 0.0f);
+        const std::string text = b;
+        if (text.size() < 4 || text.compare(text.size() - 4, 4, " ...") != 0) return true;
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > limitS) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
 // Plays the phrase through an open instance (the preset already loaded) the way MPC does: 128-frame
 // blocks, each event at its sample, the transport playing at 120 BPM. `time` is what the host's
-// callback answers audioMasterGetTime with. L and R: the 40 s.
+// callback answers audioMasterGetTime with. L and R: the 40 s. Weather's source first (waitForSource).
 inline void render(AEffect* e, VstTimeInfo& time, const std::vector<Event>& ev, std::vector<float>& L, std::vector<float>& R) {
+    waitForSource(e);
     const size_t total = static_cast<size_t>(kPhraseS * kSr);
     L.assign((total + kBlock - 1) / kBlock * kBlock, 0.0f);
     R.assign(L.size(), 0.0f);
