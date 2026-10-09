@@ -2,6 +2,7 @@
 #include "loader.h"
 
 #include <algorithm>
+#include <sys/prctl.h>
 
 namespace af {
 
@@ -119,6 +120,11 @@ void Loader::setListener(Listener l) {
     listener_ = std::move(l);
 }
 
+void Loader::setTick(Job tick) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    tick_ = std::move(tick);
+}
+
 void Loader::want(int slot, const std::string& key, bool now) {
     if (slot < 0 || slot >= static_cast<int>(slots_.size())) return;
     {
@@ -199,6 +205,7 @@ void Loader::publish(Slot& s, std::shared_ptr<const void> obj, const std::string
 }
 
 void Loader::run() {
+    prctl(PR_SET_NAME, kThreadName, 0, 0, 0);   // (loader.h: the bench tells it from the table builder)
     std::unique_lock<std::mutex> lk(mtx_);
     while (!quit_) {
         // Nothing may leave this thread (std::terminate would end MPC): an out-of-memory
@@ -207,6 +214,19 @@ void Loader::run() {
             cv_.wait_for(lk, std::chrono::milliseconds(20), [this] { return quit_ || kick_; });
             kick_ = false;
             if (quit_) break;
+
+            // The tick (loader.h), outside the lock: what it posts runs below, in this pass.
+            if (tick_) {
+                Job tick = tick_;
+                lk.unlock();
+                try {
+                    tick();
+                } catch (...) {
+                }
+                tick = nullptr;   // the copy goes here, off the lock
+                lk.lock();
+                if (quit_) break;
+            }
 
             // Jobs first, outside the lock, one at a time (a job may post another).
             while (!jobs_.empty() && !quit_) {

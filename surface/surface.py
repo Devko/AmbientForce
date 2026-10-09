@@ -339,8 +339,8 @@ num("a_echo", "Air Echo", "lin", 0, 1, 0, "pct", help="how much of Air goes into
 num("a_pan", "Air Pan", "lin", -1, 1, 0, "pan", help="where Air sits, left to right")
 num("h_split", "Split", "int", 0, 127, 0, "note", help="keys from this note up play Air as melody; Off: none")
 
-# Weather (dsp/weather.h): a cloud of grains over a source. Which source (the stepper, Remember and Keep) comes with
-# the loader, not with these.
+# Weather (dsp/weather.h): a cloud of grains over a source. Which source it is (the stepper, Remember and Keep) follows
+# these, as the plugin's own controls.
 enum("w_listen", "Wthr Listen", LISTEN, "Free", help="held keys, the chord, or from the first key")
 enum("w_mute", "Weather Mute", ON_OFF, "Off", help="silences Weather, gliding, at no CPU")
 num("w_level", "Wthr Level", "lin", 0, 1, 0, "pct", help="Weather's level; 0 leaves it asleep, as in Init")
@@ -361,6 +361,36 @@ num("w_space", "Wthr Space", "lin", 0, 1, 0.3, "pct", help="how much of Weather 
 num("w_echo", "Weather Echo", "lin", 0, 1, 0, "pct", help="how much of Weather goes into Echo")
 num("w_pan", "Weather Pan", "lin", -1, 1, 0, "pan", help="where Weather sits, left to right")
 enum("w_memtap", "Memory From", MEMORY_TAPS, "Output", help="records the four strata, or the output")
+
+# Weather's source (plugin/sources.h) and Memory's two buttons: the plugin's own controls, not sound values, so neither
+# automatable nor saved by index. The source is saved by its key, "w_source=<key>" after the sound values in projects
+# and presets (plugin/state.cpp); a preset may name a field or Memory (SOURCE_FIELDS, MEMORY_KEY). Remember and Keep
+# act once a press.
+SOURCE_KEY = "w_source"
+MEMORY_KEY = "memory:"                                                                      # plugin/sources.h kMemoryKey
+SOURCE_FIELDS = ["Rain on Roof", "Light Rain", "Wind High", "Wind Low", "Surf", "Stream", "Embers", "Night"]   # dsp/fields.h
+stepper(SOURCE_KEY, "Source", help="what Weather plays: a field, Memory or a WAV",
+        prev="the source before this one", next="the source after this one")
+button("w_remember", "Remember", help="the last 16 s played become Weather's source")
+button("w_keep", "Keep", help="writes what Remember kept to the SSD, as a WAV")
+
+
+def source_key_ok(key):
+    """A source a factory preset may name: a field or Memory (a file may not be there)."""
+    return key == MEMORY_KEY or key in ["builtin:" + f for f in SOURCE_FIELDS]
+
+
+# What the status line says after Remember and Keep (plugin/surface.cpp messageText), in the order of the C++'s
+# StatusMessage: (its name, its text with at most one %s, what the %s may be at its widest). Each is held to the status
+# line as the help lines are.
+STATUS_MESSAGES = [
+    ("MSG_REMEMBERED", "REMEMBER: the last %s s are Weather's source", ["16", "9.9", "0.5"]),
+    ("MSG_REMEMBER_SOON", "REMEMBER: again in a moment", []),
+    ("MSG_REMEMBER_EMPTY", "REMEMBER: nothing heard yet", []),
+    ("MSG_KEPT", "KEEP: Memory %s on the SSD", ["999999", "007"]),
+    ("MSG_KEEP_FAILED", "KEEP: couldn't write to the SSD", []),
+    ("MSG_KEEP_NOTHING", "KEEP: nothing remembered yet", []),
+]
 
 # No RANDOMIZE: an instant jump of every sound value under a drone that holds for minutes is not music. The
 # instrument's answer is Evolve (docs/CONCEPT.md 7.3): mutation ranges declared here, taken from the preset's
@@ -600,8 +630,81 @@ def seg_w(key, kind):
     return max(SEG_MIN if kind == "enum_v" else CELL_MIN, 2 * int(math.ceil((longest + TEXT_MARGIN + SEG_PAD) / 2.0)))
 
 
+# A stepper in a card's row (the Source): the label above it as a popup's, the field where a popup's starts, its arrows
+# (h x h) at the ends and its text between them (STEPPER_TEXTS, checked). A button stands where a list's segments start;
+# two in one slot (a tuple in the row) stand one under the other, the gap apart, the slot's Q-Links in that order.
+STEPPER_W, STEPPER_H = 356, 40                    # the widest whole text below, "MISSING Memory 007"
+BUTTON_H, BUTTON_GAP = 52, 8                      # shadow_skin's td3 button: 52 tall
+STEPPER_TEXT_PAD = 22                             # shadow_skin: the text box is w - 2h - 6, its label 8 in and 8 short
+# The Source stepper's text, fitted between its arrows (plugin/surface.cpp fitText: the name cut, ".." after it,
+# when the whole doesn't fit, by the live text's own advance widths, exported as kLiveAdvance). What must show whole:
+# every field loading or missing, Memory, a Memory file loading or missing (to 999999 loading); what may be cut, and
+# must still fit and keep a name to read (MIN_KEPT characters): a Memory number at its longest missing, names a user
+# may give a WAV. Each case is exported with what it comes to (kSourceFitCases), and the plugin's tests hold fitText
+# to it.
+STEPPER_TEXTS = {SOURCE_KEY: [f + " ..." for f in SOURCE_FIELDS] + ["MISSING " + f for f in SOURCE_FIELDS] +
+                 ["Memory", "Memory 007", "Memory 007 ...", "MISSING Memory 007", "Memory 999999 ..."]}
+SOURCE_FIT_CASES = [("MISSING ", "Memory 999999", ""), ("", "Rain on the tin roof of the boathouse", ""),
+                    ("", "Rain on the tin roof of the boathouse", " ..."), ("MISSING ", "Rain on the tin roof of the boathouse", ""),
+                    ("", "Pluie d'été sur le toit de la grange", ""), ("", "Creek", ""), ("", "", " ...")]
+MIN_KEPT = 4
+
+
+_LIVE = []
+
+
+def live_advances():
+    """MPC's live text (LIVE_FONT at VALUE_PX) per character ' '..'~', in 1/64 px, and the widest of them, which the
+    plugin takes for any other character (it can't tell)."""
+    if not _LIVE:
+        upem, adv = _ttf_advances(os.path.join(HERE, LIVE_FONT))
+        table = [int(round(adv.get(chr(c), upem) * VALUE_PX * 64.0 / upem)) for c in range(32, 127)]
+        _LIVE.append((table, max(table)))
+    return _LIVE[0]
+
+
+def live_width(s):
+    table, wide = live_advances()
+    return sum(table[ord(c) - 32] if 32 <= ord(c) < 127 else wide for c in s)
+
+
+def source_text_room(w=STEPPER_W, h=STEPPER_H):
+    """The room the Source stepper's text has between its arrows, TEXT_MARGIN to spare, in 1/64 px."""
+    return (w - 2 * h - STEPPER_TEXT_PAD - TEXT_MARGIN) * 64
+
+
+def fit_text(head, name, tail, room=None):
+    """plugin/surface.cpp fitText(), the same arithmetic."""
+    room = source_text_room() if room is None else room
+    if live_width(head) + live_width(name) + live_width(tail) <= room:
+        return head + name + tail
+    fixed, used, cut = live_width(head) + live_width("..") + live_width(tail), 0, 0
+    for i, c in enumerate(name):
+        w = live_width(c)
+        if fixed + used + w > room:
+            break
+        used += w
+        cut = i + 1
+    return head + name[:cut].rstrip(" ") + ".." + tail
+
+
+def button_w(key):
+    return Geometry(_top_level(THEME)).button({"cx": 0, "cy": 0, "label": PARAMS[key]["name"].upper()})[2]
+
+
+def flat(keys):
+    """A row's keys in Q-Link order, the stacked ones in turn."""
+    return [k for key in keys for k in (key if isinstance(key, tuple) else (key,))]
+
+
 def control_w(key):
+    if isinstance(key, tuple):
+        return max(button_w(k) for k in key)
     p = PARAMS[key]
+    if p["kind"] == "stepper":
+        return STEPPER_W
+    if p["kind"] == "button":
+        return button_w(key)
     if "options" not in p:
         return KNOB_W
     if key + "__open" in PARAMS:
@@ -613,10 +716,22 @@ def control_w(key):
 
 
 def control(L, cx, top, key, label=None):
-    """A knob, a long list's popup (its label above) or a short list's segments (under their label)."""
+    """A knob, a long list's popup (its label above) or a short list's segments (under their label), a stepper (its
+    label above) or a button, or buttons stacked (a tuple)."""
+    if isinstance(key, tuple):
+        y = top + LIST_Y + BUTTON_H // 2
+        for k in key:
+            L.button(cx, y, PARAMS[k]["name"].upper(), k)
+            y += BUTTON_H + BUTTON_GAP
+        return
     p = PARAMS[key]
     label = label or list_label(key)
-    if "options" not in p:
+    if p["kind"] == "stepper":
+        L.text(cx, top + LABEL_Y - TEXT_H // 2, label)
+        L.stepper(cx, top + LIST_Y + STEPPER_H // 2, STEPPER_W, key)
+    elif p["kind"] == "button":
+        L.button(cx, top + LIST_Y + BUTTON_H // 2, p["name"].upper(), key)
+    elif "options" not in p:
         L.knob(cx, top + KNOB_Y, key)
     elif key + "__open" in PARAMS:
         L.text(cx, top + LABEL_Y - TEXT_H // 2, label)
@@ -706,14 +821,14 @@ def build_layout():
     bank_card(L, R1, "AIR", air)
     bank_card(L, R2, "SOUND AND PATTERN", air2)
 
-    # WEATHER: level, tilt, the grains' size, drift and count; then the mode and where in the source the grains
-    # fall. The bottom bank's first slot is the Source stepper's; until the loader it holds the high-pass.
+    # WEATHER: level, tilt, the grains' size, drift and count; then the source, the mode, where in the source the
+    # grains fall and how they are tuned, and who plays.
     weather = ["w_level", "w_tilt", "w_size", "w_drift", "w_grains", "w_echo", "w_space", "w_width"]
-    weather2 = ["w_hp", "w_mode", "w_position", "w_spray", "w_pitch", "w_tokey", "w_listen", "w_mute"]
+    weather2 = [SOURCE_KEY, "w_mode", "w_position", "w_spray", "w_pitch", "w_tokey", "w_listen", "w_mute"]
     L.page("WEATHER", weather + weather2)
     L.header()
     bank_card(L, R1, "WEATHER", weather)
-    bank_card(L, R2, "MODE, POSITION AND PITCH", weather2)
+    bank_card(L, R2, "SOURCE, MODE AND PITCH", weather2)
 
     # DRONE: Ground's five partials, its place and its beating; then its motion: the breath and the sway, each with
     # its depth, its free rate and whether it runs free or on the bars.
@@ -743,11 +858,11 @@ def build_layout():
     bank_card(L, R1, "LOOP AND MOTIF", loop + motif)
     bank_halves(L, R2, ("NOTES", notes), ("SPLIT AND SOUND", voice))
 
-    # GRAINS: where the grains gather and how they are tuned and shaped; then the source, the mode and the cloud's
-    # size. The Source stepper, Remember and Keep take the slots of Drift, Tilt and Width when the loader arrives.
+    # GRAINS: where the grains gather and how they are tuned and shaped; then the source, the mode, Memory (what it
+    # records, Remember and Keep, one under the other) and the cloud's size.
     scatter, shape = ["w_position", "w_spray", "w_pitch", "w_tokey"], ["w_reverse", "w_hp", "w_duck", "w_pan"]
-    source = ["w_drift", "w_mode", "w_memtap", "w_tilt", "w_width", "w_size", "w_grains", "w_level"]
-    L.page("GRAINS", scatter + shape + source)
+    source = [SOURCE_KEY, "w_mode", "w_memtap", ("w_remember", "w_keep"), "w_size", "w_grains", "w_level"]
+    L.page("GRAINS", scatter + shape + flat(source))
     L.header()
     bank_halves(L, R1, ("SCATTER AND PITCH", scatter), ("SHAPE AND PLACE", shape))
     bank_card(L, R2, "SOURCE AND CLOUD", source)
@@ -1112,6 +1227,14 @@ def check_help(tabs, errors):
             why = status_misfit(help_line(p), box)
             if why:
                 errors.append("parameter %s: help %r %s" % (p["key"], help_line(p), why))
+    for name, text, widest in STATUS_MESSAGES:
+        if text.count("%") != (1 if widest else 0) or (widest and "%s" not in text):
+            errors.append("status message %s: %r takes one %%s, and only with what it may be" % (name, text))
+            continue
+        for line in [text % w for w in widest] or [text]:
+            why = status_misfit(line, box)
+            if why:
+                errors.append("status message %s: %r %s" % (name, line, why))
 
 
 def check_layout(text, groups):
@@ -1200,6 +1323,21 @@ def check_layout(text, groups):
                 errors.append("%s: list %r tiles must be tile parameters" % (T, key))
             if kind == "stepper" and p["kind"] != "stepper":
                 errors.append("%s: stepper %r is not a stepper parameter" % (T, key))
+            if kind == "stepper" and key == SOURCE_KEY:   # its text between the arrows (shadow_skin), fitted as the plugin does
+                room = source_text_room(w["w"], w["h"])
+                if room != source_text_room():
+                    errors.append("%s: stepper %s is %d px wide: the plugin fits its text to STEPPER_W, %d" % (
+                        T, key, w["w"], STEPPER_W))
+                for s in STEPPER_TEXTS[key]:
+                    if fit_text("", s, "", room) != s:
+                        errors.append("%s: stepper %s: %r does not fit whole in its %d px (%.1f px)" % (
+                            T, key, s, room // 64, live_width(s) / 64.0))
+                for head, name, tail in SOURCE_FIT_CASES:
+                    fit = fit_text(head, name, tail, room)
+                    kept = len(fit) - len(head) - len(tail) - (0 if fit == head + name + tail else 2)
+                    if live_width(fit) > room or (kept < min(MIN_KEPT, len(name))):
+                        errors.append("%s: stepper %s: %r comes to %r, %.1f px, keeping %d of the name" % (
+                            T, key, head + name + tail, fit, live_width(fit) / 64.0, kept))
             if kind == "meter" and p["kind"] != "meter":
                 errors.append("%s: meter %r is not a meter parameter" % (T, key))
             if kind == "button" and not w.get("label"):
@@ -1288,6 +1426,16 @@ def c_str(s):
     return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def c_bytes(s):
+    """s as a C string of its UTF-8 bytes, any byte outside printable ASCII in octal (never a hex escape, which
+    would run on into the letters after it)."""
+    out = []
+    for b in s.encode("utf-8"):
+        c = chr(b)
+        out.append("\\" + c if c in '"\\' else c if 32 <= b < 127 else "\\%03o" % b)
+    return '"' + "".join(out) + '"'
+
+
 def header():
     index = {p["key"]: i for i, p in enumerate(P)}
     ids = ",\n".join("    P_%s%s" % (p["key"].upper(), " = 0" if i == 0 else "") for i, p in enumerate(P))
@@ -1350,9 +1498,38 @@ constexpr int kStepperRange = %d;
 constexpr int kBrowserCats = %d;
 constexpr int kBrowserItems = %d;
 
+// Weather's source: the key's line in saved state, and what a factory preset may name: Memory, or a field
+// (plugin/sources.cpp holds both to kMemoryKey and dsp/fields.h's kFieldNames as it compiles).
+constexpr const char* kSourceStateKey = %s;
+constexpr const char* kSourceMemoryKey = %s;
+static constexpr const char* kSourceFields[] = {%s};
+constexpr int kNumSourceFields = %d;
+
+// What the status line says after Remember and Keep: a format with at most one %%s (plugin/surface.cpp).
+enum StatusMessage : int { %s, MSG_COUNT };
+static constexpr const char* kStatusMessages[MSG_COUNT] = {
+%s
+};
+
+// MPC's live text (the value text) per character ' '..'~' in 1/64 px, the widest for any other, and the
+// room the Source stepper's text has between its arrows: plugin/surface.cpp's fitText(). The cases
+// surface.py checked, with what each comes to (the tests hold fitText to them).
+static constexpr uint16_t kLiveAdvance[95] = {%s};
+constexpr int kLiveAdvanceWide = %d;
+constexpr int kSourceTextRoom = %d;
+struct SourceFitCase { const char* head; const char* name; const char* tail; const char* fit; };
+static constexpr SourceFitCase kSourceFitCases[] = {
+%s
+};
+
 } // namespace af
 """ % (ids, ", ".join(dict.fromkeys(FMT.values())), specs, "\n".join(opts), info, c_str(VST["name"]),
-       c_str(VST["vendor"]), uid, VST["uid"], VST["version"], STEPPER_RANGE, BROWSER_CATS, BROWSER_ITEMS)
+       c_str(VST["vendor"]), uid, VST["uid"], VST["version"], STEPPER_RANGE, BROWSER_CATS, BROWSER_ITEMS,
+       c_str(SOURCE_KEY), c_str(MEMORY_KEY), ", ".join(c_str(f) for f in SOURCE_FIELDS), len(SOURCE_FIELDS),
+       ", ".join(n for n, _, _ in STATUS_MESSAGES), ",\n".join("    " + c_str(t) for _, t, _ in STATUS_MESSAGES),
+       ", ".join(str(a) for a in live_advances()[0]), live_advances()[1], source_text_room(),
+       ",\n".join("    {%s, %s, %s, %s}" % (c_bytes(h), c_bytes(n), c_bytes(t), c_bytes(fit_text(h, n, t)))
+                  for h, n, t in SOURCE_FIT_CASES + [("", s, "") for s in STEPPER_TEXTS[SOURCE_KEY]]))
 
 
 # --- factory presets: presets/Factory/<NN_Category>/<NN_Name>.afp, embedded in the .so ---------
@@ -1378,7 +1555,8 @@ def about_line(name, about):
 def factory_presets(status_w):
     """[(category, name, text)]: one folder per category, both in file order ("NN_" orders them, "_" shows as a
     space). Every line must be a sound parameter with a value in range (the macros at 0: they bend a preset as
-    saved), every name unique (keys are "builtin:<name>") and short enough for its tile, and the description
+    saved), or Weather's source as a field or Memory (source_key_ok: a factory preset can't count on a file), every
+    name unique (keys are "builtin:<name>") and short enough for its tile, and the description
     (an optional about= line) short enough for the status line (status_w px, status_box()): a typo fails the
     build, not the device."""
     params = {p["key"]: p for p in P}
@@ -1413,6 +1591,14 @@ def factory_presets(status_w):
                         errors.append("%s:%d: about given twice" % (where, n))
                     elif why:
                         errors.append("%s:%d: the status line %r %s" % (where, n, about_line(name, val), why))
+                    keys.add(key)
+                    continue
+                if key == SOURCE_KEY:   # Weather's source by its key (plugin/state.cpp): a field or Memory
+                    if key in keys:
+                        errors.append("%s:%d: %s given twice" % (where, n, key))
+                    elif not source_key_ok(val):
+                        errors.append("%s:%d: %s=%s: a factory preset names a field (builtin:%s) or %s" % (
+                            where, n, key, val, "|".join(SOURCE_FIELDS), MEMORY_KEY))
                     keys.add(key)
                     continue
                 p = params.get(key)

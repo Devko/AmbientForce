@@ -8,13 +8,44 @@
 //
 // Threads: processReplacing runs on one of MPC's audio workers (which one changes between
 // calls, instances run concurrently); parameters, display text and chunks come from MPC's UI
-// side. Host callbacks are only made from processReplacing.
+// side. Host callbacks are only made from processReplacing. Each instance has a loader thread
+// (plugin/loader.h): Weather's sources are made there, and Keep writes its WAV there.
+//
+// Weather's source, between the threads (plugin/loader.h has the argument, dsp/engine.h the engine's
+// side). Every block, on every path through processReplacing: blockStart(), live(0) read once and given
+// to the engine (setWeatherSource(), so Weather has it in every block in which it is audible), and at the
+// end blockDone(holds), holds being engine.holdsSource() asked after the block's last render. A block
+// always renders whole: the host's transport callback, the one call into MPC before the block's
+// blockDone(), is caught where it is made (readTransport: a throw there plays the block on the transport as it last was). A
+// block cut short by anything else has the engine reset before its blockDone(), so Weather has let go of
+// everything it held and holds is false and true: the loader counts the first block to read a new
+// pointer as the one in which Weather copied what it needed from the old, and a block that read it but
+// never rendered must not count so with Weather still pointing into the old. Nothing else: no lock, no
+// allocation, no free. While MPC isn't calling processReplacing (suspended, or a track it doesn't run)
+// no block runs, and the last block's holds says whether Weather still points into its source: false
+// (Weather silent), a source picked meanwhile frees the one it replaced at once; true (Weather sounding
+// when processing stopped: a Stop resumes it, On Stop keeps or fades it), the replaced source is kept
+// until a block has run, and the sources picked after it, which no block saw, go at once. So at most one
+// replaced source waits for the track to run again, and it is the one Weather may still need.
+//
+// Remember and Keep (surface.h): the buttons leave requests. The audio thread gives a Remember to the
+// engine before its next block, asking that Weather follow it: one that happens moves Weather onto
+// Memory in that very piece (Engine::remember()). Once a control step has applied it, the audio thread
+// says what came of it (the status line) and raises the surface's "Memory is the source" (an atomic,
+// sticky: Weather stays on Memory); the loader's tick (every 20 ms or so) then only sets the key and the
+// stepper's text. The tick takes a Keep and posts its job, which writes the file on the loader's thread
+// (keepMemory) and makes the file the source if the player is still on Memory and nothing newer was
+// remembered meanwhile. The loader is stopped and joined before anything it calls back into goes (the
+// last member, stopLoader): the surface, and the engine's Memory, which Keep reads.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
 #include "vst2.h"
+#include "loader.h"
 #include "param_ids.h"
 #include "patch_map.h"
+#include "paths.h"
+#include "sources.h"
 #include "state.h"
 #include "surface.h"
 #include "tables.h"
@@ -24,6 +55,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -130,10 +162,29 @@ struct MidiLog {
     }
 };
 
+Loader::SlotType tracedSourceSlot();   // Weather's source slot, its loads traced (below)
+
+// MPC's tempo and position, as readTransport() found them for a block.
+struct Transport {
+    double bpm = 120.0, beats = 0.0;
+    bool   playing = false, valid = false;
+};
+
+// The loader stopped and joined when it goes: the Plugin's last member, so it goes first, whether the
+// Plugin is deleted or its constructor throws (the loader's thread runs from the loader's construction,
+// and its listener, tick and jobs call into the surface and the engine).
+struct LoaderStop {
+    Loader& loader;
+    ~LoaderStop() { loader.stop(); }
+};
+
 struct Plugin {
     AEffect             fx;          // must stay the first member: MPC hands us &fx back
     audioMasterCallback master = nullptr;
-    Surface             surface;
+    // Weather's source (above): one slot. Before the surface, which asks it for sources; stopped and
+    // joined (stopLoader, the last member) before anything its thread calls back into goes.
+    Loader              loader{{tracedSourceSlot()}};
+    Surface             surface{loader};
     std::atomic<long long> suspendMs{-1}, resumeMs{-1};
     // The trace's notes (above), and whether it is on, as the host's threads last found it.
     ResumeNote          resumeNote;
@@ -146,16 +197,28 @@ struct Plugin {
     float    snapshot[P_COUNT] = {};
     bool     havePatch = false;   // patch below is built from snapshot
     uint32_t seenWrites = 0;      // the surface's write count that snapshot is current for
+    bool     memoryOn = false;    // the engine's patch has Weather on Memory (the surface's memorySource())
+    bool     rememberWait = false;   // a Remember given to the engine and not yet applied
+    uint32_t rememberGen = 0;     // Memory's generation when it was given
     RawMidi  midi[kMaxMidi] = {};
     int      nMidi = 0;
     float    scratch[2][kScratch] = {};
     int      ppqOffset = 0;   // process(): this sub-block starts this many samples into the host's block
+    Transport lastTransport;  // the last the host answered (readTransport, if a callback throws)
 
     // CPU meter: the audio thread sums its own CPU time against the real-time budget and
     // publishes twice a second; the status line is formatted on the UI thread.
     double           winUs = 0.0, winBudgetUs = 0.0, winPeak = 0.0;
     std::atomic<int> shownVoices{0}, shownAvg{0}, shownPeak{0};   // percent
     int              lastVoices = -1, lastAvg = -1, lastPeak = -1;
+
+    LoaderStop       stopLoader{loader};   // the last member (above)
+
+    Plugin();
+    Plugin(const Plugin&) = delete;
+    Plugin& operator=(const Plugin&) = delete;
+    void tick();                   // the loader's thread, every pass
+    void keep();                   // the loader's thread, a job
 };
 
 Plugin* self(AEffect* e) { return static_cast<Plugin*>(e->object); }
@@ -180,6 +243,84 @@ bool tracingQuietly() {
 }
 
 long threadId() { return static_cast<long>(syscall(SYS_gettid)); }
+
+// --- Weather's source, Remember and Keep on the loader's thread ------------------------------------
+
+// sources.h's slot, each load traced from the loader's thread: the key, what came of it, how long it
+// took and how big the source is.
+Loader::SlotType tracedSourceSlot() {
+    Loader::SlotType t = sourceSlotType();
+    t.load = [load = t.load](const std::string& key, std::string* err, int* info) {
+        const auto t0 = std::chrono::steady_clock::now();
+        std::shared_ptr<const void> obj = load(key, err, info);
+        if (tracingQuietly()) {
+            const long long ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+            const size_t bytes = obj ? static_cast<const SourceBuffer*>(obj.get())->bytes() : 0;
+            AF_TRACE_QUIETLY("[tid %ld] source %s: %s in %lld ms, %zu bytes", threadId(), key.c_str(),
+                             obj ? "loaded" : err && !err->empty() ? err->c_str() : "failed", ms, bytes);
+        }
+        return obj;
+    };
+    return t;
+}
+
+Plugin::Plugin() {
+    // The loader's thread: a load published (the stepper's text, Memory's flag); every pass, what the buttons
+    // asked for. Then Weather's first source, Init's, as a scroll (debounced): the project MPC sets right after
+    // it creates the instance names its own, and the default isn't made for nothing.
+    loader.setListener([this](int, const std::string&, bool) { surface.sourceLoaded(); });
+    loader.setTick([this] { tick(); });
+    surface.setSourceKey(defaultSourceKey(), false);
+}
+
+// Every pass of the loader's thread: a Remember the audio thread saw happen (Weather already on Memory) sets
+// the key memory: and the stepper's text, unless the player picked another source since; and a Keep pressed
+// is posted from here (its job runs in this same pass), so it is never posted from a thread that may be the
+// audio thread. Whatever throws is tried again at the next pass (the key is looked at anew; a Keep whose job
+// couldn't be posted isn't left marked as writing).
+void Plugin::tick() {
+    surface.followRemember();
+    if (surface.takeKeep()) {
+        try {
+            loader.post([this] { keep(); });
+        } catch (...) {
+            surface.keepDone();
+            throw;
+        }
+    }
+}
+
+// Keep (sources.h keepMemory), a job on the loader's thread: what Memory remembered written to the SSD as the
+// next Memory NNN.wav; the status line says which, or why not. The file becomes Weather's source only if the
+// player is still on Memory and nothing newer has been remembered since the write began: the same audio,
+// now by a key a project keeps. Otherwise what the player chose meanwhile (another source, a newer Remember)
+// stays.
+void Plugin::keep() {
+    struct Done {   // however it ends, the next Keep may come
+        Surface& s;
+        ~Done() { s.keepDone(); }
+    } done{surface};
+    const void* instance = &fx;
+    if (engine.memory().generation() == 0) {   // nothing remembered yet (once remembered, Memory keeps it)
+        surface.say(MSG_KEEP_NOTHING);
+        if (tracingQuietly()) AF_TRACE_QUIETLY("%p [tid %ld] keep: nothing remembered", instance, threadId());
+        return;
+    }
+    std::string err;
+    const uint32_t generation = engine.memory().generation();   // (a Remember before the copy: the file is newer, kept as it is)
+    const std::string key = keepMemory(engine.memory(), &err);
+    if (tracingQuietly())
+        AF_TRACE_QUIETLY("%p [tid %ld] keep: %s%s", instance, threadId(), key.empty() ? "failed: " : "",
+                         key.empty() ? err.c_str() : resolveKey(key, sourceRoots()).c_str());
+    if (key.empty()) {
+        surface.say(MSG_KEEP_FAILED);
+        return;
+    }
+    const size_t space = key.rfind(' ');   // "ssd:AmbientForce/Memories/Memory 007.wav": 7
+    surface.say(MSG_KEPT, space == std::string::npos ? 0u : static_cast<uint32_t>(std::strtoul(key.c_str() + space + 1, nullptr, 10)));
+    surface.replaceSourceKey(kMemoryKey, key, [this, generation] { return engine.memory().generation() == generation; });
+}
 
 // The audio thread's note of a resume (runBlock).
 void noteResume(Plugin* p, long long awayMs, bool told) {
@@ -287,12 +428,14 @@ void copyStr(void* dst, const std::string& s, size_t cap) {
     static_cast<char*>(dst)[n] = 0;
 }
 
-// The status line: for a few seconds after a move or a preset load, what the surface says (the control's help
-// line, the preset's description: plugin/surface.h); else the voices and the CPU meter.
+// The status line: for a few seconds after a move, a preset load, a Remember or a Keep, what the surface says
+// (the control's help line, the preset's description, what came of it: plugin/surface.h); else the voices and
+// the CPU meter.
 std::string statusText(const Plugin* p) {
     const int line = p->surface.statusLine();
     if (line >= 0 && line < P_COUNT && PARAM_INFO[line].help) return PARAM_INFO[line].help;
     if (line == Surface::kStatusAbout) return p->surface.aboutText();
+    if (line == Surface::kStatusMessage) return p->surface.messageText();
     char b[80];
     std::snprintf(b, sizeof b, "VOICES %d   CPU %d%%   PEAK %d%%", p->shownVoices.load(), p->shownAvg.load(),
                   p->shownPeak.load());
@@ -351,17 +494,19 @@ void handleMidi(Plugin* p, const RawMidi& m) {
     }
 }
 
-struct Transport {
-    double bpm = 120.0, beats = 0.0;
-    bool   playing = false, valid = false;
-};
-
 // MPC's tempo and bar position, for whatever in the engine follows them. A host callback, so in MPC's own
-// FP mode.
+// FP mode. A callback that throws is caught here, so the block still renders whole (processReplacing:
+// a block that read Weather's source must give it to Weather), on the transport as the host last gave it
+// (a throw is no Stop).
 Transport readTransport(Plugin* p) {
     Transport tr;
     if (!p->master) return tr;
-    const intptr_t r = p->master(&p->fx, vst::audioMasterGetTime, 0, vst::kVstTempoValid | vst::kVstPpqPosValid, nullptr, 0.0f);
+    intptr_t r = 0;
+    try {
+        r = p->master(&p->fx, vst::audioMasterGetTime, 0, vst::kVstTempoValid | vst::kVstPpqPosValid, nullptr, 0.0f);
+    } catch (...) {
+        return p->lastTransport;
+    }
     if (const VstTimeInfo* t = reinterpret_cast<const VstTimeInfo*>(r)) {
         // A NaN or absurd value would stall or spin anything synced to it: ignore it.
         if ((t->flags & vst::kVstTempoValid) && std::isfinite(t->tempo) && t->tempo >= 1.0 && t->tempo <= 1000.0) tr.bpm = t->tempo;
@@ -369,23 +514,40 @@ Transport readTransport(Plugin* p) {
         tr.beats = tr.valid ? t->ppqPos + p->ppqOffset * tr.bpm / 60.0 / static_cast<double>(kSampleRate) : 0.0;
         tr.playing = (t->flags & vst::kVstTransportPlaying) != 0;
     }
+    p->lastTransport = tr;
     return tr;
 }
 
-void runBlock(Plugin* p, float* L, float* R, int n, const Transport& tr) {
-    // The sound only changes when a parameter does: then rebuild the patch and hand it to the
-    // engine. Looked at only when something was written since the last look.
+void runBlock(Plugin* p, float* L, float* R, int n, const Transport& tr, const GrainSource* source) {
+    // The sound only changes when a parameter does, or Weather's source moves to Memory or away: then
+    // rebuild the patch and hand it to the engine. Looked at only when something was written since the
+    // last look.
     const uint32_t writes = p->surface.writes();   // before the snapshot: a later write shows next block
-    if (!p->havePatch || writes != p->seenWrites) {
+    const bool memory = p->surface.memorySource();
+    if (!p->havePatch || writes != p->seenWrites || memory != p->memoryOn) {
         float fresh[P_COUNT];
         if (p->surface.snapshot(fresh)) {   // mid-preset: false, look again next block
             p->seenWrites = writes;
-            if (!p->havePatch || std::memcmp(fresh, p->snapshot, sizeof fresh) != 0) {
+            if (!p->havePatch || memory != p->memoryOn || std::memcmp(fresh, p->snapshot, sizeof fresh) != 0) {
                 std::memcpy(p->snapshot, fresh, sizeof fresh);
-                p->engine.setPatch(patchFromParams(p->snapshot));
+                Patch patch = patchFromParams(p->snapshot);
+                patch.weather.memory = memory;   // no knob's: the source's (plugin/surface.h)
+                p->engine.setPatch(patch);
+                p->memoryOn = memory;
                 p->havePatch = true;
             }
         }
+    }
+    // Weather's source, from the loader (processReplacing), in every block: the engine gives it to Weather
+    // unless Weather plays Memory.
+    p->engine.setWeatherSource(source);
+    // Remember, pressed since the last block: the engine applies it at its next control step (in this block,
+    // awake; at once, asleep), and one that happens moves Weather onto Memory in that piece. What came of it
+    // is said once it has.
+    if (p->surface.takeRemember()) {
+        if (!p->rememberWait) p->rememberGen = p->engine.memory().generation();
+        p->rememberWait = true;
+        p->engine.remember(true);
     }
     // Processing resumed after a suspend: the engine applies On Stop (back within 250 ms) or
     // resets. Without a resume from the host, this block is when it resumed.
@@ -415,6 +577,23 @@ void runBlock(Plugin* p, float* L, float* R, int n, const Transport& tr) {
     }
     if (n > pos) p->engine.render(L + pos, R + pos, n - pos);
     p->nMidi = 0;
+
+    // A Remember applied: the status line says what came of it. One that happened has moved Weather onto
+    // Memory (the engine's patch): the surface's flag says so from here, so the patches made after keep it,
+    // and the loader's tick sets the key memory: (a string, under the surface's lock; followRemember()).
+    if (p->rememberWait && !p->engine.remembering()) {
+        p->rememberWait = false;
+        const Memory& m = p->engine.memory();
+        if (m.generation() != p->rememberGen) {
+            const GrainSource* g = m.remembered();
+            const uint64_t frames = g ? static_cast<uint64_t>(g->frames) : 0u;
+            p->surface.say(MSG_REMEMBERED, static_cast<uint32_t>((frames * 10u + 22050u) / 44100u));   // tenths of a second
+            p->surface.rememberedHere();
+            p->memoryOn = true;
+        } else {
+            p->surface.say(m.refusal() == Memory::RF_EMPTY ? MSG_REMEMBER_EMPTY : MSG_REMEMBER_SOON);
+        }
+    }
 }
 
 void meter(Plugin* p, double us, int n) {
@@ -450,19 +629,32 @@ void hostUpdate(void* ctx) {
 }
 
 void processReplacing(AEffect* e, float** /*in*/, float** out, int32_t n) {
-    if (!out || !out[0] || !out[1] || n <= 0) return;
+    if (!out || !out[0] || !out[1] || n <= 0) return;   // no block started: none to end
     Plugin* p = self(e);
     const double t0 = threadCpuUs();
+    // The block on the loader's count (above): from here exactly one blockDone(), whatever happens.
+    p->loader.blockStart();
+    const void* live = p->loader.live(0);   // read once, at the block's start
+    bool holds = true;
     try {
-        const Transport tr = readTransport(p);
+        const Transport tr = readTransport(p);   // (a host's throw caught there: the block renders whole)
         FlushDenormals ftz;
-        runBlock(p, out[0], out[1], n, tr);
+        runBlock(p, out[0], out[1], n, tr, sourceOf(live));
+        holds = p->engine.holdsSource();    // after the block's last render (Weather may let go in it)
     } catch (...) {   // nothing may throw into MPC: an escaping exception ends the whole process
         std::memset(out[0], 0, sizeof(float) * static_cast<size_t>(n));
         std::memset(out[1], 0, sizeof(float) * static_cast<size_t>(n));
+        // Cut short, the block may not have given Weather the source it read: Weather lets go of all it
+        // holds (silence(): its pointers dropped, nothing read), so nothing does once the block ends.
+        p->engine.reset();
+        holds = p->engine.holdsSource();
     }
-    p->surface.notify(hostAutomate, hostUpdate, p, n);
-    meter(p, threadCpuUs() - t0, n);
+    p->loader.blockDone(holds);
+    try {   // the host's callbacks, after the block's end: a throw from MPC goes no further either
+        p->surface.notify(hostAutomate, hostUpdate, p, n);
+        meter(p, threadCpuUs() - t0, n);
+    } catch (...) {
+    }
 }
 
 // Legacy accumulating entry point (MPC uses processReplacing): sub-blocks of kScratch, each

@@ -6,6 +6,7 @@
 // plugin/patch_map.cpp compiles.
 #include "host.h"
 #include "factory_presets.h"
+#include "../plugin/surface.h"
 
 #include <algorithm>
 #include <cctype>
@@ -460,7 +461,9 @@ void testIndices() {
     }
     if (h != 0x5b9e4ab6d140675bull) std::printf("  the first 98 keys fold to %016llx\n", static_cast<unsigned long long>(h));
     CHECK(h == 0x5b9e4ab6d140675bull);
-    CHECK(af::P_B_SWAYDIV__OPEN == 97 && af::P_E_MODE == 98 && af::P_W_MEMTAP == 159 && af::P_PRESET == 160);
+    CHECK(af::P_B_SWAYDIV__OPEN == 97 && af::P_E_MODE == 98 && af::P_W_MEMTAP == 159 && af::P_W_SOURCE == 160 &&
+          af::P_W_SOURCE_PREV == 161 && af::P_W_SOURCE_NEXT == 162 && af::P_W_REMEMBER == 163 && af::P_W_KEEP == 164 &&
+          af::P_PRESET == 165);
 }
 
 // Each of M2's parameters owns the Patch fields it sets, and nothing else. Every one moved alone, from its default to the
@@ -1021,13 +1024,16 @@ void testExtremes() {
 }
 
 // M2's sound values at both ends with every stratum and Echo on: Air generating at 60 a minute in a loop, the keys
-// above Split striking it, every send into Echo open at a feedback that holds, a chord under it. (Weather has no
-// source until the loader gives it one: the engine's tests play it over fields and Memory.) Each new value at 0 and at
-// 1 for a quarter of a second, one after another and back between: every sample finite, and the output under the
-// limiter's ceiling.
-void testExtremesM2() {
-    std::printf("== every M2 sound value at both ends, every stratum and Echo on\n");
+// above Split striking it, every send into Echo open at a feedback that holds, Weather sounding, a chord under it.
+// Each new value at 0 and at 1 for a quarter of a second, one after another and back between: every sample finite,
+// and the output under the limiter's ceiling. Twice: Weather on its first source (Init's field, loaded), and on Memory
+// with something remembered (the plan's Task 10 check 7: before the source picker Weather had no source here, and the
+// sweep played it silent).
+void testExtremesM2(bool fromMemory) {
+    std::printf("== every M2 sound value at both ends, every stratum and Echo on, Weather on %s\n",
+                fromMemory ? "Memory" : "a field");
     Host h;
+    CHECK(showsSource(h, "Rain on Roof"));
     h.set(af::P_B_SWELL, 0.005f);
     for (int id : {af::P_A_LEVEL, af::P_W_LEVEL, af::P_G_ECHO, af::P_B_ECHO, af::P_A_ECHO, af::P_W_ECHO, af::P_E_RETURN,
                    af::P_E_SPACE})
@@ -1040,6 +1046,14 @@ void testExtremesM2() {
     h.set(af::P_H_SPLIT, 72.0f);
     for (int note : {48, 55, 64, 67, 76}) h.on(note, 100);
     h.run(kBlocksPerSec / 2);
+    if (fromMemory) {   // what the half second played, remembered: Weather's source
+        h.run(kBlocksPerSec / 2);
+        h.press(af::P_W_REMEMBER);
+        h.run(1);
+        CHECK(h.display(af::P_STATUS).compare(0, 19, "REMEMBER: the last ") == 0 && showsSource(h, "Memory"));
+        h.run(kBlocksPerSec / 2);
+    }
+    CHECK(rms(h.L) > 0.001);   // sounding before the sweep
     bool finite = true;
     float worst = 0.0f;
     int swept = 0;
@@ -1061,6 +1075,25 @@ void testExtremesM2() {
     std::printf("  %d values, peak %.2f\n", swept, worst);
 }
 
+// The Source stepper's text, fitted (plugin/surface.h fitText): every case surface.py checked to fit, with what
+// it comes to there, comes to the same here (the two do the same arithmetic on the same widths).
+void testSourceText() {
+    std::printf("== the Source stepper's text, fitted\n");
+    int same = 0, cases = 0;
+    for (const af::SourceFitCase& c : af::kSourceFitCases) {
+        ++cases;
+        const std::string got = af::fitText(c.head, c.name, c.tail, af::kSourceTextRoom);
+        if (got == c.fit) ++same;
+        else std::printf("  \"%s%s%s\": \"%s\", surface.py \"%s\"\n", c.head, c.name, c.tail, got.c_str(), c.fit);
+    }
+    CHECK(cases > 20 && same == cases);
+    // A name cut is cut at a character, never inside one (UTF-8), and keeps what follows it whole.
+    const std::string cut = af::fitText("", "\xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 "
+                                            "\xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9", " ...", af::kSourceTextRoom);
+    CHECK(cut.size() > 6 && cut.compare(cut.size() - 6, 6, ".. ...") == 0 &&
+          (static_cast<unsigned char>(cut[cut.size() - 7]) & 0xC0) != 0xC0);
+}
+
 } // namespace
 
 void paramsTests() {
@@ -1073,7 +1106,9 @@ void paramsTests() {
     testOwnership();
     testMacros();
     testExtremes();
-    testExtremesM2();
+    testExtremesM2(false);
+    testExtremesM2(true);
+    testSourceText();
 }
 
 } // namespace aft

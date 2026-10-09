@@ -21,10 +21,10 @@
 //                position crossing frames all the time: the dearest read); Space Abyss with Shimmer
 //                100%, Freeze off; Tilt on
 //
-// M2's cases play the engine itself (dsp/engine.h, linked into afbench), not the plugin, until the
-// plugin has Air's, Weather's and Echo's parameters (M2's Task 9) and Weather's sources (Task 10):
-// their patch is the plugin's, made from the same parameters by the patch map (patchFromParams), with
-// M2's fields set on it; their keys go to the engine at the block's first sample, as the plugin hands
+// M2's cases play the engine itself (dsp/engine.h, linked into afbench), not the plugin: they were
+// written before the plugin had Air's, Weather's and Echo's parameters (M2's Task 9) and Weather's
+// sources (Task 10), and still play so (their counts stay comparable). Their patch is the plugin's,
+// made from the same parameters by the patch map (patchFromParams), with M2's fields set on it; their keys go to the engine at the block's first sample, as the plugin hands
 // over an event at offset 0; the transport is the bench's host's (120 BPM, stopped). What the plugin
 // adds around the engine (the parameters' snapshot, MIDI, the meter) isn't counted: `worst engine`
 // is `worst` played so, to measure it.
@@ -61,7 +61,8 @@
 // inherits the pin). Until a table is published its slots play the sine, which costs what a table
 // does but sounds otherwise, and the builder would be timed with the case. So before any case
 // afbench opens an instance and waits for the builder to finish: it counts the process's threads
-// (/proc/self/task) before that instance and waits until the count is back there, the builder gone
+// (/proc/self/task, but the instances' loaders, af-loader) before that instance and waits until the
+// count is back there, the builder gone
 // and every table published, and says how long that took. Every case then reads real tables, as an
 // instance does in a running MPC. No new thread (the builder never started), or one still running
 // after kTablesWaitS, fails the bench (the cases still run, for what they are worth). Where /proc
@@ -76,15 +77,18 @@
 // --icount is make arm-icount's half. It runs under a qemu-arm with TCG plugins, whose insn plugin
 // counts instructions per vCPU index, modulo 8. In user mode every thread is a vCPU, and a new one
 // takes the index after the highest alive, so cpu 0 is the main thread's alone as long as no thread
-// gets index 8 (afbench has three at most: main, the helper below, the table builder). It plays the
+// gets index 8 (afbench has four at most: main, the helper below, the table builder, the instance's
+// loader). It plays the
 // case untimed (playCase, as the timed bench does), its 2 s and then <blocks> more, printing nothing
 // unless something fails. The count that matters is the main thread's, and the main thread only
 // plays. Everything whose instructions depend on the machine runs on a helper thread that main joins:
 // the dlopen, the wait for the tables (it polls /proc with a sleep, so how often it looks depends on
 // the machine's speed), opening the case's instance and setting its parameters (a parameter set looks
 // for the trace's flag file once a second of wall time). A thread of the plugin's alive while the
-// blocks play would go uncounted, so there may be none: the helper looks before it goes, and main
-// after the blocks. The main thread's count is then the same on every run, but for a few dozen
+// blocks play would go uncounted, so there may be none but the instance's loader (plugin/loader.h:
+// it lives as long as the instance, and makes Weather's source, which the helper waits for, so it is
+// idle while the blocks play; named af-loader, it is left out of the thread counts): the helper looks
+// before it goes, and main after the blocks. The main thread's count is then the same on every run, but for a few dozen
 // instructions at most: the plugin's CPU meter tells the host when its figures change, looking every
 // 0.5 s of audio. Two runs that play different numbers of blocks differ by those blocks: make
 // arm-icount plays 256 and 768 and divides the difference by 512. The environment and the arguments
@@ -149,15 +153,46 @@ double wallS() {
     return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9;
 }
 
-// The process's threads; -1 if /proc can't say.
+// The process's threads but the instances' loaders (named af-loader: plugin/loader.h, alive as long as
+// their instance, idle once its source is in); -1 if /proc can't say.
 int threads() {
     DIR* d = opendir("/proc/self/task");
     if (!d) return -1;
     int n = 0;
-    while (const dirent* t = readdir(d))
-        if (t->d_name[0] != '.') ++n;
+    while (const dirent* t = readdir(d)) {
+        if (t->d_name[0] == '.') continue;
+        char path[sizeof "/proc/self/task//comm" + sizeof t->d_name], name[32] = {};
+        std::snprintf(path, sizeof path, "/proc/self/task/%s/comm", t->d_name);
+        if (FILE* f = std::fopen(path, "r")) {
+            if (!std::fgets(name, sizeof name, f)) name[0] = 0;
+            std::fclose(f);
+        }
+        if (std::strncmp(name, "af-loader", 9) != 0) ++n;
+    }
     closedir(d);
     return n;
+}
+
+// Weather's source in (the Source stepper's text no longer "...": in, Memory or MISSING), as the tools
+// wait for it (tools/phrase.h): before it is, the instance's loader thread is at work, and its publish
+// would land somewhere in the blocks (a display update: not the same count on every run). Not in
+// after kTablesWaitS fails the bench (g_sourceLate; the case still runs, for what it is worth).
+bool g_sourceLate = false;
+void waitForSource(AEffect* e) {
+    const double t0 = wallS();
+    for (;;) {
+        char b[256] = {};
+        e->dispatcher(e, vst::effGetParamDisplay, af::P_W_SOURCE, 0, b, 0.0f);
+        const size_t n = std::strlen(b);
+        if (n < 4 || std::strcmp(b + n - 4, " ...") != 0) return;
+        if (wallS() - t0 > kTablesWaitS) {
+            std::printf("  FAIL: Weather's source wasn't in after %.0f s: its publish lands in the blocks\n", kTablesWaitS);
+            g_sourceLate = true;
+            return;
+        }
+        const timespec nap{0, 5 * 1000 * 1000};
+        nanosleep(&nap, nullptr);
+    }
 }
 
 // A whole number, all of s and in an int's range: false for "", "10abc" or "1e3".
@@ -370,6 +405,7 @@ void keys(Key&& key, int c, int chord, bool down) {
 AEffect* openCase(void* lib, int c) {
     AEffect* e = openPlugin(lib);
     setUp(e, c);
+    waitForSource(e);
     return e;
 }
 
@@ -493,8 +529,9 @@ Result runCase(void* lib, int seconds, int c, StageFn stages) {
 
 // --icount: case c played for its 2 s and then `blocks` blocks on the main thread, and nothing else
 // there (the header says why). A helper thread, standing in for the host's own threads, loads the
-// plugin, waits for the tables and opens the case; main joins it and plays. No thread but main may
-// be alive while the blocks play (a loader thread, say), since only main's count is read: the
+// plugin, waits for the tables and opens the case (Weather's source in); main joins it and plays. No
+// thread but main may be alive while the blocks play (but the instance's idle loader, left out of the
+// counts), since only main's count is read: the
 // helper looks once the builder has gone, main once the blocks are over (sooner would race the
 // helper's own exit, and waiting it out would make main's count depend on the machine again). 0
 // when all went well.
@@ -518,6 +555,7 @@ int icount(const char* so, int c, int blocks) {
             }
             ok = waitForTables(lib, true);
             e = openCase(lib, c);
+            ok = ok && !g_sourceLate;
         }
         if (ok && threads() != alone) {
             std::printf("%s", others);
@@ -575,9 +613,10 @@ int main(int argc, char** argv) {
         CPU_SET(cpu, &set);
         if (sched_setaffinity(0, sizeof set, &set) != 0) std::printf("(could not pin to cpu %d)\n", cpu);
     }
-    // Hermetic: no user folders, nothing saved, no trace (its flag file looked for where there is
-    // none), the same random numbers every run.
+    // Hermetic: no user folders (presets, Weather's WAVs), nothing saved, no trace (its flag file
+    // looked for where there is none), the same random numbers every run.
     setenv("AF_PRESET_ROOTS", "/nonexistent-afbench", 1);
+    setenv("AF_SOURCE_ROOTS", "/nonexistent-afbench:/nonexistent-afbench", 1);
     setenv("AF_DATA_DIR", "", 1);
     setenv("AF_TRACE_DIR", "/nonexistent-afbench", 1);
     setenv("AF_FIXED_SEED", "1", 1);
@@ -608,5 +647,5 @@ int main(int argc, char** argv) {
         }
     }
     dlclose(lib);
-    return fail ? 1 : 0;
+    return fail || g_sourceLate ? 1 : 0;
 }

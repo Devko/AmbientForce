@@ -262,6 +262,11 @@ bool Memory::remember() {
     return true;
 }
 
+Memory::Refusal Memory::refusal() const {
+    if (since_ < kGapFrames) return RF_SOON;
+    return written_ < kMinFrames ? RF_EMPTY : RF_NONE;
+}
+
 const GrainSource* Memory::remembered() const {
     const int r = rem_.load(std::memory_order_acquire);
     return r < 0 ? nullptr : &ring_[r].src;

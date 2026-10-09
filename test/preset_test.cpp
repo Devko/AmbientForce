@@ -4,6 +4,7 @@
 // values back to MPC, every factory preset playing the demo phrase at its level, and the macros at
 // both ends of their range keeping the hottest presets off the limiter.
 #include "host.h"
+#include "../plugin/loader.h"
 #include "../plugin/presets.h"
 #include "../tools/phrase.h"
 #include "factory_presets.h"
@@ -140,6 +141,46 @@ void testState() {
     CHECK(d.load("ambientforce 1\nvolume=0\n") == 1);
     d.run(3 * kBlocksPerSec);   // past Bloom's swell
     CHECK(d.run(4) > 0.05f);
+}
+
+// Weather's source is saved by its key (w_source=, after the sound values) in projects and presets alike: a
+// project restores it, an old project without one keeps the source playing, a preset without one (Init, 0.0.2's)
+// brings the default, a user preset saves and restores it, and a key that names nothing is kept and shows MISSING.
+void testSourceState() {
+    std::printf("== saved state: Weather's source\n");
+    const auto text = [](Host& h) { return h.display(af::P_W_SOURCE); };
+    Host a;
+    CHECK(showsSource(a, "Rain on Roof"));
+    for (int k = 0; k < 4; ++k) a.press(af::P_W_SOURCE_NEXT);   // Light Rain, Wind High, Wind Low, Surf
+    CHECK(showsSource(a, "Surf"));
+    const std::string s = a.chunk();
+    const size_t at = s.find("\nw_source=builtin:Surf\n");
+    CHECK(at != std::string::npos && at > s.find("\nw_memtap=") && s.find("w_source=") == s.rfind("w_source="));
+    Host b;
+    CHECK(b.load(s) == 1 && showsSource(b, "Surf"));
+    CHECK(b.load("ambientforce 1\nvolume=-3\n") == 1 && text(b) == "Surf");   // 0.0.2's project: the source stays
+    b.press(af::P_PRE_INIT);                                                  // a preset without one: the default
+    CHECK(showsSource(b, "Rain on Roof") && b.chunk().find("\nw_source=builtin:Rain on Roof\n") != std::string::npos);
+    // A user preset keeps its source.
+    b.load("ambientforce 1\nw_source=builtin:Embers\n");
+    CHECK(showsSource(b, "Embers"));
+    b.press(af::P_PRE_SAVE);
+    const std::string project = b.chunk();
+    const size_t p = project.find("\npreset=");
+    const std::string key = p == std::string::npos ? "" : project.substr(p + 8, project.find('\n', p + 8) - p - 8);
+    std::string saved;
+    CHECK(af::presetText(key, saved) && saved.find("\nw_source=builtin:Embers\n") != std::string::npos);
+    b.press(af::P_PRE_INIT);
+    CHECK(showsSource(b, "Rain on Roof"));
+    CHECK(b.load("ambientforce 1\npreset=" + key + "\n") == 1);   // the stepper on it (a project loads nothing of it)
+    b.press(af::P_PRESET_PREV);   // the preset before it (Init's is the first of all), then back onto it, loaded
+    b.press(af::P_PRESET_NEXT);
+    CHECK(b.display(af::P_PRESET) == "PRESET  " + af::presetLibrary().listing()->label(key) && showsSource(b, "Embers"));
+    // A key that names nothing: kept, saved back as it was, MISSING.
+    CHECK(b.load("ambientforce 1\nw_source=builtin:Hail\n") == 1 && showsSource(b, "MISSING Hail") &&
+          b.chunk().find("\nw_source=builtin:Hail\n") != std::string::npos);
+    b.run(4);
+    CHECK(b.finite);
 }
 
 void testPresets() {
@@ -581,6 +622,30 @@ void testMacroLevels() {
 
 } // namespace
 
+// Weather's source is in before the phrase plays (tools/phrase.h waitForSource, at the top of afl::render, as demos,
+// preset-levels and the preset checks above render): a sound with Weather on renders the same samples every time,
+// whenever the instance's loader thread gets its source in (here a field made afresh each time, from an empty cache,
+// and loaded straight in, as a project is: no wait of the test host's own).
+void testWeatherRendersAlike() {
+    std::printf("== the phrase with Weather on: the same samples every time\n");
+    CHECK(afl::waitForTables());
+    const std::string text = "ambientforce 1\nw_level=0.8\nw_source=builtin:Embers\ng_level=0\nb_level=0\n";   // Weather alone
+    uint64_t prints[2] = {};
+    double weather = 0.0;
+    for (int k = 0; k < 2; ++k) {
+        af::SourceCache::get().clear();
+        Host h;
+        CHECK(h.loadRaw(text) == 1);
+        std::vector<float> L, R;
+        afl::render(h.e, h.log.time, afl::phrase(text), L, R);
+        prints[k] = fingerprint(L, R);
+        weather = rms(std::vector<float>(L.begin() + 3 * 44100, L.begin() + 4 * 44100));   // past its gate's fade in
+    }
+    std::printf("  fingerprints %016llx and %016llx, Weather at %.1f dBFS\n", static_cast<unsigned long long>(prints[0]),
+                static_cast<unsigned long long>(prints[1]), db(weather));
+    CHECK(prints[0] == prints[1] && weather > 0.003);
+}
+
 void presetTests() {
     testState();
     testPresets();
@@ -588,6 +653,8 @@ void presetTests() {
     testStepping();
     testFactory();
     testMacroLevels();
+    testSourceState();   // last: its user preset would take testPresets' numbers
+    testWeatherRendersAlike();
 }
 
 } // namespace aft

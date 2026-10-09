@@ -89,4 +89,10 @@ enum KeepStage : int { KS_COPY, KS_NUMBERED, KS_WRITE };
 using KeepHook = void (*)(void* ctx, int stage);
 void setKeepHook(KeepHook hook, void* ctx);
 
+// For tests: called by loadSource on the thread loading, with the key, when a file is about to be read
+// (not found in the cache): a test holds a load there (an instance closed mid-load, Weather while a
+// source loads). Any thread may set it (atomics).
+using LoadHook = void (*)(void* ctx, const std::string& key);
+void setLoadHook(LoadHook hook, void* ctx);
+
 } // namespace af

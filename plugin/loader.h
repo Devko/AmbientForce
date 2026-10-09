@@ -1,8 +1,9 @@
 // From PolyForce plugin/loader.h (3ad2ac6), pf -> af. TableCache is SourceCache (Weather's sources, 48 MB)
 // and loadTable is loadSource (plugin/sources.h). Changed: the graveyard's rule, which Weather's keeping
 // a source between blocks asks more of (below); blockDone() says whether the audio side still holds
-// one; post() runs a job on the worker (Keep); an explicit pick of the key already loaded looks at it
-// again; the cache checks a file's size and time; rounds() for tests.
+// one; post() runs a job on the worker (Keep), and setTick() has it poll every pass (Keep's button);
+// an explicit pick of the key already loaded looks at it again; the cache checks a file's size and
+// time; rounds() for tests.
 #pragma once
 // Background loading with a lock-free handoff to the audio thread.
 //
@@ -84,6 +85,14 @@
 // of 16 s of audio to the SSD, which must not run on the audio or UI thread. A job may throw: it is
 // dropped. Jobs still queued when stop() is called are dropped, and none runs after it returns. What
 // a job, a load function or a listener captured is destroyed off the loader's lock.
+//
+// The tick. setTick() gives the worker a function it calls at the start of every pass (about every
+// 20 ms, sooner after a want() or a post()), outside the lock, before that pass's jobs: a poll for
+// what a thread that may not post() has asked for in an atomic. The plugin's Keep is one: its
+// button arrives through setParameter, which a host may call on the audio thread, where post()'s
+// lock and allocation may not happen; the tick sees the request and posts Keep's job, which runs in
+// the same pass. The tick may post() and want(); it is never called after stop() returns, and a
+// throw is ignored.
 #include "../dsp/grainsrc.h"
 
 #include <atomic>
@@ -181,6 +190,7 @@ public:
     Loader& operator=(const Loader&) = delete;
 
     void setListener(Listener l);   // before the first want()
+    void setTick(Job tick);         // the worker's poll, every pass (above)
     // now: skip the debounce, and look again at a key that is loaded or failed (a pick, not a scroll).
     void want(int slot, const std::string& key, bool now);
     std::string wanted(int slot) const;
@@ -198,6 +208,9 @@ public:
     }
 
     static constexpr int kDebounceMs = 150;
+    // The worker's name (/proc's comm, top's): the bench waits for the table builder to go by counting
+    // threads, and an instance's loader, which lives as long as the instance, isn't the builder.
+    static constexpr const char* kThreadName = "af-loader";
 
 private:
     // The counts before the store that put the slot's object in (see graveNeverSeen).
@@ -234,6 +247,7 @@ private:
     std::atomic<bool> holds_{false};
     std::atomic<int> loads_{0}, rounds_{0};
     Listener listener_;
+    Job tick_;
     std::thread thread_;
 };
 
