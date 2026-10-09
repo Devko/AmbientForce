@@ -99,7 +99,9 @@ set) for each set of compiler flags, and a binary is linked from the objects of 
 
 - **Incremental.** A change to a `.cpp` or a header recompiles the objects that include it, and nothing
   else (each object has a `.d` file listing its headers), then relinks. A change to a set's flags (a
-  variable such as `ARM_OPT`, or an edit of the Makefile) rebuilds that set. `make test-module M=echo`
+  variable such as `ARM_OPT`, or an edit of the Makefile) rebuilds that set; `CHECK_FLAGS=` on the
+  command line skips that check and trusts the objects as they are (CI's packaging step, which runs
+  outside the container that built them). `make test-module M=echo`
   links the objects `make test` built; only `test/module_main.cpp` is compiled for the suite (with
   `-DMODULE_TESTS=echoTests`), so the next `make test` compiles nothing for it. A suite that tests
   `plugin/` files besides the `dsp/` ones lists them in `MOD_PLUGIN_<suite>` in the Makefile.
