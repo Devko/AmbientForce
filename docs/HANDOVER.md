@@ -1,4 +1,4 @@
-# Handover, 2026-10-08 (evening)
+# Handover, 2026-10-09
 
 This is for an agent continuing AmbientForce without the people and the machine it was built on.
 Read it top to bottom before touching anything.
@@ -41,26 +41,24 @@ on branch `m2`.
   - the M2 plan and M2's Tasks 1–5 as standalone modules;
   - the fix for a Space ghost that 0.0.2 would otherwise have shipped with.
 
-  It is installed on the author's Force (192.168.1.116) from a local build of the tag.
-- **`m2`** (pushed; draft PR Devko/AmbientForce#2) has M2's Tasks 1–9 and 11 merged, plus the
-  approved presets proposal.
+- **`m2`** (pushed; draft PR Devko/AmbientForce#2) has M2's Tasks 1–11 merged, plus the approved
+  presets proposal.
   - Every task was reviewed twice, once for the spec and once adversarially, and every fix was
     re-reviewed.
-  - **Air, Weather, Echo and Memory sound in the engine and have their pages.**
+  - **Air, Weather, Echo and Memory sound in the engine and have their pages.** Weather's Source
+    picks a field, a WAV or Memory; Remember and Keep work (Task 10).
   - Init and the 28 factory presets still play bit for bit as 0.0.2; their fingerprints are pinned
     in the tests.
-- **`m2-task10`** (pushed, **not merged**) is Task 10 at `8567465`: Weather's source picker,
-  Remember and Keep.
-  - It is built and reviewed: the spec review failed narrowly, the quality review failed on one
-    use-after-free.
-  - Its fix round is done: all ten items, each with a check that fails without it.
-  - **The fix round is not re-reviewed, and `make arm-icount` hasn't run on it.** The round changed
-    the bench: the loader thread is named `af-loader` and left out of the bench's thread counts.
-- **Tests on `m2`:**
-  - At `fd2859a`: `make test` 8957, the full macro sweep 8981.
-  - At `477d748`, before Task 11: `make test-arm` 8769, `make arm-plugin`, `make skin preview`,
-    `make soak HOURS=1`. All pass.
-  - On `m2-task10`: `make test` 9137, the sweep 9161.
+  - Task 10's fix round passed its re-review on 2026-10-09 with no must-fix. Its one should-fix, a
+    Remember racing `updateMemory()`, is fixed in `d1ccf43`. The plan's As-built block has the rest.
+- **The author's Force** (`local.mk`'s `FORCE`; its address changes, 192.168.1.133 on 2026-10-09)
+  runs a PGO build of `m2` at `ab19427`, packaged as 0.0.3 (`.so` md5 `d96ae97d…`), for the author
+  to play. v0.0.2's `.so` is kept on the author's machine to go back to.
+- **Tests on `m2`** at `ab19427` (Task 10 merged), all passing:
+  - `make test` 9137, the full macro sweep 9161;
+  - `make test-arm` 8959, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 8947;
+  - `make soak HOURS=1`: peak −1.01 dBFS, nothing non-finite, no guard trips;
+  - `make arm-icount`: every case as in PERFORMANCE.md's M2 table.
 - **Budget** (`make arm-icount`, the counting qemu): M2's worst case is 528.7k ARM instructions a
   block, about **14.2% of p99** at 0.0268 points a thousand (device: pending). The gate is 15%, and
   the plan's caps begin at 14.5%.
@@ -72,27 +70,14 @@ on branch `m2`.
 
 ## Next, in order
 
-1. **Finish Task 10.**
-   - Re-review its fix round adversarially (`git diff 1904397 8567465` on `m2-task10`):
-     - the use-after-free fix: a block always renders whole, and Weather lets go before
-       `blockDone` on any other exception;
-     - Remember switching Weather on the audio thread;
-     - leaving Memory;
-     - Keep's switch rule;
-     - the stepper's direction;
-     - the bench's `af-loader` change.
-   - Then merge `m2-task10` into `m2` and run the batch: `make test`, the sweep, `make test-arm`,
-     `make arm-plugin`, `make arm-icount` and `make soak HOURS=1`.
-   - The `arm-icount` figures must match `m2`'s within a few instructions. If the bench hangs or
-     fails, look at the loader thread.
-2. **Task 12, the presets:** build the 24 in the approved proposal.
+1. **Task 12, the presets:** build the 24 in the approved proposal.
    - First add Horizon far darkening Air's Tone and Echo's High Cut by half an octave, as the author
      approved. The recipe is in the plan's Task 12 section.
    - Then level-match with `make preset-levels`, and judge Horizon by ear on Horizon Line, Snow
      Constellation and Kalimba Loop.
    - The full macro sweep and the soak grow to 52 presets. The Memory presets' level rule is in the
      proposal (question 3).
-3. **Task 13:**
+2. **Task 13:**
    - the soak with the new strata on (24 h is M2's gate; 1 h for "done");
    - the PGO trainer over the new presets;
    - the docs:
@@ -102,8 +87,8 @@ on branch `m2`.
      - ROADMAP and its Decisions log, from the plan's As-built blocks;
      - CHANGELOG 0.0.3;
      - PERFORMANCE, with the measured budget table.
-4. **Then the device** (the author): install a build of `m2`, bench it, listen, and answer the
-   device questions below.
+3. **The device** (the author): a build of `m2` is on the Force. Play it, bench it
+   (`make bench-device`), and answer the device questions below.
 
 ## Decisions the author took on 2026-10-08
 
