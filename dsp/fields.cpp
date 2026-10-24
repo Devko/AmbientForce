@@ -23,6 +23,10 @@ constexpr int kN = kPre + kLen;
 static_assert(static_cast<int>(kFieldS * 44100.0f) % 4 == 0, "buildSource's loop is exactly kFieldS");
 constexpr double kItdS = 0.0004;          // the far ear's delay for an event panned hard
 constexpr double kKneeFrom = 6.5, kKneeTo = 9.0;   // the soft knee, in the field's RMS
+// The DC blocker (a one-pole high-pass) on the beds of noise that would otherwise reach down to DC:
+// Kellet's pink is flat under 9 Hz, the leaky integrator's brown under 140 Hz (fields.h says why).
+// Rain's, Wind Low's and Night's brown beds have their own, at 25-30 Hz.
+constexpr double kDcBlockHz = 10.0;
 
 // --- generators ---------------------------------------------------------------------------------
 
@@ -243,9 +247,9 @@ void lightRain(uint32_t seed, Stereo& out) {
     for (int c = 0; c < 2; ++c) {
         Rng n(sub(seed, 1 + c));
         Pink p;
-        OnePole lp(6000.0);
+        OnePole lp(6000.0), hp(kDcBlockHz);
         std::vector<float>& y = c ? bed.R : bed.L;
-        for (int i = 0; i < kN; ++i) y[static_cast<size_t>(i)] = static_cast<float>(lp.lowpass(p.tick(n.bi())));
+        for (int i = 0; i < kN; ++i) y[static_cast<size_t>(i)] = static_cast<float>(hp.highpass(lp.lowpass(p.tick(n.bi()))));
     }
     mix(out, drops, 0.0);
     mix(out, bed, -5.0);
@@ -306,6 +310,7 @@ void surf(uint32_t seed, Stereo& out) {
     Rng n[2] = {Rng(sub(seed, 1)), Rng(sub(seed, 2))};
     Pink p[2];
     Svf lp[2];
+    OnePole hp[2] = {OnePole(kDcBlockHz), OnePole(kDcBlockHz)};
     double e = 0.0;
     for (int i = 0; i < kN; ++i) {
         if ((i & 15) == 0) {
@@ -314,7 +319,8 @@ void surf(uint32_t seed, Stereo& out) {
         }
         const double gain = 0.16 + 0.84 * e;
         for (int ch = 0; ch < 2; ++ch)
-            (ch ? out.R : out.L)[static_cast<size_t>(i)] = static_cast<float>(gain * lp[ch].lowpass(p[ch].tick(n[ch].bi())));
+            (ch ? out.R : out.L)[static_cast<size_t>(i)] =
+                static_cast<float>(gain * hp[ch].highpass(lp[ch].lowpass(p[ch].tick(n[ch].bi()))));
     }
 }
 
@@ -354,12 +360,12 @@ void stream(uint32_t seed, Stereo& out) {
     Rng n[2] = {Rng(sub(seed, 2)), Rng(sub(seed, 3))};
     Pink p[2];
     Svf bp[2];
-    OnePole lp[2] = {OnePole(800.0), OnePole(800.0)};
+    OnePole lp[2] = {OnePole(800.0), OnePole(800.0)}, hp[2] = {OnePole(kDcBlockHz), OnePole(kDcBlockHz)};
     for (int i = 0; i < kN; ++i) {
         const double c = centre.tick();
         for (int ch = 0; ch < 2; ++ch) {
             if ((i & 15) == 0) bp[ch].set(900.0 * std::pow(1600.0 / 900.0, c), 0.7);
-            const double y = bp[ch].bandpass(n[ch].bi()) + 0.5 * lp[ch].lowpass(p[ch].tick(n[ch].bi()));
+            const double y = bp[ch].bandpass(n[ch].bi()) + 0.5 * hp[ch].highpass(lp[ch].lowpass(p[ch].tick(n[ch].bi())));
             (ch ? bed.R : bed.L)[static_cast<size_t>(i)] = static_cast<float>(y);
         }
     }
@@ -384,13 +390,13 @@ void embers(uint32_t seed, Stereo& out) {
     });
     for (int c = 0; c < 2; ++c) {
         Rng n(sub(seed, 1 + c));
-        OnePole lp(7000.0), hp(400.0);
+        OnePole lp(7000.0), hp(400.0), dc(kDcBlockHz);
         Brown b;
         Svf warm;
         warm.set(200.0, 0.7);
         for (int i = 0; i < kN; ++i) {
             (c ? hiss.R : hiss.L)[static_cast<size_t>(i)] = static_cast<float>(hp.highpass(lp.lowpass(n.bi())));
-            (c ? warmth.R : warmth.L)[static_cast<size_t>(i)] = static_cast<float>(warm.lowpass(b.tick(n.bi())));
+            (c ? warmth.R : warmth.L)[static_cast<size_t>(i)] = static_cast<float>(dc.highpass(warm.lowpass(b.tick(n.bi()))));
         }
     }
     mix(out, crackles, 0.0);

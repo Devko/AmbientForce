@@ -1,6 +1,7 @@
 // Weather's fields (dsp/fields.h) and Memory (dsp/memory.h) on their own. The fields: each renders
 // in time, the same twice, at -20 dBFS RMS, no step at its loop's seam on any level, its channels
-// decorrelated; Night's crickets on C and out of the loop's crossfade, Surf's two swells. Memory:
+// decorrelated; Night's crickets on C and out of the loop's crossfade, Surf's two swells; no DC out
+// of Weather over any of them an octave down (the soak's Abyssal Plain and Last Embers). Memory:
 // FrameDecimator against StereoDecimator; what it records (the sine 6 dB down at level 0, the slower
 // levels holding it), a full ring read back from its oldest frame (its origin a multiple of 4 and
 // not), the levels aligned at every origin, the guard, the seam a dip at every level, Remember's
@@ -211,6 +212,75 @@ void testSurfSwells() {
     if (crests.size() == 2) {
         const int apart = std::abs(crests[1] - crests[0]);
         CHECK(std::abs(std::min(apart, n - apart) - 12) <= 2);   // 6 s of 0.5 s windows
+    }
+}
+
+// No DC out of Weather from a field (the 1 h soak, 2026-10-24: Abyssal Plain made -45 dBFS of it). A
+// cloud reads the same second or so of its source over and over, so what the source has under a few
+// Hz comes out as an offset that wanders over minutes. Weather at level 1 at the settings of the two
+// factory presets that made it (Abyssal Plain in the soak, Last Embers in a sweep of them all), both
+// an octave down with the high-pass off: Abyssal Plain's (Cloud, 5 grains of 1 s, Spray 0.6, Drift
+// 0.3, Tilt -0.6) over every field, and Last Embers' (Stretch, 6 grains of 0.3 s, Spray 0.4, Drift
+// 0.15, Reverse 0.3, Tilt -0.3) over Embers. 150 s, from 3 s on (past the gate's fade): the soak's
+// measure (each 10 s's mean, its magnitude, averaged; the larger of L and R) at most the soak's
+// limit, -60 dBFS. With the DC blocker on their beds (fields.h) Surf comes nearest, -67 dBFS;
+// without it Surf made -36 dBFS, Light Rain -39, Stream -49, Embers -49 (-49 at Last Embers' too).
+void testNoDc() {
+    std::printf("== fields: no DC out of Weather (the soak's measure, Weather at level 1)\n");
+    af::WeatherPatch abyssal;
+    abyssal.level = 1.0f;
+    abyssal.mode = af::WM_CLOUD;
+    abyssal.drift = 0.3f;
+    abyssal.spray = 0.6f;
+    abyssal.sizeS = 1.0f;
+    abyssal.grains = 5;
+    abyssal.pitch = -12.0f;
+    abyssal.tilt = -0.6f;
+    af::WeatherPatch embers = abyssal;
+    embers.mode = af::WM_STRETCH;
+    embers.drift = 0.15f;
+    embers.spray = 0.4f;
+    embers.sizeS = 0.3f;
+    embers.grains = 6;
+    embers.reverse = 0.3f;
+    embers.tilt = -0.3f;
+    const auto dcOf = [](const af::GrainSource& src, const af::WeatherPatch& p) {
+        af::Weather w;
+        w.seed(7);
+        w.set(p, af::HarmonyPatch{});
+        w.gate(true);
+        constexpr int kSeg = 10 * kSec, kFrom = 3 * kSec, kPieces = 15;
+        float L[kBlk], R[kBlk], sL[kBlk] = {}, sR[kBlk] = {};   // (the sends at 0)
+        double sum[2] = {}, dc = 0.0;
+        int in = 0, pieces = 0;
+        for (int t = 0; pieces < kPieces; t += kBlk) {
+            std::fill(L, L + kBlk, 0.0f);
+            std::fill(R, R + kBlk, 0.0f);
+            w.render(&src, 0.0f, L, R, sL, sR, 0.0f, kBlk);
+            if (t < kFrom) continue;   // the gate's fade in
+            for (int i = 0; i < kBlk; ++i) {
+                sum[0] += L[i];
+                sum[1] += R[i];
+            }
+            if ((in += kBlk) >= kSeg) {
+                dc += std::max(std::fabs(sum[0]), std::fabs(sum[1])) / in;
+                sum[0] = sum[1] = 0.0;
+                in = 0;
+                ++pieces;
+            }
+        }
+        return db(dc / pieces);
+    };
+    for (int id = 0; id < af::FD_COUNT; ++id) {
+        const auto sb = af::renderField(id);
+        CHECK(sb != nullptr);
+        if (!sb) continue;
+        const double a = dcOf(sb->src, abyssal), e = id == af::FD_EMBERS ? dcOf(sb->src, embers) : -240.0;
+        std::printf("  %-12s at Abyssal Plain's %6.1f dBFS", af::kFieldNames[id], a);
+        if (id == af::FD_EMBERS) std::printf(", at Last Embers' %6.1f dBFS", e);
+        std::printf("\n");
+        CHECK(a <= -60.0);
+        CHECK(e <= -60.0);
     }
 }
 
@@ -791,6 +861,7 @@ void fieldsTests() {
     testFields();
     testNightOnC();
     testSurfSwells();
+    testNoDc();
     testFrameDecimator();
     testRecords();
     testFullRing();
