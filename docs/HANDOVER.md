@@ -178,7 +178,8 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
   Host callbacks come only from `processReplacing`. 64-bit counters for anything that runs for
   hours. Getters read caches only.
 - **Parameters:** 0.x, so the list may change, but **append** new parameters after the existing
-  sound parameters (see `surface.py`) so saved projects keep their indices. Every moved control
+  sound parameters (see `surface.py`) so saved projects keep their indices (`surface/params.lock`
+  stops the build when a key moves; `GEN_VST_RELOCK=1` accepts a deliberate break). Every moved control
   needs a `help=` line (the build checks it). Names are ≤ 13 characters and unique; the build
   checks text fit deterministically.
 - **Voice:**

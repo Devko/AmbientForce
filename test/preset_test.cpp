@@ -6,6 +6,7 @@
 #include "host.h"
 #include "../plugin/loader.h"
 #include "../plugin/presets.h"
+#include "../plugin/surface.h"
 #include "../tools/phrase.h"
 #include "factory_presets.h"
 #include "presets_of_002.h"
@@ -314,10 +315,10 @@ void testBrowser() {
         CHECK(now != before && now.compare(0, 15, "PRESET  Drift /") == 0);
     }
     // The plugin pushes the tiles it lit to MPC (audioMasterAutomate) from the audio thread, and
-    // tells it to read the texts again.
+    // tells it to read the texts again (at most once per 50 ms: plugin_test.cpp).
     h.log.automated.clear();
     h.log.updates = 0;
-    h.run(8);
+    h.run(af::Surface::kTextGap / kBlock + 1);
     CHECK(!h.log.automated.empty() && h.log.updates > 0);
 }
 

@@ -370,8 +370,11 @@ void testTrace() {
     wait();   // off again for whatever comes next
 }
 
+// Blocks until a text the gap held back is told: kTextGap's frames, then the block that tells it.
+constexpr int kGapBlocks = af::Surface::kTextGap / kBlock + 1;
+
 // The status line (plugin/surface.h): for 4 s after a move the control's help line, for 6 s after a preset loads
-// its name and description, else the voices and the CPU; MPC told to read it again within 4 blocks of a change.
+// its name and description, else the voices and the CPU; MPC told to read it again within kTextGap of a change.
 // Timed in audio blocks: the tests' clock only moves with host events.
 std::string upperOf(std::string s) {
     for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -387,15 +390,15 @@ void testStatusLine() {
         h.run(blocks);
         return h.log.updates > 0;
     };
-    // Block by block until the status line reads otherwise (at most `max`): was MPC told then, or in the 4 blocks
-    // after? (While a help line shows, its text is the only thing on the line that changes.)
+    // Block by block until the status line reads otherwise (at most `max`): was MPC told then, or in the gap's
+    // blocks after? (While a help line shows, its text is the only thing on the line that changes.)
     const auto toldWhenItChanges = [](Host& h, int max) {
         const std::string was = h.display(af::P_STATUS);
         for (int b = 0; b < max; ++b) {
             h.log.updates = 0;
             h.run(1);
             if (h.display(af::P_STATUS) == was) continue;
-            for (int k = 0; k < 4 && !h.log.updates; ++k) h.run(1);
+            for (int k = 0; k < kGapBlocks && !h.log.updates; ++k) h.run(1);
             return h.log.updates > 0;
         }
         return false;
@@ -405,9 +408,9 @@ void testStatusLine() {
     Host h;
     h.run(8);
     CHECK(meter(h));
-    // A move: its help line at once, and MPC told within 4 blocks.
+    // A move: its help line at once, and MPC told within the gap.
     h.set(af::P_B_AGE, 0.3f);
-    CHECK(told(h, 4) && h.display(af::P_STATUS) == bloomAge);
+    CHECK(told(h, kGapBlocks) && h.display(af::P_STATUS) == bloomAge);
     // 4 s from the move, then the meter again, MPC told again.
     h.run(static_cast<int>(3.9 * kBlocksPerSec));
     CHECK(h.display(af::P_STATUS) == bloomAge);
@@ -475,7 +478,7 @@ void testStatusLine() {
     h.set(af::P_G_AGE, 0.2f);
     h.run(2);
     h.press(af::P_PRE_INIT);
-    CHECK(told(h, 4) && h.display(af::P_STATUS) == "INIT: " + af::presetAbout(init));
+    CHECK(told(h, kGapBlocks) && h.display(af::P_STATUS) == "INIT: " + af::presetAbout(init));
     // MPC sending back a value the preset set, rounded to its 1/1000 (Init's volume, 0.81818 as 0.818), is no move:
     // the description stays.
     const float volume = h.get(af::P_VOLUME), echo = std::round(volume * 1000.0f) / 1000.0f;
@@ -505,6 +508,86 @@ void testStatusLine() {
     CHECK(h.load(h.chunk()) == 1);
     h.run(8);
     CHECK(meter(h) && h.finite);
+}
+
+// MPC rebuilds its parameter screen on every UpdateDisplay, and a Q-Link turned on track edit ->
+// automation loses its value to the rebuild (sd88me/mpc-vst-plugins NOTES 2026-10-21). So a sound
+// parameter's write asks for none of its own; a text that changed asks at most once per 50 ms, and a change
+// inside the gap is told at its end, not dropped. The status line's help line is such a text: a control's
+// first move puts its line up (one redraw), and the same control's detents after it ask for none. All of it
+// inside the first meter report, 173 blocks away (testMeterGate goes past it).
+void testRedraws() {
+    std::printf("== redraws: none for a sound parameter's detents, at most one per 50 ms\n");
+    Host h;
+    h.settle();          // Weather's first source in: its text stops changing under the counts
+    h.run(kGapBlocks);   // the first texts told, the gap over
+    const int settled = h.log.updates;
+    const float age = h.get(af::P_B_AGE);
+    {
+        Turn turn;
+        h.detent(af::P_H_SCALE, +1);   // a control's first move: its help line, one redraw...
+        h.run(1);
+        CHECK(h.log.updates == settled + 1 && h.display(af::P_STATUS) == af::PARAM_INFO[af::P_H_SCALE].help);
+        h.run(kGapBlocks);             // ...and the gap over again, so that nothing below is held back
+        const int quiet = h.log.updates;
+        for (int k = 0; k < 16; ++k) {   // two Q-Links turned, a detent per block: a knob and a choice
+            h.detent(af::P_B_AGE, +1);
+            h.detent(af::P_H_SCALE, k % 2 ? -1 : +1);   // (up and down: twelve scales would end inside the turn)
+            h.run(1);
+        }
+        h.run(kGapBlocks);   // and none waits for the gap's end either
+        CHECK(h.get(af::P_B_AGE) > age);
+        CHECK(h.log.automated[af::P_H_SCALE] == h.get(af::P_H_SCALE));   // the snapped step pushed back, without a redraw
+        CHECK(h.log.updates == quiet);
+    }
+    // A text that follows a parameter: the browser's category tiles, one flipped every block for 4096 frames,
+    // ask at most twice...
+    std::string shown[2];
+    const int before = h.log.updates;
+    for (int k = 0; k < 4096 / kBlock; ++k) {
+        h.setN(k % 2 ? af::P_CAT_3 : af::P_CAT_4, 1.0f);   // (the first factory category's lit to begin with)
+        shown[k % 2] = h.display(af::P_ITEM_1);
+        h.run(1);
+    }
+    CHECK(shown[0] != shown[1]);
+    CHECK(h.log.updates - before >= 1 && h.log.updates - before <= 2);
+    // ...and where they stopped is told once the gap is over.
+    const int flipped = h.log.updates;
+    h.run(kGapBlocks);
+    CHECK(h.log.updates == flipped + 1);
+}
+
+// The CPU meter's report (every half second, the first after 173 blocks) is a text too: it asks through the
+// same gate, not MPC itself in the middle of a gap.
+void testMeterGate() {
+    std::printf("== redraws: the meter's report goes through the gap\n");
+    const auto voices = [](Host& h) { return std::atoi(h.display(af::P_STATUS).c_str() + 7); };   // "VOICES n ..."
+    {   // On its own it is told, once, a block later.
+        Host h;
+        h.settle();
+        h.on(60);
+        h.run(kBlocksPerSec / 2);   // 172 blocks: the report is the next
+        CHECK(voices(h) == 0);
+        const int before = h.log.updates;
+        h.run(4);
+        CHECK(voices(h) > 0 && h.log.updates == before + 1);
+    }
+    {   // Among changes every block, up to the gap before the report: no two redraws closer than the gap.
+        Host h;
+        h.settle();
+        h.on(60);
+        std::vector<int> told;   // the block each redraw came in
+        int seen = h.log.updates;
+        for (int b = 0; b < kBlocksPerSec / 2 + 20; ++b) {
+            if (b < 166) h.setN(b % 2 ? af::P_CAT_3 : af::P_CAT_4, 1.0f);
+            h.run(1);
+            for (; seen < h.log.updates; ++seen) told.push_back(b);
+        }
+        bool spaced = true;
+        for (size_t i = 1; i < told.size(); ++i) spaced = spaced && (told[i] - told[i - 1]) * kBlock >= af::Surface::kTextGap;
+        CHECK(voices(h) > 0);   // the report came
+        CHECK(told.size() >= 10 && spaced);
+    }
 }
 
 void testProcessLegacy() {
@@ -1425,6 +1508,8 @@ int main() {
     testStop();
     testTrace();
     testStatusLine();
+    testRedraws();
+    testMeterGate();
     testProcessLegacy();
     testMidiMapping();
     testSync();
