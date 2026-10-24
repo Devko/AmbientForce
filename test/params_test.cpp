@@ -587,9 +587,11 @@ std::vector<MacroSpec> macroSpecs() {
                        {"r.predelayMs", 1, lo(P_S_PREDELAY), hi(P_S_PREDELAY)}, {"g.cutoffHz", -1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)},
                        {"b.cutoffHz", -1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)}, {"r.dampHz", -1, lo(P_S_DAMP), hi(P_S_DAMP)},
                        {"rise", 1, 0, 1},
-                       // M2: the sends of Air, Weather and Echo, and their levels (far steps the dry back)
+                       // M2: the sends of Air, Weather and Echo, and their levels (far steps the dry back), and far
+                       // darkens Air's Tone and Echo's High Cut like the other Tones
                        {"airSpace", 1, 0, 1}, {"weatherSpace", 1, 0, 1}, {"groundEcho", 1, 0, 1}, {"bloomEcho", 1, 0, 1},
-                       {"airEcho", 1, 0, 1}, {"weatherEcho", 1, 0, 1}, {"a.level", -1, 0, 1}, {"w.level", -1, 0, 1}}},
+                       {"airEcho", 1, 0, 1}, {"weatherEcho", 1, 0, 1}, {"a.level", -1, 0, 1}, {"w.level", -1, 0, 1},
+                       {"a.toneHz", -1, lo(P_A_TONE), hi(P_A_TONE)}, {"e.highCutHz", -1, lo(P_E_HIGHCUT), hi(P_E_HIGHCUT)}}},
         {P_M_MOTION, {{"g.sway", 1, 0, 1}, {"b.sway", 1, 0, 1}, {"g.swayHz", 1, lo(P_G_SWAYRATE), hi(P_G_SWAYRATE)},
                       {"b.swayHz", 1, lo(P_B_SWAYRATE), hi(P_B_SWAYRATE)}, {"b.smear", 1, 0, 1}, {"g.breath", 1, 0, 1},
                       {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}, {"g.breathHz", 1, lo(P_G_BREATHRATE), hi(P_G_BREATHRATE)},
@@ -804,6 +806,10 @@ void testMacros() {
               near(hNear.airEcho, s * 0.5f) && near(hNear.weatherEcho, s * 0.5f) && near(hNear.weatherSpace, mid.weatherSpace * 0.5f));
         CHECK(near(hFar.air.level, mid.air.level / std::sqrt(2.0f)) && near(hFar.weather.level, mid.weather.level / std::sqrt(2.0f)) &&
               hNear.air.level == mid.air.level && hNear.weather.level == mid.weather.level);
+        // Tones: Air Tone and Echo High Cut x 2^(-0.5 h) like Ground's and Bloom's, half an octave darker far, brighter near.
+        CHECK(near(hFar.air.voice.toneHz, 3000.0f / std::sqrt(2.0f)) && near(hNear.air.voice.toneHz, 3000.0f * std::sqrt(2.0f)) &&
+              near(hFar.echo.delay.highCutHz, 4500.0f / std::sqrt(2.0f)) &&
+              near(hNear.echo.delay.highCutHz, 4500.0f * std::sqrt(2.0f)));
         // Echo's own return and its Space send are not sends into it: Horizon leaves them.
         CHECK(hFar.echoReturn == mid.echoReturn && hFar.echoSpace == mid.echoSpace && hNear.echoReturn == mid.echoReturn &&
               hNear.echoSpace == mid.echoSpace);
