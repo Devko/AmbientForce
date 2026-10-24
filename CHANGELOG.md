@@ -4,6 +4,19 @@ Releases are built by CI from a `vX.Y.Z` tag (see [Building](docs/BUILDING.md#re
 section for the tag's version becomes the release's notes. While the version is 0.x the parameter list
 may still change between releases.
 
+## Unreleased
+
+- **Parameter order, now locked:** since 0.0.2, M2's 67 new parameters (Echo and the echo sends, Air,
+  the Split, Weather) were placed ahead of the preset stepper and the browser, which moved from 98..150
+  to 165..217 (those controls are the surface's own: not saved with the sound, not automatable).
+  Parameters 0..97 keep their index. `surface/params.lock` now holds the order: the build stops if a
+  parameter changes its index again, until the break is accepted on purpose (`GEN_VST_RELOCK=1`).
+- **Q-Links on track edit → automation:** MPC rebuilds its parameter screen whenever a plugin asks it
+  to redraw its texts, and a Q-Link turned meanwhile can lose its value (found by a port author on the
+  plugin catalog's wrapper, 2026-10-21). The texts that change (the status line, the stepper, the
+  browser) now ask at most once per 50 ms, instead of up to every 12 ms, and the status line's CPU
+  figures go through the same gate (they asked MPC directly).
+
 ## 0.0.2
 
 Playability: after hearing M1 on the device, "a ton of features, but nobody knows what all these

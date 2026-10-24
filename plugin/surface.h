@@ -29,7 +29,8 @@
 // write through setValue, not set). The UI thread only notes the last move and counts the loads
 // (atomics); notify() times them on the audio thread's sample count, decides which line shows
 // (another control takes the line only once the one shown has had kHoldS, so automation moving
-// several at once doesn't flicker) and pushes audioMasterUpdateDisplay when it changes.
+// several at once doesn't flicker) and pushes audioMasterUpdateDisplay when it changes (at most once per
+// kTextGap: every text, this one and the CPU figures among them, is told through the same gate).
 // statusLine() reads what it decided. What Remember and Keep came to (say()) shows there for
 // kMessageS too, at once, as a preset's description does.
 //
@@ -155,7 +156,7 @@ public:
     void        keepDone() { keepBusy_.store(false, std::memory_order_release); }
 
     // --- audio thread ------------------------------------------------------------
-    // Once per block of `frames` samples (the status line's clock).
+    // Once per block of `frames` samples (the status line's clock, and the gap between texts: kTextGap).
     void        notify(AutomateFn automate, UpdateFn update, void* ctx, int frames);
     // Every parameter's current 0..1 value. False (and `out` untouched) while a batch is
     // being written: keep using the previous snapshot.
@@ -165,7 +166,15 @@ public:
 
     void        seed(uint32_t s) { rng_ = s ? s : 1u; }   // RND's random numbers
 
+    // A text changed that MPC only re-reads when told (the status line's CPU figures): told by the next
+    // notify, within its gap. Any thread.
+    void        textsChanged() { textGen_.fetch_add(1, std::memory_order_release); }
+
     static int  kFine;   // ranges with this many steps or more follow MPC's value
+    // At most one audioMasterUpdateDisplay per 50 ms, as sd88me's wrapper since 2026-10-21 (their #487):
+    // MPC rebuilds its parameter screen on each one, and a Q-Link turned on track edit -> automation
+    // meanwhile loses its value. A change inside the gap waits for its end; it is never dropped.
+    static constexpr int kTextGap = 2205;
     // Milliseconds for telling gestures apart (null: the steady clock). Tests set one that only
     // moves when they say, so stepping doesn't depend on how fast the machine is.
     static long long (*clock)();
@@ -257,7 +266,7 @@ private:
     bool     scanPending_ = true;
     uint32_t textSeen_ = 0;
     int      cursor_ = 0;
-    int      sinceText_ = 0;
+    int      sinceText_ = kTextGap;   // frames since the last UpdateDisplay (the first goes out at once)
     // The status line's (tickStatus): samples so far, what was last seen of the UI's notes, the line
     // shown (status_), since when and until when, and a move waiting for kHoldS to pass.
     uint64_t now_ = 0;
