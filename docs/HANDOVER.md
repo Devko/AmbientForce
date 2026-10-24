@@ -65,16 +65,19 @@ on branch `m2`.
   - Task 10's fix round passed its re-review on 2026-10-09 with no must-fix. Its one should-fix, a
     Remember racing `updateMemory()`, is fixed in `d1ccf43`. The plan's As-built block has the rest.
 - **The author's Force** (`local.mk`'s `FORCE`): its address changes; it was 192.168.1.113 on
-  2026-10-24. It runs a PGO build of `m2` with Task 12 and the Q-Link fix, packaged as 0.0.3 (`.so`
-  md5 `383d5bbd…`), for the author to play. v0.0.2's `.so` is kept on the author's machine to go back
-  to.
-- **Tests on `m2`** at `d0eda13` (Task 12, the Q-Link fix and the fields' DC fix merged), all passing:
-  - `make test` 9447, the full macro sweep 9495 over 52 presets;
-  - `make test-arm` 9125, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 9113;
-  - `make soak HOURS=1`, seeds 1 and 2: no window's DC above −60 dBFS. Before the fields' fix,
+  2026-10-24. It runs a PGO build of `m2` at `fce749b`, packaged as 0.0.3 (`.so` md5 `c037b0ab…`):
+  Task 12, the Q-Link fix and both DC fixes, for the author to play. v0.0.2's `.so` is kept on the
+  author's machine to go back to.
+- **Tests on `m2`** at `fce749b` (Task 12, the Q-Link fix and both DC fixes merged), all passing:
+  - `make test` 9453, the full macro sweep 9501 over 52 presets;
+  - `make test-arm` 9131, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 9119;
+  - `make soak HOURS=1` with seeds 1 and 2: no window's DC above −60 dBFS. Before the fields' fix,
     Abyssal Plain's Surf took seed 1's last window to −45 dBFS.
-  - `make arm-icount`: every case as in PERFORMANCE.md's M2 table. M1's "worst" is 399.5k (was
-    399.4k).
+  - `make arm-icount`: as in PERFORMANCE.md's M2 table, but for Bloom's FM blocker (bloom 6x2 318.7k,
+    worst m2 529.8k) and M1's "worst" at 399.5k (was 399.4k).
+  - A 24 h soak (seed 1, about 14 minutes on x86) passes with the Bloom fix, its worst DC window at
+    −68.5 dBFS. It has five windows with limiter warnings, which were there before the fix too; Task
+    13 looks at them.
 - **Budget** (`make arm-icount`, the counting qemu): M2's worst case is 529.8k ARM instructions a
   block (528.7k before Bloom's FM DC blocker), about **14.2% of p99** at 0.0268 points a thousand
   (device: pending). The gate is 15%, and the plan's caps begin at 14.5%.
@@ -186,6 +189,10 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
 - **Space's short-Decay network ghost (M1):** at Space Decay near 0.1 s with Haze's long lines,
   Freeze set after a silence can let out a faint ring. It is documented in `dsp/reverb.h` and not
   planned.
+- **Bloom's AM and Ring can make DC by construction** when A has a sine-phase part at harmonic N.
+  For example, a sine A at B Oct 0 under Ring 0.7 gives 0.35 of full scale. No factory preset does
+  (Ring Bells measures −98 dB), but a user can dial it. It is noted in `dsp/bloom.h`; the FM
+  blocker could be extended to them in Task 13.
 - **Small ideas, noted but not planned:**
   - a Decay stage for Bloom;
   - "1 Bar" is 4 quarter notes, because MPC's time signature is ignored;
