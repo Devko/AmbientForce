@@ -31,8 +31,8 @@ on branch `m2`.
 6. [`docs/plans/2026-10-08-m2-presets-proposal.md`](plans/2026-10-08-m2-presets-proposal.md):
    Task 12's 24 presets, **approved by the author**.
 7. [`docs/USER_GUIDE.md`](USER_GUIDE.md) and [`docs/PERFORMANCE.md`](PERFORMANCE.md) as needed.
-8. Devko/AmbientForce#2 (`m2` → `main`, merged on 2026-10-24): M2's status through Task 11, task
-   by task. A new draft PR (`m2` → `main`) tracks Tasks 12 and 13.
+8. Devko/AmbientForce#2 and #3 (`m2` → `main`, both merged on 2026-10-24): M2's status through
+   Task 12, task by task. Open a new draft PR for Task 13.
 
 ## Where things stand
 
@@ -42,8 +42,9 @@ on branch `m2`.
   - the M2 plan and M2's Tasks 1–5 as standalone modules;
   - the fix for a Space ghost that 0.0.2 would otherwise have shipped with.
 
-  **On 2026-10-24 the author had `m2` merged into `main`**: `main` now also has everything below
-  through Task 11. It is unreleased; 0.0.3 comes after Task 13.
+  **On 2026-10-24 the author had `m2` merged into `main` twice**: through Task 11 in the morning,
+  and with Task 12, the Q-Link fix and both DC fixes in the evening. `main` now has everything
+  below. It is unreleased; 0.0.3 comes after Task 13.
 - **`m2`** (pushed) has M2's Tasks 1–12 merged. Task 13 goes on `m2` too.
   - **Task 12 (2026-10-24):** the 24 approved presets, 52 factory presets in all. Three macro changes
     the author decided: Horizon far darkens Air and Echo, sparse Density quiets Weather with its
@@ -128,7 +129,8 @@ All are recorded in the plan, in its As-built blocks and Decisions.
 
 ## Decisions the author took on 2026-10-24
 
-- **`m2` merged into `main`** through Task 11, unreleased.
+- **`m2` merged into `main`** twice: through Task 11, then through Task 12 and its fixes. Both are
+  unreleased.
 - **Sparse Density quiets Weather with its grains** (Cloud and Stretch: each remaining grain as loud
   as one grain of the preset's own cloud), rather than a floor of 3 grains or lower preset levels.
 - **Motion toward +1 trims the volume, 1.5 dB at +1**, as thick Density trims 1 dB, rather than
@@ -202,7 +204,7 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
 
 - **Branches:** work on **`m2`** and push it.
   - Keep a draft PR (`m2` → `main`) saying what's done, decided and open. Devko/AmbientForce#2
-    was merged with Tasks 1–11; open a new one when Task 12 starts.
+    was merged with Tasks 1–11 and #3 with Task 12; open a new one when Task 13 starts.
   - **Merge into `main` or tag only when the author asks.**
 - **No device:** no `bench-device` or `plugin-install`. Never invent device numbers; mark them
   "(device: pending)".
