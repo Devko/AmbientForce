@@ -1,4 +1,5 @@
-// From SubForce plugin/paths.cpp (8846421), namespace sf -> af, unchanged otherwise.
+// From SubForce plugin/paths.cpp (8846421), namespace sf -> af; sourceRoots() added (a plugin root with no
+// subfolder).
 #include "paths.h"
 
 #include <atomic>
@@ -33,7 +34,7 @@ std::vector<Root> roots(const char* env, const char* sub, const char* ssd) {
         return out;
     }
     const std::string plug = pluginDir();
-    if (!plug.empty()) out.push_back({"plugin", plug + "/" + sub});
+    if (!plug.empty()) out.push_back({"plugin", *sub ? plug + "/" + sub : plug});
     out.push_back({"ssd", ssd});
     return out;
 }
@@ -63,6 +64,7 @@ std::string pluginDir() {
 }
 
 std::vector<Root> presetRoots() { return roots("AF_PRESET_ROOTS", "Presets", "/media/AkaiForce/AmbientForce Presets"); }
+std::vector<Root> sourceRoots() { return roots("AF_SOURCE_ROOTS", "", "/media/AkaiForce"); }
 
 std::string dataDir() {
     if (const char* e = std::getenv("AF_DATA_DIR")) return e;

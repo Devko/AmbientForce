@@ -2018,6 +2018,69 @@ void resumeDuck() {
     CHECK(near(off, 0.0, 0.5));
 }
 
+// Delay::rest() and Echo::rest() (AmbientForce's: the time the engine skipped Echo). A loud burst at
+// duck 1, then a silence: processed by one Delay, rest() of as many samples in another, nothing in a
+// third; after one more chunk of silence through each (so each aims its duck from its envelope), the
+// rested one's wet gain is the processed one's within 0.001 at 0.1, 1 and 5 s of silence, where the
+// one left as it was is up to 0.6 off. rest() of 0, a negative count or NaN changes nothing, nor does
+// it on a Delay that has heard nothing; Echo::rest() is the Delay's.
+void restDuck() {
+    P p = plain(20.0f);
+    p.duck = 1.0f;
+    double worst = 0.0, stale = 0.0;
+    for (double s : {0.1, 1.0, 5.0}) {
+        Delay a, b, c;
+        for (Delay* d : {&a, &b, &c}) {
+            Buf L = whiteNoise(kSr / 4, 0.5f, 7), R = whiteNoise(kSr / 4, 0.5f, 8);
+            run(*d, p, L, R);
+        }
+        const int quiet = static_cast<int>(s * kSr);
+        Buf L = silence(quiet), R = silence(quiet);
+        run(a, p, L, R);
+        b.rest(quiet);
+        for (Delay* d : {&a, &b, &c}) {
+            Buf l = silence(af::kChunk), r = silence(af::kChunk);
+            run(*d, p, l, r);
+        }
+        worst = std::max(worst, std::fabs(static_cast<double>(b.duckGain()) - a.duckGain()));
+        stale = std::max(stale, std::fabs(static_cast<double>(c.duckGain()) - a.duckGain()));
+    }
+    std::printf("  delay: the duck rested against run on: %.5f off (left as it was: %.3f)\n", worst, stale);
+    CHECK(worst < 1e-3 && stale > 0.3);
+    Delay d, z;
+    Buf L = whiteNoise(kSr / 4, 0.5f, 7), R = whiteNoise(kSr / 4, 0.5f, 8);
+    run(d, p, L, R);
+    const float g = d.duckGain();
+    d.rest(0.0);
+    d.rest(-5.0);
+    d.rest(std::nan(""));
+    z.rest(44100.0);
+    CHECK(d.duckGain() == g && g < 0.5f && z.duckGain() == 1.0f);
+    // Echo's: the same through its rest(). Both silent after the burst (0.2 s), then one runs on
+    // through a second of silence and the other is told it was skipped for it: each starts afresh at
+    // its next process(), the same but for the duck.
+    af::Echo e1, e2;
+    af::Echo::Params ep = af::initEcho();
+    ep.delay = p;
+    for (af::Echo* e : {&e1, &e2}) {
+        Buf l = whiteNoise(kSr / 4, 0.5f, 7), r = whiteNoise(kSr / 4, 0.5f, 8);
+        e->set(ep, tempo(120.0));
+        e->process(l.data(), r.data(), l.data(), r.data(), static_cast<int>(l.size()));
+        Buf ql = silence(kSr / 5), qr = silence(kSr / 5);
+        e->process(ql.data(), qr.data(), ql.data(), qr.data(), static_cast<int>(ql.size()));
+    }
+    CHECK(e1.silent() && e2.silent());
+    Buf l = silence(kSr), r = silence(kSr);
+    e1.process(l.data(), r.data(), l.data(), r.data(), kSr);
+    e2.rest(static_cast<uint64_t>(kSr));
+    Buf q1 = whiteNoise(kSr / 10, 0.01f, 9), q2 = q1, r1 = whiteNoise(kSr / 10, 0.01f, 10), r2 = r1;
+    e1.process(q1.data(), r1.data(), q1.data(), r1.data(), static_cast<int>(q1.size()));
+    e2.process(q2.data(), r2.data(), q2.data(), r2.data(), static_cast<int>(q2.size()));
+    const double off = db(rms(q2, 882, 2205) / rms(q1, 882, 2205));
+    std::printf("  echo: a quiet phrase's repeats 1 s after a burst, rested against run on: %+.3f dB\n", off);
+    CHECK(near(off, 0.0, 0.05));
+}
+
 } // namespace
 
 void echoTests() {
@@ -2066,6 +2129,7 @@ void echoTests() {
     resume();
     resumeAfterSet();
     resumeDuck();
+    restDuck();
 }
 
 } // namespace aft

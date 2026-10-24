@@ -22,6 +22,7 @@
 #include "../plugin/vst2.h"
 #include "factory_presets.h"
 #include "param_ids.h"
+#include "phrase.h"
 
 #include <cstdio>
 #include <ctime>
@@ -366,21 +367,28 @@ int main() {
     {
         Player p;   // the first instance starts the builder thread
         if (!waitForTables()) std::printf("pgo trainer: the tables weren't built in 10 minutes; training on the sine\n");
+        // Weather's source in after every preset (Init's here), so a run trains on the same samples.
+        afl::waitForSource(p.e);
         phrase(p);   // Init
         ++patches;
         spaces(p);
         p.press(P_PRE_INIT);
+        afl::waitForSource(p.e);
         couples(p);
         filters(p);
         p.press(P_PRE_INIT);
+        afl::waitForSource(p.e);
         listens(p);
         p.press(P_PRE_INIT);
+        afl::waitForSource(p.e);
         tunings(p);
         chords(p);
         p.press(P_PRE_INIT);
+        afl::waitForSource(p.e);
         grounds(p);
         blooms(p);
         p.press(P_PRE_INIT);
+        afl::waitForSource(p.e);
         keysAndStops(p);
     }
     // The factory presets, as users will mostly play them: each on a fresh instance (a project
@@ -390,6 +398,7 @@ int main() {
         Player f;
         const std::string text = kFactoryPresets[i].text;
         f.e->dispatcher(f.e, vst::effSetChunk, 0, static_cast<intptr_t>(text.size()), const_cast<char*>(text.data()), 0.0f);
+        afl::waitForSource(f.e);
         phrase(f, kPhraseS * 1.25);
         ++patches;
     }

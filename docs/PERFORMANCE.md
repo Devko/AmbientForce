@@ -78,7 +78,7 @@ a little over the shipped build's), µs per block:
   the bench waits for the table builder to finish, so no case plays the sine fallback or times the
   builder.
 - **Stage timing**: the profiling build (`-DAF_STAGE_TIMING`, `make arm-bench-stages`) laps a clock
-  between the engine's stages: ground, bloom, space and out.
+  between the engine's stages: ground, bloom, air, weather, echo, space and out.
 - **Profile-guided**: the shipped `.so` is built with a profile from `tools/pgo_train.cpp`, which
   plays an ambient phrase through every Space mode, Couple mode, Listen pair, tuning, chord type and
   voicing, Hold and the pedal, Stop and a suspend, then every factory preset, under `qemu-arm`.
@@ -125,6 +125,42 @@ These figures replace the ones this table had through M1 (init chord 210k, drone
 355k, worst 423k, 433k where it re-strikes), which came from another qemu build and ran 7–14% over
 `arm-icount`'s for the same code: the commit they were taken at (`9183bd8`) counts 196.7k, 161.7k,
 312.5k and 392.3k here. Today's code counts under 1% over that, for the synced breath and sways.
+**With M2's engine** (Task 8: Air, Weather, Echo and Memory wired in, all off in these cases), the
+same cases count 4.7k to 4.8k a block more: Memory recording the output (3.6k) and the new routing.
+M2's own cases play the engine itself, linked into the bench, until the plugin maps their parameters
+(`worst engine`, the `worst` case played so, counts 0.4k under the plugin's):
+
+| Case (M2's engine) | ARM instructions per block | Its spike, counted by hand |
+|---|---|---|
+| init chord / drone / bloom 6x2 | 202.0k / 167.0k / 317.8k | |
+| worst | 399.3k | its re-strike's block 417.2k |
+| air | 146.6k | |
+| weather | 180.9k | |
+| worst m2 | 528.7k | a re-strike's block with its Remember 586.7k; with the Remember refused 569.0k |
+| air strike | 147.5k | the strike's block 357.5k, the ten after it 156.9k |
+| echo resume | 141.2k | the phrase's first block 215.2k, the 34 after it 199.3k, the silence 114.9k |
+
+M2's worst case, part by part (the case less each part): Weather 60.9k (in Stretch, the dearer mode;
+59.7k in Cloud), Air 35.9k, Echo 32.4k with its sends, and the 4.8k above; 134.2k over 0.0.2's worst,
+where the plan budgeted 128k. At the plan's 0.0268 points of p99 a thousand, 528.7k is **14.17%**
+(device: pending), under the 14.5% at which the plan's caps start. The spikes are a block or ten in
+2 s: `afbench <so> --icount <case> 690` less `689` is the re-strike's (or the strike's, or the
+phrase's) block alone. In `worst m2` a Remember is asked with every re-strike and taken with every
+second one (Memory takes one after 2 s of recording, 88200 samples; the re-strikes are 88192 apart),
+the first at block 0: `1379` less `1378` is a re-strike with its Remember (the dearest block, one in
+4 s), `690` less `689` one whose Remember is refused.
+
+Task 8's review moved Air and Weather's pans and Echo sends into their own output pass, wrote Memory
+straight from the bus and gave Air its clock only when it renders: from the counts first made with
+Task 6 merged (`61642fe`: init chord 203.0k, worst 400.4k, air 149.0k, weather 181.5k, worst m2
+532.0k in Cloud) about 1k came off every case and 4.5k off M2's worst (Cloud for Cloud; Air's part
+38.4k to 35.9k, Weather's 60.5k to 59.7k). Its re-review sealed Memory's ring at a sleep
+(`Memory::seal()`): 12 instructions a block on every case (write()'s test for a fade-in, 3 a call
+in the engine's pieces of 32; bloom 6x2 317.7k to 317.8k, the rest unchanged at this rounding), and
+on the block a sleep that keeps the ring comes in 12.5k at most for the seal itself, nothing
+staged, with 0.5k more for its fade-in over the writes after (7.4k in all with 127 frames staged);
+once a sleep, in a block that goes silent from there.
+
 The strata's figures below and the oscillator's were counted before `arm-icount` too: compare them
 with each other, not with the table above.
 

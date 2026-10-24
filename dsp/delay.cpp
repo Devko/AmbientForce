@@ -408,6 +408,17 @@ void Delay::reset() {
     clear();
 }
 
+// Silence at the input: each sample takes kFall of the envelope's distance to kTiny, so `samples`
+// leave (1 - kFall)^samples of it, e^(-samples / 0.25 s). The gain the next segment would aim at
+// from there is where it stands now, and stays to the segment's end.
+void Delay::rest(double samples) {
+    if (!(samples > 0.0) || !(env_ > kTiny)) return;
+    const double left = std::exp(-samples / (0.25 * static_cast<double>(kRate)));
+    env_ = kTiny + static_cast<float>(static_cast<double>(env_ - kTiny) * left);
+    duck_ = duckEnd_ = 1.0f / (1.0f + kDuckLaw * duckAmt_ * env_);
+    duckStep_ = 0.0f;
+}
+
 void Delay::clear() {
     w_ = 0;
     written_ = 0;

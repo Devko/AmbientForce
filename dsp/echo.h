@@ -38,9 +38,10 @@
 // let it fall further: the next phrase's repeats then swell in from under the duck. After a loud
 // burst at 20 ms with duck 1 (resumeDuck()'s setting), a quiet phrase's first repeats come 11 dB
 // under a Delay run on after a 0.5 s pause (6.5 dB under 320 ms on), 15.6 dB under after 5 s
-// (8 dB at 320 ms). Kept because a swell is gentler than the jump an emptied envelope gives. A
-// question for Task 8: the engine knows when and for how long it skipped Echo, and could tell it,
-// so the envelope falls as far as it would have.
+// (8 dB at 320 ms). Kept because a swell is gentler than the jump an emptied envelope gives. The
+// engine (dsp/engine.h) knows when and for how long it skipped Echo, and tells it (rest()), so the
+// envelope falls as far as it would have: then the first repeats after a pause come as loud as a
+// Delay's run on through it.
 //
 // Wet only from the start: an Echo that has never been set() plays initEcho() at mix 1. Drive and
 // Glide stay at initEcho()'s (0 and Tape): M2 doesn't show them.
@@ -58,8 +59,10 @@
 //   here), the reads' old samples zeroed ahead of them, one or two fills a run; then 30.0k again.
 // M2's budget gives Echo 28k: this is 2.0k (7%) over it, less than Diffuse's 4.1k. At the plan's
 // 0.0268 points of p99 per thousand, about 0.80 points; the first block after a silence 0.97
-// (device: pending). Task 8's bench should count a phrase that starts after a silence, so that
-// those blocks are in its p99.
+// (device: pending). In the engine (Task 8, make arm-icount): M2's worst case counts 32.4k more
+// with Echo than without (the four sends into it, its return into the mix and Space); the bench's
+// `echo resume` plays a phrase after each silence (100 ms, feedback 0.3), whose first block counts
+// 15.9k more than the blocks after it (the fresh start and the note's own start).
 //
 // Real-time rules: the constructor allocates (the Delay's lines, 2.8 MB, and its diffusers, 23 KB);
 // reset(), set() and process() don't allocate, lock or throw. A fresh start costs the blocks above
@@ -83,7 +86,12 @@ public:
     // sendL/R: the strata's summed Echo sends; out: the wet return (overwritten; it may be the
     // send's own buffers). Any n: the Delay runs in 32-sample chunks.
     void process(const float* sendL, const float* sendR, float* outL, float* outR, int n);
-    bool silent() const;   // the repeats are under -120 dBFS and nothing is coming in
+    // The repeats are under -120 dBFS and nothing is coming in.
+    bool silent() const { return quiet_ >= static_cast<uint32_t>(delay_.reachSamples()); }
+    // The engine skipped it for `samples` (silent, nothing sent): the duck's envelope falls as far as
+    // it would have over that silence (Delay::rest()), where it would otherwise hold what it had when
+    // the skipping began (see the duck's envelope above). Cheap: one exp.
+    void rest(uint64_t samples) { delay_.rest(static_cast<double>(samples)); }
 
 private:
     Delay delay_;

@@ -18,7 +18,7 @@ std::string paramDisplay(int id, float norm);
 // macros (applyMacros). Audio thread: no allocation.
 Patch patchFromParams(const float* norm);
 // The knobs alone, the macros left out. Levels and sends get the audio taper (gain = knob^2); options become the
-// engine's enums; Memory becomes bars (0 off, -1 forever).
+// engine's enums; Memory becomes bars (0 off, -1 forever); Split 0 becomes -1 (off).
 Patch patchFromKnobs(const float* norm);
 
 // The four macros (surface.py m_*), each -1..+1. They bend the Patch the knobs make, not the knobs: each one
@@ -33,6 +33,9 @@ struct Macros {
 // A bipolar control (a macro, Tilt) nearer 0 than this shows "0%", and a macro there is 0: one
 // number for both, so the knob never reads 0% while the macro bends the preset, nor the other way.
 constexpr float kBipolarZero = 0.005f;
+// Air Density under this many notes a minute reads "off" (surface.py fmt permin), and is 0 for the engine: one
+// number for both, so the knob never reads "off" while Air still plays now and then, as kBipolarZero does.
+constexpr float kAirDensityOff = 0.05f;
 Macros macrosFromParams(const float* norm);
 void applyMacros(Patch& p, const Macros& m);
 

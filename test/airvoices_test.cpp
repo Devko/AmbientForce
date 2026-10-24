@@ -17,14 +17,6 @@
 #include <limits>
 #include <vector>
 
-#if defined(__SANITIZE_ADDRESS__)
-// The sanitizer runtime's (sanitizer/allocator_interface.h, which GCC doesn't install): hooks its
-// allocator calls on every allocation and free.
-extern "C" int __sanitizer_install_malloc_and_free_hooks(void (*malloc_hook)(const volatile void*, size_t),
-                                                         void (*free_hook)(const volatile void*));
-#define AIR_COUNTS_ALLOCS 1
-#endif
-
 namespace aft {
 namespace {
 
@@ -975,35 +967,24 @@ void testDeterminism() {
     CHECK(a.active() == 0);
 }
 
-#if AIR_COUNTS_ALLOCS
-thread_local bool t_counting = false;
-int g_allocs = 0;
-void onMalloc(const volatile void*, size_t) {
-    if (t_counting) ++g_allocs;
-}
-void onFree(const volatile void*) {}
-#endif
-
 void testNoAllocation() {
     std::printf("== airvoices: no allocation\n");
-#if AIR_COUNTS_ALLOCS
-    static const bool hooked = __sanitizer_install_malloc_and_free_hooks(onMalloc, onFree) != 0;
-    CHECK(hooked);
+#if AFT_COUNTS_ALLOCS
+    CHECK(hookAllocations());
     tables();
     AirVoices v;
     v.seed(12);
     float L[kBlk] = {}, R[kBlk] = {}, SL[kBlk] = {}, SR[kBlk] = {};
-    t_counting = true;
-    g_allocs = 0;
+    countAllocations();
     for (int s = 0; s < af::AS_COUNT; ++s) {
         v.set(patch(s, 2.0f, 5000.0f), equal());
         for (int k = 0; k < 8; ++k) v.strike(40 + 7 * k, 0.7f, 0.1f * k - 0.4f);
         for (int i = 0; i < 100; ++i) v.render(tables(), L, R, SL, SR, 0.5f, i % 2 ? kBlk : 77);
     }
     v.reset();
-    t_counting = false;
-    std::printf("  %d allocations\n", g_allocs);
-    CHECK(g_allocs == 0);
+    const int allocs = allocationsCounted();
+    std::printf("  %d allocations\n", allocs);
+    CHECK(allocs == 0);
 #else
     std::printf("  (counted under ASan: make test)\n");
 #endif

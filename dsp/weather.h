@@ -85,6 +85,9 @@
 //
 // Level, mute and the send, as Ground's: `level` is a gain (the patch map squares the knob); the
 // level and mute glide in a straight line over 10 ms; the send is taken after level, gate and duck.
+// The engine's pan and Echo send (setMix(), Task 8) ride on the same gains in the same pass: the
+// dry at the pan's left and right gains, the Echo send taken where the Space send is (before the
+// pan), each gliding over 10 ms a control step at a time.
 // Once the glide down has reached 0 (or the gate has closed: audible() false) every grain stops
 // and the source is forgotten. The engine may skip Weather from then on, and the loader or a
 // Remember may free the source meanwhile, so no grain may keep reading it: one that did would be
@@ -173,9 +176,20 @@ public:
     // while audible(). A different source than the last call's fades every grain out over 20 ms
     // and starts afresh.
     // duckPeak: Bloom's dry peak over this piece (|L|, |R| largest), for Duck.
-    // Adds the dry into outL/outR, the send at spaceSend into sendL/sendR. n <= 128.
+    // Adds the dry into outL/outR at the pan, the send at spaceSend into sendL/sendR and the Echo send
+    // into echoL/echoR (nullptr: none; only while !echoing()), both before the pan. n <= 128.
     void render(const GrainSource* src, float duckPeak, float* outL, float* outR, float* sendL, float* sendR,
-                float spaceSend, int n);
+                float spaceSend, float* echoL, float* echoR, int n);
+    void render(const GrainSource* src, float duckPeak, float* outL, float* outR, float* sendL, float* sendR,
+                float spaceSend, int n) {
+        render(src, duckPeak, outL, outR, sendL, sendR, spaceSend, nullptr, nullptr, n);
+    }
+    // The engine's: the stratum's pan as its left and right gains (the engine's law) and its Echo
+    // send (a gain), gliding over 10 ms a control step at a time, as the level does; set while
+    // Weather is silent (!audible()) they are there at once. Until set: centred (1, 1), unsent.
+    void setMix(float panL, float panR, float echoSend);
+    // The Echo send above 0, or gliding: render() wants the Echo bus.
+    bool echoing() const { return echo_.now > 0.0f || echo_.to > 0.0f; }
     // Gated on, or still fading out, and its level (or the level's glide down) above 0. It doesn't
     // look at the source: a source arriving while the engine skipped Weather would never be seen.
     // With none, a render only takes its control steps. Once it is false Weather holds no pointer
@@ -216,7 +230,8 @@ private:
     };
 
     void control(int m);
-    void step(int m, float d0, float dStep, float* outL, float* outR, float* sendL, float* sendR);
+    void step(int m, float d0, float dStep, float* outL, float* outR, float* sendL, float* sendR, float* echoL,
+              float* echoR);
     void startGrains(int m);
     void spawn(int k, double pos, float semis, bool back, int length, float pan, float amp);
     float transposition(float detune, float u);
@@ -268,6 +283,8 @@ private:
     float gateDb_ = -60.0f;
     float levelNow_ = 0.0f, levelStep_ = 0.0f, levelTo_ = 0.0f;   // the level glides from now to To, Step a sample
     float gain_ = 0.0f, gain0_ = 0.0f, send_ = 0.0f, send0_ = 0.0f, spaceSend_ = 0.0f;
+    LineGlide panL_, panR_, echo_;       // the engine's pan gains and Echo send (setMix)
+    float pl0_ = 1.0f, pr0_ = 1.0f, e0_ = 0.0f;   // where they were as this step began
     float duckEnv_ = 0.0f, duckGain_ = 1.0f;   // Duck's envelope, and its gain as the last call ended
 
     // The filters: the tilt's glide and coefficients, the high-pass's, their states (L R).

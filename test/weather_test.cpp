@@ -20,14 +20,6 @@
 #include <memory>
 #include <vector>
 
-#if defined(__SANITIZE_ADDRESS__)
-// The sanitizer runtime's (sanitizer/allocator_interface.h, which GCC doesn't install): hooks its
-// allocator calls on every allocation and free.
-extern "C" int __sanitizer_install_malloc_and_free_hooks(void (*malloc_hook)(const volatile void*, size_t),
-                                                         void (*free_hook)(const volatile void*));
-#define WEATHER_COUNTS_ALLOCS 1
-#endif
-
 namespace aft {
 namespace {
 
@@ -1011,28 +1003,16 @@ void testDeterminismAndStability() {
     CHECK(allFinite(o3.L) && allFinite(o3.R));
 }
 
-#if WEATHER_COUNTS_ALLOCS
-// ASan's allocator calls these for every allocation; only the test's own thread counts.
-thread_local bool t_counting = false;
-int g_allocs = 0;
-void onMalloc(const volatile void*, size_t) {
-    if (t_counting) ++g_allocs;
-}
-void onFree(const volatile void*) {}
-#endif
-
 // Nothing in set, setChord, gate, render or reset allocates.
 void testNoAllocation() {
     std::printf("== weather: no allocation\n");
-#if WEATHER_COUNTS_ALLOCS
-    static const bool hooked = __sanitizer_install_malloc_and_free_hooks(onMalloc, onFree) != 0;
-    CHECK(hooked);
+#if AFT_COUNTS_ALLOCS
+    CHECK(hookAllocations());
     const auto s1 = source(whiteNoise(2 * kSec, 0.5f, 81)), s2 = source(sine(200.0, 2 * kSec, 0.5f));
     Weather w;
     w.seed(59);
     float L[kBlk] = {}, R[kBlk] = {}, SL[kBlk] = {}, SR[kBlk] = {};
-    t_counting = true;
-    g_allocs = 0;
+    countAllocations();
     for (int mode = 0; mode < af::WM_COUNT; ++mode) {
         af::WeatherPatch p = dense();
         p.mode = mode;
@@ -1049,9 +1029,9 @@ void testNoAllocation() {
     w.gate(false);
     for (int i = 0; i < 800; ++i) w.render(&s1->src, 0.0f, L, R, SL, SR, 0.5f, kBlk);
     w.reset();
-    t_counting = false;
-    std::printf("  %d allocations\n", g_allocs);
-    CHECK(g_allocs == 0);
+    const int allocs = allocationsCounted();
+    std::printf("  %d allocations\n", allocs);
+    CHECK(allocs == 0);
 #else
     std::printf("  (counted under ASan: make test)\n");
 #endif

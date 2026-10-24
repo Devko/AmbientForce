@@ -9,10 +9,12 @@
 #include "../plugin/patch_map.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 extern "C" AEffect* VSTPluginMain(audioMasterCallback master);
@@ -27,9 +29,24 @@ struct HostLog {
     std::map<int, float> automated;   // index -> last value pushed
     std::map<int, int> automateCount;
     VstTimeInfo time{};
+    bool record = true;               // false: what the plugin pushes isn't kept (a map insert allocates)
+    bool throwOnTime = false;         // the transport's callback throws (a block cut short)
 };
 
 intptr_t hostMaster(AEffect* e, int32_t op, int32_t index, intptr_t, void*, float opt);
+
+// Weather's sources are made on each instance's loader thread, on the steady clock (not the surface's): a
+// wait for them is in real time, looking every millisecond, for at most `ms` (ten times that under qemu,
+// the build without ASan, where the same work takes a good deal longer).
+template <class F>
+bool waitFor(F f, int ms = 5000) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms * (AFT_COUNTS_ALLOCS ? 1 : 10));
+    while (!f()) {
+        if (std::chrono::steady_clock::now() > end) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
 
 struct Host {
     AEffect* e;
@@ -55,8 +72,21 @@ struct Host {
     float value(int id) { return af::paramValue(id, get(id)); }
 
     // A tap on a button, as a Force sends it: MPC toggles the value it last read back. A button
-    // reads back 0 (it springs back), so a tap is a single 1, never followed by a release.
-    void press(int id) { e->setParameter(e, id, get(id) > 0.5f ? 0.0f : 1.0f); }
+    // reads back 0 (it springs back), so a tap is a single 1, never followed by a release. Then
+    // settle(): a preset a tap loads has its Weather source in before the test plays on.
+    void press(int id) {
+        e->setParameter(e, id, get(id) > 0.5f ? 0.0f : 1.0f);
+        settle();
+    }
+    // Weather's source loaded (tools/phrase.h waitForSource): the Source stepper's text no longer
+    // ends in " ..." (in, Memory, or MISSING). A test that loads a preset or a project then plays the
+    // same samples on every run, whenever the loader's thread gets there.
+    bool settle() {
+        return waitFor([this] {
+            const std::string t = display(af::P_W_SOURCE);
+            return t.size() < 4 || t.compare(t.size() - 4, 4, " ...") != 0;
+        }, 10000);
+    }
     // One Q-Link detent (dir +1 / -1), as a Force sends it: the value MPC last read back plus
     // 1/128 of the range, rounded to 1/1000 (MPC OS 3.9.1, measured by sd88me/mpc-vst-plugins,
     // docs/NOTES.md "Input probe"). Several in a Turn are one gesture.
@@ -120,12 +150,30 @@ struct Host {
         const intptr_t size = e->dispatcher(e, vst::effGetChunk, 0, 0, &data, 0.0f);
         return size > 0 && data ? std::string(static_cast<const char*>(data)) : std::string();
     }
-    intptr_t load(const std::string& s) {
+    intptr_t load(const std::string& s) {   // then settle(), as press() (loadRaw(): not)
+        const intptr_t r = loadRaw(s);
+        settle();
+        return r;
+    }
+    intptr_t loadRaw(const std::string& s) {
         return e->dispatcher(e, vst::effSetChunk, 0, static_cast<intptr_t>(s.size()), const_cast<char*>(s.data()), 0.0f);
     }
 };
 
 std::string fixtureDir();   // per-run temp folder (removed at exit)
+
+// The Source stepper's text comes to say `text` (a load published, its listener's refresh), within ms.
+inline bool showsSource(Host& h, const std::string& text, int ms = 5000) {
+    return waitFor([&] { return h.display(af::P_W_SOURCE) == text; }, ms);
+}
+// The status line comes to say `text`, a block at a time (the audio thread decides what it shows).
+inline bool statusSays(Host& h, const std::string& text, int ms = 5000) {
+    return waitFor([&] {
+        h.run(1);
+        return h.display(af::P_STATUS) == text;
+    }, ms);
+}
+std::string sourceDir();    // the AF_SOURCE_ROOTS of the plugin tests: <it>/plugin, <it>/ssd
 
 // The surface's clock moves this far per host event (plugin_test.cpp): a second, so separate
 // events never read as one gesture, whatever the machine's speed.
@@ -150,6 +198,8 @@ void groundTests();      // ground_test.cpp: Ground on its own (partials, beat, 
 void bloomTests();       // bloom_test.cpp: Bloom on its own (chords, strum, steal, moves, the tail handoff)
 void airvoicesTests();   // airvoices_test.cpp: Air's voices on their own (pitch, decay, Tone, levels, steal, sleep)
 void weatherTests();     // weather_test.cpp: Weather and its sources on their own (pitch, To Key, Stream, Duck)
+void fieldsTests();      // fields_test.cpp: the procedural fields and Memory on their own (level, seams, Remember)
+void sourcesTests();     // sources_test.cpp: Weather's sources on the plugin side (WAVs, the loader and its cache, keys, Keep)
 void presetTests();      // preset_test.cpp: state, presets, the browser, stepping
 void paramsTests();      // params_test.cpp: defaults and their text, formats, option lists, the patch map, extremes
 

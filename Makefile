@@ -50,11 +50,56 @@ ARM_SO   := $(BUILD)/arm/ambientforce.so
 ARM_SO_STAGES := $(BUILD)/arm/ambientforce_stages.so
 ARM_BENCH := $(BUILD)/arm/afbench
 
+# --- objects ----------------------------------------------------------------------------------
+# Every source is compiled on its own, to build/obj/<set>/<path>.o: one directory (a "set") per set
+# of compiler flags, and a binary is linked from the objects of one set. A change to a .cpp or a
+# header rebuilds just the objects that include it (-MMD -MP: each object's .d file lists the headers
+# it was built from, and make reads those back at the end of this file), and a change to a set's
+# flags rebuilds the set (its `flags` file is rewritten only when the command differs). Sets with
+# the same flags are one set: make test-module M=echo links the objects make test built.
+# The generated headers are order-only: they must exist before the first compile, and from then on
+# the .d files of the objects that include them carry them, so a regenerated header rebuilds those.
+#
+# Parallel on every core without -j: JOBS=1 (or -j1) builds one at a time and prints as it goes;
+# --output-sync keeps each target's output together, shown when the target has ended. What must
+# not overlap is a single recipe (the profile run, arm-icount's measurements, the soak), and goals
+# that run something take turns (below).
+JOBS ?= $(shell nproc 2>/dev/null || echo 1)
+ifeq ($(MAKELEVEL),0)
+MAKEFLAGS += -j$(JOBS) --output-sync=target
+endif
+OBJ      := $(BUILD)/obj
+# A flags file is checked on every run (FORCE), except under -n, where a checked file would count as
+# changed and make -n list every object.
+CHECK_FLAGS := $(if $(findstring n,$(firstword -$(MAKEFLAGS))),,FORCE)
+# $(call objs,<set>,<sources>): the sources' objects in a set.
+objs     = $(patsubst %.cpp,$(OBJ)/$(1)/%.o,$(2))
+# $(eval $(call objrule,<set>,<flags variable>,<compiler variable>)): the rule for a set's objects,
+# and for its flags file. The variables are named, not read, so a set can be declared where it is
+# used, before its flags are.
+define flagsrule
+$(OBJ)/$(1)/flags: $(CHECK_FLAGS)
+	@mkdir -p $$(@D)
+	@echo '$$($(3)) $$($(2))' | cmp -s - $$@ || echo '$$($(3)) $$($(2))' > $$@
+endef
+define objrule
+$(OBJ)/$(1)/%.o: %.cpp $(OBJ)/$(1)/flags | $(GEN)
+	@mkdir -p $$(@D)
+	$$($(3)) $$($(2)) -MMD -MP -c $$< -o $$@
+$(call flagsrule,$(1),$(2),$(3))
+endef
+
 .PHONY: all surface skin test test-arm test-arm-pgo test-module test-module-arm bench soak arm-plugin arm-bench arm-bench-stages arm-icount bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
 # A recipe that fails leaves no half-written target behind for the next make to trust.
 .DELETE_ON_ERROR:
 # The stage-timing build too: a -DAF_STAGE_TIMING break shows here, not at bench time.
 all: test arm-plugin $(BUILD)/ambientforce_stages.so
+
+# Goals that run something (a suite, the soak, the bench, the instruction counts, the device) take
+# turns when several are given, in the order given: their builds overlap, their runs do not.
+RUN_GOALS := $(filter test test-arm test-arm-pgo test-module test-module-arm bench soak demos preset-levels arm-icount bench-device plugin-install,$(MAKECMDGOALS))
+RUN_PREV  :=
+$(foreach g,$(RUN_GOALS),$(eval $(g): | $(RUN_PREV))$(eval RUN_PREV := $(g)))
 
 # --- generated --------------------------------------------------------------------------------
 # surface.py: params.json, layout.conf, vst.json and build/param_ids.h (the C++ side). Needs only
@@ -91,34 +136,54 @@ test: $(BUILD)/plugin_test
 	$(BUILD)/plugin_test
 
 TESTS    := $(wildcard test/*_test.cpp)
-$(BUILD)/plugin_test: $(TESTS) $(wildcard test/*.h tools/*.h) $(SRC) $(HDR) $(GEN) | $(BUILD)
-	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra -pthread \
-		$(INC) $(SRC) $(TESTS) -o $@
+ASAN_FLAGS = -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra -pthread $(INC)
+$(eval $(call objrule,asan,ASAN_FLAGS,CXX))
+$(BUILD)/plugin_test: $(call objs,asan,$(SRC) $(TESTS))
+	$(CXX) $(ASAN_FLAGS) $^ -ldl -o $@
 
 # The same suite cross-compiled for the Force's CPU and run under qemu-user (no sanitizers):
 # catches 32-bit and ARM-only code paths (the FPSCR flush, NEON float code).
 test-arm: $(BUILD)/arm/plugin_test
 	$(ARM_RUN) $<
 
-$(BUILD)/arm/plugin_test: $(TESTS) $(wildcard test/*.h tools/*.h) $(SRC) $(HDR) $(GEN)
+ARM_TEST_FLAGS = -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC)
+$(eval $(call objrule,arm-test,ARM_TEST_FLAGS,ARM_CXX))
+$(BUILD)/arm/plugin_test: $(call objs,arm-test,$(SRC) $(TESTS))
 	mkdir -p $(BUILD)/arm
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC) $(SRC) $(TESTS) -o $@
+	$(ARM_CXX) $(ARM_TEST_FLAGS) $^ -o $@
 
-# One dsp suite on its own, quicker to iterate on (EffectForce's): make test-module M=reverb builds
-# test/reverb_test.cpp with every dsp/*.cpp under ASan/UBSan; test-module-arm the same for the
-# device's CPU under qemu-arm. Suites that drive the plugin (engine, preset) need make test.
+# One dsp suite on its own, quicker to iterate on (EffectForce's): make test-module M=reverb links
+# test/reverb_test.cpp with every dsp/*.cpp under ASan/UBSan, the objects make test built (only
+# module_main.cpp is compiled for the suite: -DMODULE_TESTS names the suite it calls); test-module-arm
+# the same for the device's CPU under qemu-arm. Suites that drive the plugin (engine, preset) need
+# make test. The sources suite tests the loader, the WAV reader and the source library, which are
+# plugin files: it gets those (MOD_PLUGIN_<suite>) besides the dsp ones.
 M ?=
-MOD_SRC = test/module_main.cpp test/$(M)_test.cpp $(wildcard dsp/*.cpp)
-test-module: | $(BUILD)
-	@[ -n "$(M)" ] || { echo "usage: make test-module M=<suite>"; exit 1; }
-	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Wall -Wextra \
-		-DMODULE_TESTS=$(M)Tests $(INC) $(MOD_SRC) -o $(BUILD)/$(M)_test
-	$(BUILD)/$(M)_test
-test-module-arm:
-	@[ -n "$(M)" ] || { echo "usage: make test-module-arm M=<suite>"; exit 1; }
+MOD_PLUGIN_sources = plugin/paths.cpp plugin/loader.cpp plugin/wav.cpp plugin/sources.cpp
+MOD_SRC = test/$(M)_test.cpp $(wildcard dsp/*.cpp) $(MOD_PLUGIN_$(M))
+ifeq ($(strip $(M)),)
+test-module test-module-arm:
+	@echo "usage: make $@ M=<suite>"; exit 1
+else ifeq ($(wildcard test/$(M)_test.cpp),)
+test-module test-module-arm:
+	@echo "no test/$(M)_test.cpp; the suites: $(patsubst test/%_test.cpp,%,$(TESTS))"; exit 1
+else
+$(OBJ)/asan-module/%/module_main.o: test/module_main.cpp $(OBJ)/asan/flags | $(GEN)
+	@mkdir -p $(@D)
+	$(CXX) $(ASAN_FLAGS) -DMODULE_TESTS=$*Tests -MMD -MP -c $< -o $@
+$(BUILD)/$(M)_test: $(OBJ)/asan-module/$(M)/module_main.o $(call objs,asan,$(MOD_SRC))
+	$(CXX) $(ASAN_FLAGS) $^ -ldl -o $@
+test-module: $(BUILD)/$(M)_test
+	$<
+$(OBJ)/arm-module/%/module_main.o: test/module_main.cpp $(OBJ)/arm-test/flags | $(GEN)
+	@mkdir -p $(@D)
+	$(ARM_CXX) $(ARM_TEST_FLAGS) -DMODULE_TESTS=$*Tests -MMD -MP -c $< -o $@
+$(BUILD)/arm/$(M)_test: $(OBJ)/arm-module/$(M)/module_main.o $(call objs,arm-test,$(MOD_SRC))
 	mkdir -p $(BUILD)/arm
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -DMODULE_TESTS=$(M)Tests $(INC) $(MOD_SRC) -o $(BUILD)/arm/$(M)_test
-	$(ARM_RUN) $(BUILD)/arm/$(M)_test
+	$(ARM_CXX) $(ARM_TEST_FLAGS) $^ -o $@
+test-module-arm: $(BUILD)/arm/$(M)_test
+	$(ARM_RUN) $<
+endif
 
 # x86 numbers say nothing about the Force; this only checks the bench and the .so paths work
 # (the plain plugin, then the stage-timing build).
@@ -126,28 +191,37 @@ bench: $(BUILD)/ambientforce.so $(BUILD)/ambientforce_stages.so $(BUILD)/afbench
 	$(BUILD)/afbench $(BUILD)/ambientforce.so -s 1 -c -1
 	$(BUILD)/afbench $(BUILD)/ambientforce_stages.so -s 1 -c -1
 
-X86_SO_CMD = $(CXX) -std=c++17 -O3 -fno-tree-loop-distribute-patterns -fPIC -fvisibility=hidden -fno-gnu-unique -Wall -Wextra -pthread $(INC) -shared -Wl,--no-undefined
-$(BUILD)/ambientforce.so: $(SRC) $(HDR) $(GEN) plugin/exports.map | $(BUILD)
-	$(X86_SO_CMD) -Wl,--version-script=plugin/exports.map $(SRC) -o $@
-$(BUILD)/ambientforce_stages.so: $(SRC) $(HDR) $(GEN) plugin/exports_stages.map | $(BUILD)
-	$(X86_SO_CMD) -Wl,--version-script=plugin/exports_stages.map -DAF_STAGE_TIMING $(SRC) -o $@
+X86_SO_FLAGS = -std=c++17 -O3 -fno-tree-loop-distribute-patterns -fPIC -fvisibility=hidden -fno-gnu-unique -Wall -Wextra -pthread $(INC)
+X86_STAGES_FLAGS = $(X86_SO_FLAGS) -DAF_STAGE_TIMING
+X86_SO_CMD = $(CXX) $(X86_SO_FLAGS) -shared -Wl,--no-undefined
+$(eval $(call objrule,x86-so,X86_SO_FLAGS,CXX))
+$(eval $(call objrule,x86-stages,X86_STAGES_FLAGS,CXX))
+$(BUILD)/ambientforce.so: $(call objs,x86-so,$(SRC)) plugin/exports.map
+	$(X86_SO_CMD) -Wl,--version-script=plugin/exports.map $(filter %.o,$^) -o $@
+$(BUILD)/ambientforce_stages.so: $(call objs,x86-stages,$(SRC)) plugin/exports_stages.map
+	$(X86_SO_CMD) -Wl,--version-script=plugin/exports_stages.map $(filter %.o,$^) -o $@
 
-# The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1.
-$(BUILD)/afbench: tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN) | $(BUILD)
-	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $< plugin/patch_map.cpp -ldl -o $@
+# The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1. M2's
+# cases play the engine itself, linked in (tools/bench.cpp says why).
+# The -O2 objects are the soak's and the demos' too.
+BENCH_SRC := tools/bench.cpp plugin/patch_map.cpp $(wildcard dsp/*.cpp)
+O2_FLAGS = -std=c++17 -O2 -Wall -Wextra -pthread $(INC)
+$(eval $(call objrule,o2,O2_FLAGS,CXX))
+$(BUILD)/afbench: $(call objs,o2,$(BENCH_SRC))
+	$(CXX) $(O2_FLAGS) $^ -ldl -o $@
 
 # Demo clips for listening without a device: the factory presets playing a phrase, rendered
 # through the plugin's own entry points into build/demos-out/*.wav (tools/demos.cpp).
 demos: $(BUILD)/demos
 	rm -rf $(BUILD)/demos-out && mkdir -p $(BUILD)/demos-out
-	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos $(BUILD)/demos-out
+	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out AF_SOURCE_ROOTS=$(BUILD)/demos-out:$(BUILD)/demos-out $(BUILD)/demos $(BUILD)/demos-out
 # Level-matching: every factory preset's volume set so its demo phrase plays at PRESET_LUFS.
 PRESET_LUFS ?= -16
 preset-levels: $(BUILD)/demos
-	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out $(BUILD)/demos --match presets/Factory $(PRESET_LUFS)
+	AF_DATA_DIR= AF_PRESET_ROOTS=$(BUILD)/demos-out AF_SOURCE_ROOTS=$(BUILD)/demos-out:$(BUILD)/demos-out $(BUILD)/demos --match presets/Factory $(PRESET_LUFS)
 	python3 $(SURF)/surface.py
-$(BUILD)/demos: tools/demos.cpp tools/phrase.h tools/loudness.h $(SRC) $(HDR) $(GEN) | $(BUILD)
-	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(SRC) $< -o $@
+$(BUILD)/demos: $(call objs,o2,$(SRC) tools/demos.cpp)
+	$(CXX) $(O2_FLAGS) $^ -o $@
 
 # The soak test: HOURS of audio (default 1) rendered offline through the plugin's entry points, a
 # long ambient set (chords every 20-90 s, Freeze, Shimmer, presets, Space modes, Stops, suspends;
@@ -158,8 +232,8 @@ HOURS ?= 1
 SEED  ?= 1
 soak: $(BUILD)/soak
 	$(BUILD)/soak $(or $(HOURS),1) $(or $(SEED),1)
-$(BUILD)/soak: tools/soak.cpp tools/loudness.h $(SRC) $(HDR) $(GEN) | $(BUILD)
-	$(CXX) -std=c++17 -O2 -Wall -Wextra -pthread $(INC) $(SRC) $< -o $@
+$(BUILD)/soak: $(call objs,o2,$(SRC) tools/soak.cpp)
+	$(CXX) $(O2_FLAGS) $^ -o $@
 
 # --- device -----------------------------------------------------------------------------------
 # The .so MPC loads: only VSTPluginMain exported (a version script hides the C++ template
@@ -173,16 +247,35 @@ ARM_SO_CMD   = $(ARM_CXX) $(ARM_SO_FLAGS) $(ARM_SO_LINK)
 # needs, or a native ARM build); PGO=0 builds without. A copy of the plugin compiled with counters
 # is linked into tools/pgo_train.cpp, which plays phrases and the factory presets; then the .so is compiled from the same sources
 # with the same flags plus that profile, which tells the compiler which paths are hot.
-# -fprofile-partial-training keeps functions the trainer never ran optimised as usual. Objects
-# keep one path (dir_name.o) in both rounds: GCC names the profile files after it. A missing
-# profile fails the build instead of quietly building without.
+# -fprofile-partial-training keeps functions the trainer never ran optimised as usual. A missing
+# profile fails the build instead of quietly building without. Both rounds' objects are compiled in
+# parallel, the instrumented ones (build/obj/pgo-gen) kept until their sources change, the others
+# (build/obj/pgo, the ones the .so is linked from) built again after every profile run. GCC finds a
+# profile by the path of the object it was compiled for, and numbers the file's own functions by it
+# too: both rounds must compile to the same path. So the instrumented objects are compiled to
+# build/obj/pgo/<file>.o, as the others are, and moved to pgo-gen at once.
 PGO      ?= auto
 ARM_RUNS := $(if $(strip $(ARM_RUN)),$(shell command -v $(firstword $(ARM_RUN)) 2>/dev/null),native)
 PGO_ON   := $(if $(filter auto,$(PGO)),$(if $(ARM_RUNS),1,0),$(PGO))
 PGO_DIR  := $(BUILD)/arm/pgo
 PGO_PROF := $(abspath $(PGO_DIR)/profile)
-PGO_OBJ  := $(PGO_DIR)/obj
-PGO_O    = $(PGO_OBJ)/$$(echo $$f | tr / _ | sed 's/\.cpp$$/.o/')
+PGO_GEN_FLAGS   = $(ARM_SO_FLAGS) -fprofile-generate=$(PGO_PROF) -fprofile-update=prefer-atomic
+PGO_TRAIN_FLAGS = $(ARM_SO_FLAGS) -fprofile-generate
+PGO_USE_FLAGS   = $(ARM_SO_FLAGS) -fprofile-use=$(PGO_PROF) -fprofile-partial-training -Werror=missing-profile
+$(eval $(call objrule,arm-pic,ARM_SO_FLAGS,ARM_CXX))
+$(eval $(call objrule,pgo-train,PGO_TRAIN_FLAGS,ARM_CXX))
+$(eval $(call objrule,pgo,PGO_USE_FLAGS,ARM_CXX))
+$(eval $(call flagsrule,pgo-gen,PGO_GEN_FLAGS,ARM_CXX))
+$(OBJ)/pgo-gen/%.o: %.cpp $(OBJ)/pgo-gen/flags | $(GEN)
+	@mkdir -p $(@D) $(OBJ)/pgo/$(*D)
+	$(ARM_CXX) $(PGO_GEN_FLAGS) -MMD -MP -MT $@ -MF $(@:.o=.d) -c $< -o $(OBJ)/pgo/$*.o
+	mv $(OBJ)/pgo/$*.o $@
+ARM_PIC_OBJ   := $(call objs,arm-pic,$(SRC))
+PGO_GEN_OBJ   := $(call objs,pgo-gen,$(SRC))
+PGO_TRAIN_OBJ := $(call objs,pgo-train,tools/pgo_train.cpp)
+PGO_USE_OBJ   := $(call objs,pgo,$(SRC))
+# What the .so is linked from: the profile-guided objects, or the plain ones (also arm-icount's).
+ARM_SO_OBJ    := $(if $(filter 1,$(PGO_ON)),$(PGO_USE_OBJ),$(ARM_PIC_OBJ))
 
 # The .so is rebuilt when the way it is built changes (PGO on/off, flags), not only its sources.
 ARM_SO_STAMP := $(BUILD)/arm/so_flags
@@ -191,23 +284,30 @@ $(ARM_SO_STAMP): FORCE
 	@echo '$(PGO_ON) $(ARM_SO_FLAGS)' | cmp -s - $@ || echo '$(PGO_ON) $(ARM_SO_FLAGS)' > $@
 FORCE:
 
-arm-plugin: $(ARM_SO)
-$(ARM_SO): $(SRC) $(HDR) $(GEN) tools/pgo_train.cpp plugin/exports.map $(ARM_SO_STAMP)
-	mkdir -p $(BUILD)/arm
 ifeq ($(PGO_ON),1)
-	rm -rf $(PGO_DIR) && mkdir -p $(PGO_OBJ) $(PGO_PROF)
-	for f in $(SRC); do $(ARM_CXX) $(ARM_SO_FLAGS) -fprofile-generate=$(PGO_PROF) -fprofile-update=prefer-atomic \
-		-c $$f -o $(PGO_O) || exit 1; done
-	$(ARM_CXX) $(ARM_SO_FLAGS) -fprofile-generate tools/pgo_train.cpp $(PGO_OBJ)/*.o -o $(PGO_DIR)/train
-	AF_DATA_DIR=$(PGO_DIR) AF_PRESET_ROOTS=$(PGO_DIR) $(ARM_RUN) $(PGO_DIR)/train
+# The trainer, then its run: one recipe each, serial, and the profile directory emptied first (the
+# counters of an old run would be added to). A run's profile is 'trained'.
+PGO_TRAIN   := $(PGO_DIR)/train
+PGO_TRAINED := $(PGO_DIR)/trained
+$(PGO_TRAIN): $(PGO_TRAIN_OBJ) $(PGO_GEN_OBJ)
+	@mkdir -p $(@D)
+	$(ARM_CXX) $(ARM_SO_FLAGS) -fprofile-generate $^ -o $@
+$(PGO_TRAINED): $(PGO_TRAIN)
+	rm -rf $(PGO_PROF) && mkdir -p $(PGO_PROF)
+	AF_DATA_DIR=$(PGO_DIR) AF_PRESET_ROOTS=$(PGO_DIR) AF_SOURCE_ROOTS=$(PGO_DIR):$(PGO_DIR) $(ARM_RUN) $(PGO_TRAIN)
 	@n=$$(ls $(PGO_PROF)/*.gcda 2>/dev/null | wc -l); [ $$n -eq $(words $(SRC)) ] || \
 		{ echo "PGO: $$n of $(words $(SRC)) profiles written (PGO=0 builds without)"; exit 1; }
-	for f in $(SRC); do $(ARM_CXX) $(ARM_SO_FLAGS) -fprofile-use=$(PGO_PROF) -fprofile-partial-training -Werror=missing-profile \
-		-c $$f -o $(PGO_O) || exit 1; done
-	$(ARM_CXX) $(ARM_SO_FLAGS) $(ARM_SO_LINK) $(PGO_OBJ)/*.o -o $@
+	touch $@
+$(PGO_USE_OBJ): $(PGO_TRAINED)
+endif
+
+arm-plugin: $(ARM_SO)
+$(ARM_SO): $(ARM_SO_OBJ) plugin/exports.map $(ARM_SO_STAMP)
+	mkdir -p $(BUILD)/arm
+	$(ARM_SO_CMD) $(ARM_SO_OBJ) -o $@
+ifeq ($(PGO_ON),1)
 	@echo "profile-guided build"
 else
-	$(ARM_SO_CMD) $(SRC) -o $@
 	@echo "plain build (PGO=$(PGO): $(firstword $(ARM_RUN)) $(if $(ARM_RUNS),found,not found))"
 endif
 	$(ARM_PREFIX)strip --strip-unneeded $@
@@ -219,11 +319,15 @@ endif
 # AF_PGO_OBJECTS: the checks that pin exact output bits to one compilation (the Reverb's fingerprints)
 # say so and skip; the profile moves the compiler's fusing of float operations with every change of the
 # code, and CI's GCC 11 fuses differently from GCC 13 anyway.
-test-arm-pgo: $(ARM_SO)
 ifeq ($(PGO_ON),1)
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wno-psabi -pthread -DAF_PGO_OBJECTS=1 $(INC) $(TESTS) $(PGO_OBJ)/*.o -o $(BUILD)/arm/plugin_test_pgo
+ARM_PGOTEST_FLAGS = -std=c++17 $(ARM_OPT) -Wno-psabi -pthread -DAF_PGO_OBJECTS=1 $(INC)
+$(eval $(call objrule,arm-pgotest,ARM_PGOTEST_FLAGS,ARM_CXX))
+$(BUILD)/arm/plugin_test_pgo: $(call objs,arm-pgotest,$(TESTS)) $(PGO_USE_OBJ)
+	$(ARM_CXX) $(ARM_PGOTEST_FLAGS) $^ -o $@
+test-arm-pgo: $(ARM_SO) $(BUILD)/arm/plugin_test_pgo
 	$(ARM_RUN) $(BUILD)/arm/plugin_test_pgo
 else
+test-arm-pgo: $(ARM_SO)
 	@echo "test-arm-pgo: the .so is a plain build here (PGO=$(PGO)); test-arm covers it"
 endif
 
@@ -231,16 +335,19 @@ endif
 # and one more export, AmbientForceStageTimes, which afbench reads. Never shipped. A plain build
 # (not profile-guided): its times read a little higher than the shipped .so's.
 arm-bench-stages: $(ARM_SO_STAGES) $(ARM_BENCH)
-$(ARM_SO_STAGES): $(SRC) $(HDR) $(GEN) plugin/exports_stages.map $(ARM_SO_STAMP)
+ARM_STAGES_FLAGS = $(ARM_SO_FLAGS) -DAF_STAGE_TIMING
+$(eval $(call objrule,arm-stages,ARM_STAGES_FLAGS,ARM_CXX))
+$(ARM_SO_STAGES): $(call objs,arm-stages,$(SRC)) plugin/exports_stages.map $(ARM_SO_STAMP)
 	mkdir -p $(BUILD)/arm
 	$(ARM_CXX) $(ARM_SO_FLAGS) -shared -Wl,--no-undefined -Wl,-soname,ambientforce.so \
-		-Wl,--version-script=plugin/exports_stages.map -DAF_STAGE_TIMING $(SRC) -o $@
+		-Wl,--version-script=plugin/exports_stages.map $(filter %.o,$^) -o $@
 	$(ARM_PREFIX)strip --strip-unneeded $@
 
+# The bench is built with the suite's flags, from its objects.
 arm-bench: $(ARM_BENCH)
-$(ARM_BENCH): tools/bench.cpp plugin/patch_map.cpp $(HDR) $(GEN)
+$(ARM_BENCH): $(call objs,arm-test,$(BENCH_SRC))
 	mkdir -p $(BUILD)/arm
-	$(ARM_CXX) -std=c++17 $(ARM_OPT) -Wall -Wextra -Wno-psabi -pthread $(INC) $< plugin/patch_map.cpp -ldl -o $@
+	$(ARM_CXX) $(ARM_TEST_FLAGS) $^ -ldl -o $@
 
 # Instruction counts: each bench case's ARM instructions a block, exact and the same on every run,
 # to measure a change between device runs (docs/PERFORMANCE.md#instruction-counts). ICOUNT_QEMU is a
@@ -276,9 +383,9 @@ $(error arm-icount: no insn plugin at ICOUNT_PLUGIN=$(ICOUNT_PLUGIN). Build qemu
 endif
 endif
 
-$(ARM_SO_PLAIN): $(SRC) $(HDR) $(GEN) plugin/exports.map $(ARM_SO_STAMP)
+$(ARM_SO_PLAIN): $(ARM_PIC_OBJ) plugin/exports.map $(ARM_SO_STAMP)
 	mkdir -p $(dir $@)
-	$(ARM_SO_CMD) $(SRC) -o $@
+	$(ARM_SO_CMD) $(ARM_PIC_OBJ) -o $@
 
 arm-icount: $(ARM_SO_PLAIN) $(ARM_BENCH)
 	@echo "ARM instructions a block, in thousands: $(ARM_SO_PLAIN) (the device's flags, no profile)"
@@ -342,5 +449,9 @@ plugin-install: plugin-package
 $(BUILD):
 	mkdir -p $(BUILD)
 
+# The build/obj directories are in $(BUILD).
 clean:
 	rm -rf $(BUILD) $(SURF_OUT)
+
+# The headers each object was built from (-MMD -MP), once there are any.
+-include $(wildcard $(OBJ)/*/*/*.d)

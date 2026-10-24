@@ -50,7 +50,10 @@ jobs:
       - name: Package
         run: |
           case "$GITHUB_REF" in refs/tags/v*) v="${GITHUB_REF_NAME#v}"; version="PLUGIN_VERSION=${v%%-*}" ;; *) version= ;; esac
-          make PGO=1 $version plugin-package   # the .so above is up to date; a rebuild here would fail loudly (no ARM compiler)
+          # The .so above is up to date; a rebuild here would fail loudly (no ARM compiler). CHECK_FLAGS= trusts
+          # the container's build: its objects' flag stamps name the container's compiler (ARM_PREFIX= there),
+          # and the container wrote them as root, so checking them again here would try to rewrite them.
+          make CHECK_FLAGS= PGO=1 $version plugin-package
       - name: Catalog check
         run: >-
           python3 third_party/mpc-vst-plugins/tools/catalog_check.py dist/*-mpc-armv7.zip

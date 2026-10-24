@@ -958,6 +958,604 @@
    "type": "enum"
   },
   {
+   "key": "e_mode",
+   "name": "Echo Mode",
+   "options": [
+    "Stereo",
+    "Ping-Pong",
+    "Mono"
+   ],
+   "default": "Stereo"
+  },
+  {
+   "key": "e_sync",
+   "name": "Echo Sync",
+   "options": [
+    "Free",
+    "Sync"
+   ],
+   "default": "Sync"
+  },
+  {
+   "key": "e_time",
+   "name": "Echo Time",
+   "min": 0,
+   "max": 1,
+   "default": 0.803753,
+   "display": "string"
+  },
+  {
+   "key": "e_div",
+   "name": "Echo Div",
+   "options": [
+    "1/64",
+    "1/32T",
+    "1/32",
+    "1/16T",
+    "1/16",
+    "1/8T",
+    "1/16.",
+    "1/8",
+    "1/4T",
+    "1/8.",
+    "1/4",
+    "1/2T",
+    "1/4.",
+    "1/2",
+    "1/2.",
+    "1 Bar"
+   ],
+   "default": "1/4."
+  },
+  {
+   "key": "e_div__open",
+   "name": "Echo Div List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "e_div",
+   "type": "enum"
+  },
+  {
+   "key": "e_feedback",
+   "name": "Echo Repeats",
+   "min": 0,
+   "max": 1,
+   "default": 0.45,
+   "display": "string"
+  },
+  {
+   "key": "e_lowcut",
+   "name": "Echo Low Cut",
+   "min": 0,
+   "max": 1,
+   "default": 0.437531,
+   "display": "string"
+  },
+  {
+   "key": "e_highcut",
+   "name": "Echo High Cut",
+   "min": 0,
+   "max": 1,
+   "default": 0.595635,
+   "display": "string"
+  },
+  {
+   "key": "e_wow",
+   "name": "Echo Wow",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "e_duck",
+   "name": "Echo Duck",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "e_diffuse",
+   "name": "Echo Diffuse",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "e_return",
+   "name": "Echo Level",
+   "min": 0,
+   "max": 1,
+   "default": 0.7,
+   "display": "string"
+  },
+  {
+   "key": "e_space",
+   "name": "Echo Space",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "g_echo",
+   "name": "Ground Echo",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "b_echo",
+   "name": "Bloom Echo",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "a_listen",
+   "name": "Air Listen",
+   "options": [
+    "Notes",
+    "Harmony",
+    "Free"
+   ],
+   "default": "Harmony"
+  },
+  {
+   "key": "a_mute",
+   "name": "Air Mute",
+   "options": [
+    "Off",
+    "On"
+   ],
+   "default": "Off"
+  },
+  {
+   "key": "a_level",
+   "name": "Air Level",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "a_tone",
+   "name": "Air Tone",
+   "min": 0,
+   "max": 1,
+   "default": 0.77617,
+   "display": "string"
+  },
+  {
+   "key": "a_sound",
+   "name": "Air Sound",
+   "options": [
+    "Glass",
+    "Bowl",
+    "Bar",
+    "Bell",
+    "Kalimba",
+    "Felt"
+   ],
+   "default": "Glass"
+  },
+  {
+   "key": "a_sound__open",
+   "name": "Air Sound List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "a_sound",
+   "type": "enum"
+  },
+  {
+   "key": "a_decay",
+   "name": "Air Decay",
+   "min": 0,
+   "max": 1,
+   "default": 0.696236,
+   "display": "string"
+  },
+  {
+   "key": "a_density",
+   "name": "Air Density",
+   "min": 0,
+   "max": 1,
+   "default": 0.584804,
+   "display": "string"
+  },
+  {
+   "key": "a_pattern",
+   "name": "Air Pattern",
+   "options": [
+    "Random",
+    "Rise",
+    "Fall",
+    "Constellation",
+    "Echo"
+   ],
+   "default": "Constellation"
+  },
+  {
+   "key": "a_pattern__open",
+   "name": "Air Pattern List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "a_pattern",
+   "type": "enum"
+  },
+  {
+   "key": "a_reg",
+   "name": "Air Reg",
+   "options": [
+    "Low",
+    "Mid",
+    "High"
+   ],
+   "default": "Mid"
+  },
+  {
+   "key": "a_range",
+   "name": "Air Range",
+   "min": 0,
+   "max": 1,
+   "default": 0.6,
+   "display": "string"
+  },
+  {
+   "key": "a_gravity",
+   "name": "Air Gravity",
+   "min": 0,
+   "max": 1,
+   "default": 0.6,
+   "display": "string"
+  },
+  {
+   "key": "a_motif",
+   "name": "Air Motif",
+   "min": 0,
+   "max": 1,
+   "default": 0.4,
+   "display": "string"
+  },
+  {
+   "key": "a_mutate",
+   "name": "Air Mutate",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "a_loop",
+   "name": "Air Loop",
+   "options": [
+    "Off",
+    "On"
+   ],
+   "default": "Off"
+  },
+  {
+   "key": "a_looplen",
+   "name": "Loop Length",
+   "min": 0,
+   "max": 1,
+   "default": 0.507881,
+   "display": "string"
+  },
+  {
+   "key": "a_loopsync",
+   "name": "Loop Sync",
+   "options": [
+    "Free",
+    "Sync"
+   ],
+   "default": "Free"
+  },
+  {
+   "key": "a_loopdiv",
+   "name": "Loop Div",
+   "options": [
+    "1/4",
+    "1/2",
+    "1 Bar",
+    "2 Bars",
+    "4 Bars",
+    "8 Bars",
+    "16 Bars",
+    "32 Bars",
+    "64 Bars"
+   ],
+   "default": "4 Bars"
+  },
+  {
+   "key": "a_loopdiv__open",
+   "name": "Loop Div List",
+   "options": [
+    "Closed",
+    "Open"
+   ],
+   "default": "Closed",
+   "popup_of": "a_loopdiv",
+   "type": "enum"
+  },
+  {
+   "key": "a_rubato",
+   "name": "Air Rubato",
+   "min": 0,
+   "max": 1,
+   "default": 0.2,
+   "display": "string"
+  },
+  {
+   "key": "a_vel",
+   "name": "Air Vel",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "a_width",
+   "name": "Air Width",
+   "min": 0,
+   "max": 1,
+   "default": 0.7,
+   "display": "string"
+  },
+  {
+   "key": "a_space",
+   "name": "Air Space",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "a_echo",
+   "name": "Air Echo",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "a_pan",
+   "name": "Air Pan",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "h_split",
+   "name": "Split",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "w_listen",
+   "name": "Wthr Listen",
+   "options": [
+    "Notes",
+    "Harmony",
+    "Free"
+   ],
+   "default": "Free"
+  },
+  {
+   "key": "w_mute",
+   "name": "Weather Mute",
+   "options": [
+    "Off",
+    "On"
+   ],
+   "default": "Off"
+  },
+  {
+   "key": "w_level",
+   "name": "Wthr Level",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "w_mode",
+   "name": "Weather Mode",
+   "options": [
+    "Cloud",
+    "Stretch",
+    "Stream"
+   ],
+   "default": "Cloud"
+  },
+  {
+   "key": "w_position",
+   "name": "Position",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "w_drift",
+   "name": "Weather Drift",
+   "min": 0,
+   "max": 1,
+   "default": 0.2,
+   "display": "string"
+  },
+  {
+   "key": "w_spray",
+   "name": "Wthr Spray",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "w_size",
+   "name": "Grain Size",
+   "min": 0,
+   "max": 1,
+   "default": 0.548455,
+   "display": "string"
+  },
+  {
+   "key": "w_grains",
+   "name": "Grains",
+   "min": 0,
+   "max": 1,
+   "default": 0.466667,
+   "display": "string"
+  },
+  {
+   "key": "w_pitch",
+   "name": "Weather Pitch",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "w_tokey",
+   "name": "To Key",
+   "options": [
+    "Off",
+    "Scale",
+    "Chord"
+   ],
+   "default": "Off"
+  },
+  {
+   "key": "w_reverse",
+   "name": "Wthr Reverse",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "w_width",
+   "name": "Wthr Width",
+   "min": 0,
+   "max": 1,
+   "default": 0.7,
+   "display": "string"
+  },
+  {
+   "key": "w_tilt",
+   "name": "Weather Tilt",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "w_hp",
+   "name": "Weather HP",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "w_duck",
+   "name": "Weather Duck",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "w_space",
+   "name": "Wthr Space",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "display": "string"
+  },
+  {
+   "key": "w_echo",
+   "name": "Weather Echo",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "display": "string"
+  },
+  {
+   "key": "w_pan",
+   "name": "Weather Pan",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "display": "string"
+  },
+  {
+   "key": "w_memtap",
+   "name": "Memory From",
+   "options": [
+    "Strata",
+    "Output"
+   ],
+   "default": "Output"
+  },
+  {
+   "key": "w_source",
+   "name": "Source",
+   "min": 0,
+   "max": 1,
+   "display": "string",
+   "type": "stepper"
+  },
+  {
+   "key": "w_source_prev",
+   "name": "Source Prev",
+   "min": 0,
+   "max": 1,
+   "momentary": true,
+   "type": "trigger"
+  },
+  {
+   "key": "w_source_next",
+   "name": "Source Next",
+   "min": 0,
+   "max": 1,
+   "momentary": true,
+   "type": "trigger"
+  },
+  {
+   "key": "w_remember",
+   "name": "Remember",
+   "min": 0,
+   "max": 1,
+   "momentary": true,
+   "type": "trigger"
+  },
+  {
+   "key": "w_keep",
+   "name": "Keep",
+   "min": 0,
+   "max": 1,
+   "momentary": true,
+   "type": "trigger"
+  },
+  {
    "key": "preset",
    "name": "Preset",
    "min": 0,

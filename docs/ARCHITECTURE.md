@@ -43,7 +43,8 @@ flowchart LR
 
 | Path | Contents |
 |---|---|
-| `dsp/engine.*` | The engine: Listen routing from the keys and the harmony to Ground and Bloom, the pedal and Hold, Stop, the mix and sends, Space's decay hold, the output (tilt, volume, the guard, the limiter, Stop's fade), idling. Its header is the best single summary of how the instrument behaves |
+| `dsp/engine.*` | The engine: Listen routing from the keys and the harmony to Ground, Bloom, Air and Weather, Split, the pedal and Hold, Stop, the mix and sends, Echo between the strata and Space, Space's decay hold, Memory's tap and Remember, the output (tilt, volume, the guard, the limiter, Stop's fade), idling. Its header is the best single summary of how the instrument behaves |
+| `dsp/air.*` | Air, the stratum: its generator striking its voices at their samples, the generated notes' pans and the played ones' (by pitch, velocity through Vel), the level, mute and send |
 | `dsp/harmony.*` | The harmony brain: scales, Input mapping, diatonic chords, voicings, voice leading, the tunings, and the harmony memory (keys and their mapped notes, the current chord, the memory's timer). Also the `Listen` modes every stratum shares |
 | `dsp/airgen.*` | Air's generator: when Air plays and which note. The Poisson clock, the candidates and Gravity (never the last two notes, and how that gives way), Random, Rise, Fall, Constellation with Mutate, Echo of the player's notes, the Loop (record, replay with Rubato, overdub, free or synced to the bar), Rubato's velocity; one random sequence that no setting shifts |
 | `dsp/ground.*` | Ground, the drone: five partials on one table, beating in Hz, Gravity, the root's octave and Register, the fade, Body, Breath, Tone, Width |
@@ -55,21 +56,26 @@ flowchart LR
 | `dsp/space.*` | Space: the Reverb as a send / return (wet only), Rise, `silent()` |
 | `dsp/weather.*` | Weather: EffectForce's grain voices over a fixed source, Cloud, Stretch and Stream, the anchor and its drift, To Key, the gate, Duck, the tilt and high-pass, the copies a source change leaves the fading grains |
 | `dsp/grainsrc.*` | A Weather source: 16-bit stereo at three rates, looping through its guard frames (`GrainSource`, which Memory fills too); `buildSource()` makes one of any signal at load time (the loop's crossfade, the level, the decimated levels) |
-| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels |
+| `dsp/fields.*` | Weather's eight procedural fields (Rain on Roof, Light Rain, Wind High, Wind Low, Surf, Stream, Embers, Night), each rendered on the loader thread into a source: a 12 s loop, decorrelated stereo, its pitched parts on C, its peaks under a soft knee |
+| `dsp/memory.*` | Memory: the last 16 s recorded at the grains' three levels into one of two rings; Remember makes that ring Weather's source (its seam faded, its guard written) and records on in the other; pins for Keep |
+| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels; `FrameDecimator`, the same filter over a run of frames, for Memory's recording |
 | `dsp/reverb.*`, `pitch.h` | EffectForce's Reverb: predelay, low cut, diffusion, an 8-line feedback delay network with modulation, freeze and shimmer; the Haze and Abyss modes added. The shimmer's pitch shifter |
-| `dsp/echo.*` | Echo: the Delay as a send / return (wet only), ducking under the send, `silent()`, its defaults (`initEcho()`). Not in the signal path until M2's engine task |
+| `dsp/echo.*` | Echo: the Delay as a send / return (wet only), ducking under the send, `silent()`, its defaults (`initEcho()`), `rest()` (the engine's skipped time, for the duck) |
 | `dsp/delay.*` | EffectForce's Delay: two lines read at free or synced times (Tape glides or Fade crossfades), Stereo, Ping-Pong and Mono, the cuts, drive and limiter in the loop, wow and flutter, ducking; Diffuse added (four allpasses a side in the loop, blended in by the amount) |
 | `dsp/svf.h` | Andrew Simper's trapezoidal state-variable filter (Bloom's filter, Ground's Tone and formants) |
 | `dsp/common.h`, `fastmath.h`, `simd.h` | The rate and the control chunk, `Transport`, smoothing; fast exp2, log2, tan, soft clip and random numbers; four-float vectors (NEON on the Force, GCC's generic vectors on x86, so the tests run the same arithmetic) |
-| `dsp/stages.h` | Stage timers for the profiling build (`-DAF_STAGE_TIMING`): ground, bloom, space, out |
-| `plugin/plugin.cpp` | VST2 glue for an instrument: MIDI with sample offsets, transport, suspend and resume, chunk state, the denormal flush, the CPU meter |
-| `plugin/surface.*` | The touchscreen side: parameter values, stepping, popups, the preset browser, pushes to MPC |
+| `dsp/stages.h` | Stage timers for the profiling build (`-DAF_STAGE_TIMING`): ground, bloom, air, weather, echo, space, out |
+| `plugin/plugin.cpp` | VST2 glue for an instrument: MIDI with sample offsets, transport, suspend and resume, chunk state, the denormal flush, the CPU meter; Weather's source handed to the engine every block on the loader's count, Remember given to the engine and what came of it said, Keep's job on the loader's thread |
+| `plugin/surface.*` | The touchscreen side: parameter values, stepping, popups, the preset browser, pushes to MPC; Weather's source by its key (the Source stepper, Memory's flag for the engine), Remember's and Keep's requests, and what they came to on the status line |
 | `plugin/patch_map.*` | 0..1 ↔ real values, display text, parameters → `Patch` (the levels' audio taper), then the four macros bending that `Patch` (`applyMacros`); every option list checked against the engine's names as it compiles |
 | `plugin/tables.*` | The process-wide `TableSet` and its builder thread: started by the first instance, joined at unload, the tables freed only with no instance alive |
+| `plugin/loader.*` | PolyForce's loader for Weather's sources: a worker thread per instance, the 150 ms debounce, the slots' published pointers and the graveyard that frees a replaced source only when no block can still read it (the rule, in the header, as counters: Weather keeps its source between blocks), jobs on the worker (Keep's write), a tick every pass (the buttons' requests); `SourceCache`, the process-wide LRU of sources (48 MB, never one in use, a file's kept with its size and time). One per instance, its slot Weather's source |
+| `plugin/wav.*` | WAVs in and out for the sources: a streaming, bounded reader (PCM 16/24/32 and float, up to 8 channels, 1 to 384 kHz resampled to 44.1: halfband decimation above 96 kHz, then 32 taps) that refuses what it can't trust, and an atomic, fsync'ed 16-bit writer |
+| `plugin/sources.*` | Weather's sources by key (`builtin:`, `memory:`, `plugin:Weather/`, `ssd:AmbientForce/Weather/`, `ssd:AmbientForce/Memories/`): the listing (scanned at most every 2 s), `loadSource`, the loader's source slot, and Keep (`keepMemory`: the remembered 16 s to `Memory NNN.wav`, numbered past the highest ever used) |
 | `plugin/library.*` | The preset library: scan, categories, favorites, recent |
 | `plugin/presets.*` | Factory and user presets, and a preset's description (`about=`) |
-| `plugin/state.*` | The state text shared by projects and preset files |
-| `plugin/paths.*` | Plugin folder, preset roots, data folder, atomic file writes |
+| `plugin/state.*` | The state text shared by projects and preset files, Weather's source among it by its key |
+| `plugin/paths.*` | Plugin folder, preset roots, source roots (`AF_SOURCE_ROOTS`), data folder, atomic file writes |
 | `plugin/trace.*` | Device diagnostics while `/tmp/ambientforce.trace` exists: parameter sets, suspends and resumes, MIDI, table build times ([Building](BUILDING.md#diagnostics-on-the-device)) |
 | `plugin/vst2.h` | A hand-written slice of the VST2 ABI (no Steinberg SDK) |
 | `plugin/exports.map`, `exports_stages.map` | Linker version scripts: only `VSTPluginMain` exported (plus `AmbientForceStageTimes` in the profiling build) |
@@ -77,13 +83,11 @@ flowchart LR
 | `surface/skin_polish.py` | Redraws the knob strips, trigger buttons and stepper arrows after the skin generator; makes each group's pages sub-pages of one tab |
 | `surface/fonts/` | Titillium Web (SIL OFL), the skin's font; the layout check measures text with its advance table |
 | `presets/Factory/` | Factory presets: `NN_Category/NN_Name.afp`, a folder per browser category |
-| `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `airgen_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
-| `test/harmony_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `reverb_test.cpp`, `weather_test.cpp`, `engine_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/plugin_test.cpp` | The suite's `main`; the plugin through its VST2 entry points: basics, getters, playing, Stop and suspend, the status line's help and descriptions, MIDI mapping, stress; Weather's source (the stepper, Memory, Remember, Keep, every block on the loader's count, instances closed mid-load, nothing allocated in `processReplacing`) |
+| `test/harmony_test.cpp`, `airgen_test.cpp`, `engine_test.cpp`, `tables_test.cpp`, `lifeosc_test.cpp`, `ground_test.cpp`, `bloom_test.cpp`, `airvoices_test.cpp`, `reverb_test.cpp`, `echo_test.cpp`, `weather_test.cpp`, `fields_test.cpp` | Each dsp part on its own ([Building](BUILDING.md#tests)) |
+| `test/sources_test.cpp` | Weather's sources on the plugin side ([Building](BUILDING.md#tests)): WAVs, the loader and its graveyard (a model of its rule over every interleaving), the cache, the keys, Keep |
 | `test/params_test.cpp`, `preset_test.cpp` | The parameters against the engine, the help lines, the macros; saved state, presets, the browser, stepping, the macros' levels |
-| `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters; the `main` of `make test-module` |
+| `test/host.h`, `signal.h`, `check.h`, `module_main.cpp` | A fake MPC host; signals, measurements and the tests' FFT; the check counters and the allocation counter (under ASan, one hook for every suite); the `main` of `make test-module` |
 | `tools/bench.cpp` | `afbench`, the CPU bench: `dlopen()`s the `.so` like MPC, waits for the tables, and times every block of five cases |
 | `tools/pgo_train.cpp` | The trainer for the profile-guided build (runs under `qemu-arm`): every mode, then every factory preset |
 | `tools/phrase.h` | The demo phrase (two held chords and their release, in each preset's own key) and the loudness the presets are matched by; `demos` and `test/preset_test.cpp` share it |
@@ -150,8 +154,19 @@ pans glide in a straight line over 10 ms from the control step that finds them c
 sample carried from one piece to the next, so a MIDI event that cuts a piece short never makes one
 jump.
 
-**The output:** dry + return × wet → tilt → make-up and volume → the non-finite guard → limiter →
-Stop's fade.
+**M2's strata and Echo** (`dsp/engine.h` has the routing): Air and Weather render into the buses by
+their Listen and Split, each taking its own pan and Echo send in the same pass over its output.
+Every stratum's dry (after its level, before its pan) goes into the Echo bus at its Echo send,
+gliding 10 ms; Echo runs while a sounding stratum sends to it or it isn't `silent()`, and its return
+goes into the mix and, at Echo Space, into Space's send. Sends to Echo are 0 where nobody would hear
+it, Air's and Weather's Space sends where Space's return is 0. Memory records its tap (the strata's
+dry, or the dry and the returns before the tilt) straight from the bus, after Weather, and goes on
+recording across Stop and a long suspend, sealed at the sleep (what it cut off fades out over 5 ms
+there, what the wake records fades in: a dip, never a step); the guard and CC 120 start its ring
+afresh. All of it is off in Init, which plays 0.0.2's samples.
+
+**The output:** dry + Echo's and Space's returns → tilt → make-up and volume → the non-finite guard →
+limiter → Stop's fade.
 
 - **Tilt**: one first-order shelf pivoting at 800 Hz, ±6 dB at the ends, 0 dB at the pivot;
   bypassed at 0.
@@ -222,8 +237,9 @@ step and the filters' coefficients glide per sample (the cutoffs evenly in octav
 steps. Bloom also ends a step where a strummed note's start falls, so each note starts on its own
 sample. Space runs the Reverb in its own 32-sample chunks.
 
-**Idle.** Asleep, or awake with nothing to hear (Ground not audible, Bloom with no voice in use)
-and Space `silent()`, `render()` writes zeros and runs no DSP. Space can stay unsilent for minutes
+**Idle.** Asleep, or awake with nothing to hear (Ground not audible, Bloom with no voice in use, Air
+with no voice ringing and its generator not due to strike, Weather not audible), Echo and Space
+`silent()`, `render()` writes zeros and runs no DSP (Memory records nothing then). Space can stay unsilent for minutes
 (Abyss at Decay 30), and a change that lengthens its reach can make it unsilent again with no
 input; it then simply runs that much longer. Once silent, the Reverb's predelay forgets what came
 in before, so a longer predelay plays nothing from before the silence, and nothing the network
@@ -244,6 +260,7 @@ run for days.
 | **Audio** (one of MPC's audio workers; which one changes between calls, instances run concurrently) | `processReplacing`: MIDI, the engine, the CPU meter, every call back into MPC |
 | **UI** (MPC's UI side) | Parameters, display text, saved state (chunks), the browser, preset loads, suspend and resume |
 | **Table builder** (one per process, started by the first instance) | Builds the twelve tables in browser order and publishes each one |
+| **Loader** (one per instance, `plugin/loader.h`) | Makes Weather's sources (a field rendered, a WAV read) and publishes each; Keep's write; the Source stepper's text when a load lands; every pass (about 20 ms) the requests Remember and Keep left |
 
 - Nothing on the audio thread allocates, locks or throws. Every `dsp/` class allocates in its
   constructor (Space's Reverb buffers, about 870 KB); `render()` and `process()` never do. The
@@ -254,6 +271,11 @@ run for days.
   written is never played); the engine gets a new `Patch` only when a value changed.
 - Suspend and resume reach the audio thread as times through lock-free 64-bit atomics; the engine
   decides there whether it was a Stop or a reset.
+- Weather's source reaches the audio thread as one pointer, read once a block between the loader's
+  `blockStart()` and `blockDone(holds)` (atomics; `plugin/loader.h` has the rule that frees a
+  replaced source only when no block can still read it). Remember's and Keep's buttons leave
+  atomic requests: the audio thread takes Remember (the engine's Memory is its alone), the loader's
+  thread Keep (a file written, never on the audio or UI thread).
 - Denormals are flushed to zero while a block renders (FZ on ARM, FTZ and DAZ on x86), for the
   plugin's own arithmetic only: MPC's callbacks run in its own FP mode.
 - The trace never writes from the audio thread (it locks, stats a file and allocates). The audio
@@ -294,7 +316,8 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
   block (round-robin), a display update for changed texts (the status line's among them) at most
   every 4 blocks, plus the CPU meter's at most twice a second.
 - The status line (parameter 0) is the plugin's own text: the CPU meter, or for 4 s after a move the
-  control's help line, for 6 s after a preset load its description. The UI thread only notes the
+  control's help line, for 6 s after a preset load its description, for 6 s after a Remember or a
+  Keep what came of it (said in atomics, by the audio thread or the loader's). The UI thread only notes the
   last move (which control, with a count, in one atomic; a set that moves the value by no more than
   MPC's own rounding to 1/1000 is no move) and
   counts preset loads; `processReplacing` times both on its sample count, decides which line shows
@@ -326,16 +349,19 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 ## Parameters and saved state
 
 - **Parameters** may still change during 0.x (the previews); from v0.1 they are **append-only**:
-  MPC projects store values by index. Sound parameters (kind `synth`, 86 of them with the volume, the
-  four macros and the seven of the free or synced cycles, which come after Tilt in that order) are
-  saved and automatable; the surface's own values (the preset stepper, tiles, popup flags) are not.
-  151 parameters in all.
+  MPC projects store values by index. Sound parameters (kind `synth`, 144 of them: 0.0.2's 86 with
+  the volume, the four macros and the seven of the free or synced cycles, which come after Tilt in
+  that order, then M2's 58) are saved and automatable; the surface's own values (the preset stepper,
+  Weather's Source stepper, Remember and Keep, tiles, popup flags) are not. 218 parameters in all.
 - **Saved state** (projects and `.afp` preset files) is the text format `ambientforce 1`:
-  `key=value` lines of *real* values (Hz, seconds, dB, an option's index), plus, in a project, the
-  preset it came from. Ranges can change without remapping saved projects or presets. Options are
+  `key=value` lines of *real* values (Hz, seconds, dB, an option's index), then Weather's source by
+  its key (`w_source=builtin:Surf`, never an index), plus, in a project, the preset it came from.
+  Ranges can change without remapping saved projects or presets. Options are
   saved by their index, so from v0.1 an option list may only grow at its end, as the parameter list
-  does. A preset starts from the defaults (what it doesn't name is the default); a project changes
-  only what it lists. A preset file may also carry `about=`, its description for the status line:
+  does. A preset starts from the defaults (what it doesn't name is the default, Weather's source
+  too); a project changes only what it lists (one without a source keeps the source playing). A
+  key that names nothing is kept and shows MISSING. A factory preset may name a field or `memory:`
+  (`surface.py` checks). A preset file may also carry `about=`, its description for the status line:
   not state, skipped when loading, never saved.
 - **Defaults**: every default and range in `surface.py` is the engine's own (`dsp/engine.h`'s
   `Patch` and the headers it holds), so Init plays what a `Patch{}` plays; `test/params_test.cpp`

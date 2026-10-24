@@ -1,4 +1,4 @@
-// From SubForce plugin/paths.h (8846421), namespace sf -> af, unchanged otherwise.
+// From SubForce plugin/paths.h (8846421), namespace sf -> af; sourceRoots() added for Weather's sources.
 #pragma once
 // Where AmbientForce finds its files on the device, with test overrides.
 //
@@ -8,6 +8,11 @@
 //   presetRoots() preset folders, in order: <plugin dir>/Presets ("plugin"), then the SSD
 //                 /media/AkaiForce/AmbientForce Presets ("ssd"). A missing folder simply contributes
 //                 nothing. AF_PRESET_ROOTS (colon-separated) replaces both.
+//   sourceRoots() Weather's sources (plugin/sources.h), in order: the plugin folder itself ("plugin";
+//                 its WAVs are in Weather/ under it) and the SSD's root /media/AkaiForce ("ssd"; they
+//                 are in AmbientForce/Weather/, and Keep writes to AmbientForce/Memories/). The roots
+//                 are the bases, the keys name the folders in them. A missing root simply contributes
+//                 nothing. AF_SOURCE_ROOTS (colon-separated, plugin then ssd) replaces both.
 //   dataDir()     the presets' favorites and recent lists: the plugin folder. AF_DATA_DIR
 //                 overrides; "" = nothing is persisted. User presets go to the first preset root.
 #include <string>
@@ -22,6 +27,7 @@ struct Root {
 
 std::string pluginDir();
 std::vector<Root> presetRoots();
+std::vector<Root> sourceRoots();
 std::string dataDir();
 
 // "plugin:User/User 001.afp" + roots -> "<dir of plugin root>/User/User 001.afp"; "" if the label is unknown.
