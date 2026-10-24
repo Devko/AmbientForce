@@ -58,8 +58,10 @@ on branch `m2`.
     re-reviewed.
   - **Air, Weather, Echo and Memory sound in the engine and have their pages.** Weather's Source
     picks a field, a WAV or Memory; Remember and Keep work (Task 10).
-  - Init and the 28 factory presets still play bit for bit as 0.0.2; their fingerprints are pinned
-    in the tests.
+  - Init and the 28 factory presets of 0.0.2 still play bit for bit as 0.0.2, but for Sine Garden
+    and Glass Tines: Bloom's FM DC blocker (2026-10-24, the author's decision) took their DC offset
+    off (−36 and −58 dBFS by the soak's measure, held 180 s; now −98 and −105) and moved nothing
+    else. The fingerprints are pinned in the tests, re-taken then.
   - Task 10's fix round passed its re-review on 2026-10-09 with no must-fix. Its one should-fix, a
     Remember racing `updateMemory()`, is fixed in `d1ccf43`. The plan's As-built block has the rest.
 - **The author's Force** (`local.mk`'s `FORCE`): its address changes; it was 192.168.1.113 on
@@ -71,9 +73,9 @@ on branch `m2`.
   - `make test-arm` 8959, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 8947;
   - `make soak HOURS=1`: peak −1.01 dBFS, nothing non-finite, no guard trips;
   - `make arm-icount`: every case as in PERFORMANCE.md's M2 table.
-- **Budget** (`make arm-icount`, the counting qemu): M2's worst case is 528.7k ARM instructions a
-  block, about **14.2% of p99** at 0.0268 points a thousand (device: pending). The gate is 15%, and
-  the plan's caps begin at 14.5%.
+- **Budget** (`make arm-icount`, the counting qemu): M2's worst case is 529.8k ARM instructions a
+  block (528.7k before Bloom's FM DC blocker), about **14.2% of p99** at 0.0268 points a thousand
+  (device: pending). The gate is 15%, and the plan's caps begin at 14.5%.
   - Air is 35.9k against its 32k share, Echo 32.4k against 28k, Weather 60.9k against 60k.
   - M3 has about 0.8 points left to the gate.
 - **Device bench** (M1.1, MPC OS 3.9, PGO build), p99 of the 2902 µs block: idle 0.13%, Init chord
