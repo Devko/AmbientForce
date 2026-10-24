@@ -596,7 +596,9 @@ std::vector<MacroSpec> macroSpecs() {
         {P_M_MOTION, {{"g.sway", 1, 0, 1}, {"b.sway", 1, 0, 1}, {"g.swayHz", 1, lo(P_G_SWAYRATE), hi(P_G_SWAYRATE)},
                       {"b.swayHz", 1, lo(P_B_SWAYRATE), hi(P_B_SWAYRATE)}, {"b.smear", 1, 0, 1}, {"g.breath", 1, 0, 1},
                       {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}, {"g.breathHz", 1, lo(P_G_BREATHRATE), hi(P_G_BREATHRATE)},
-                      {"a.rubato", 1, 0, 1}, {"a.mutate", 1, 0, 1}, {"w.drift", 1, 0, 1}, {"e.wow", 1, 0, 1}}},
+                      {"a.rubato", 1, 0, 1}, {"a.mutate", 1, 0, 1}, {"w.drift", 1, 0, 1}, {"e.wow", 1, 0, 1},
+                      // moving only, one way (down): the volume, as thick Density's
+                      {"volumeDb", -1, lo(P_VOLUME), hi(P_VOLUME)}}},
         {P_M_GLOW, {{"g.cutoffHz", 1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)}, {"b.cutoffHz", 1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)},
                     {"tilt", 1, lo(P_O_TILT), hi(P_O_TILT)}, {"r.dampHz", 1, lo(P_S_DAMP), hi(P_S_DAMP)},
                     {"r.shimmer", 1, 0, 1}, {"g.body", -1, 0, 1}, {"volumeDb", 1, lo(P_VOLUME), hi(P_VOLUME)},
@@ -832,6 +834,11 @@ void testMacros() {
               near(mMove.weather.drift, 0.4f + 0.6f * 0.7f) && near(mMove.echo.delay.wow, 0.3f + 0.7f * 0.5f));
         CHECK(mStill.air.gen.rubato == 0.0f && mStill.air.gen.mutate == 0.0f && mStill.weather.drift == 0.0f &&
               mStill.echo.delay.wow == 0.0f);
+        // The volume: down 1.5 dB at +1 (linear in between), moving only; still leaves it. (The faster, deeper breath
+        // swells Ground to its top inside a phrase: Wind over Fifths and Abyssal Plain put the limiter on 1% to 4% of
+        // it at Motion +100% without.)
+        CHECK(near(mMove.volumeDb, mid.volumeDb - 1.5f) && near(bent(af::P_M_MOTION, 0.5f).volumeDb, mid.volumeDb - 0.75f) &&
+              mStill.volumeDb == mid.volumeDb && bent(af::P_M_MOTION, -0.5f).volumeDb == mid.volumeDb);
         // Glow: Air Tone x 2^(2 g), Weather Tilt + 0.3 g, Echo High Cut x 2^g.
         const af::Patch gBright = bent(af::P_M_GLOW, 1.0f), gDark = bent(af::P_M_GLOW, -1.0f);
         CHECK(near(gBright.air.voice.toneHz, 12000.0f) && near(gBright.weather.tilt, 0.1f) && near(gBright.echo.delay.highCutHz, 9000.0f));

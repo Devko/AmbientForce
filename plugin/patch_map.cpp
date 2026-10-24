@@ -240,7 +240,7 @@ Macros macrosFromParams(const float* norm) {
 // 0.0.2, which has Air, Weather and Echo off, sounds the same at every macro position as it did. (Air Rubato
 // and Mutate, Weather Drift and Echo Wow are depths and do move where nothing plays: nothing is heard of it.)
 // Where two macros share a field (Horizon and Glow both move the tones) they apply one after the other, each
-// clamping. Far steps the dry back, and dark and thick take a little off the volume, so the level stays near
+// clamping. Far steps the dry back, and dark, thick and moving take a little off the volume, so the level stays near
 // the preset's (test/preset_test.cpp: none leans on the limiter or drops far).
 namespace {
 
@@ -285,6 +285,7 @@ constexpr float kMotionRubatoUp = 0.6f;     // Air Rubato toward 1 by 60% (towar
 constexpr float kMotionMutateUp = 0.5f;     // Air Mutate toward 1 by 50% (toward 0 still)
 constexpr float kMotionDriftUp = 0.7f;      // Weather Drift toward 1 by 70% (toward 0 still)
 constexpr float kMotionWowUp = 0.5f;        // Echo Wow toward 1 by 50% (toward 0 still)
+constexpr float kMotionTrimDb = 1.5f;       // moving only: the volume down 1.5 dB at +1 (the faster, deeper breath swells to its top)
 // Glow, dark (-1) to bright (+1).
 constexpr float kGlowToneOct = 2.0f;        // both Tones x 2^(2 g): two octaves either way (Bloom's on LP only)
 constexpr float kGlowTilt = 0.3f;           // Tilt + 0.3 g
@@ -355,6 +356,7 @@ void applyMacros(Patch& p, const Macros& m) {
         a.gen.mutate = toward(a.gen.mutate, x, 0.0f, 1.0f, 1.0f, kMotionMutateUp);
         w.drift = toward(w.drift, x, 0.0f, 1.0f, 1.0f, kMotionDriftUp);
         e.wow = toward(e.wow, x, 0.0f, 1.0f, 1.0f, kMotionWowUp);
+        trim(p, -kMotionTrimDb * std::max(x, 0.0f));
     }
     if (m.glow != 0.0f) {
         const float x = std::clamp(m.glow, -1.0f, 1.0f);

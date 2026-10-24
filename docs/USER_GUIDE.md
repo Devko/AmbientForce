@@ -159,7 +159,7 @@ What each one moves (h, m, g, d: the macro from −1 to +1):
 | Macro | Moves |
 |---|---|
 | **Horizon** | Ground Space and Bloom Space × 2^h near (to −6 dB), × 2^(0.5 h) far (to +3 dB); Ground Level and Bloom Level far only, × 2^(−0.5 h) (to −3 dB); Space Decay × 2^(1.3 h) (0.41× to 2.46×); Pre-Delay + 50 ms × h; Ground Tone, Bloom Tone (on LP), Air Tone, Echo High Cut and Space Damp × 2^(−0.5 h) (half an octave brighter near, darker far); Space Rise toward 0 near, 60% of the way to 100% far; Air Space and Wthr Space like Ground Space and Bloom Space; the four Echo sends (Ground Echo, Bloom Echo, Air Echo, Weather Echo) by the same octaves as the Space sends; Air Level and Wthr Level far only, × 2^(−0.5 h) (to −3 dB), like the other levels |
-| **Motion** | Ground Sway and Bloom Sway toward 0, or 80% of the way to 100%; Ground Rate, Bloom Rate and Breath Rate × 2^(2 m) (a quarter to four times as fast; a cycle synced to the bar keeps its division); Bloom Smear toward 0, or 60% of the way to 100%; Gnd Breath toward 0, or 70% of the way to 100%; Ground Beat to 0 still, × 2^(1.5 m) moving (at most 3 Hz); Air Rubato toward 0, or 60% of the way to 100%; Air Mutate toward 0, or 50%; Weather Drift toward 0, or 70%; Echo Wow toward 0, or 50% |
+| **Motion** | Ground Sway and Bloom Sway toward 0, or 80% of the way to 100%; Ground Rate, Bloom Rate and Breath Rate × 2^(2 m) (a quarter to four times as fast; a cycle synced to the bar keeps its division); Bloom Smear toward 0, or 60% of the way to 100%; Gnd Breath toward 0, or 70% of the way to 100%; Ground Beat to 0 still, × 2^(1.5 m) moving (at most 3 Hz); Air Rubato toward 0, or 60% of the way to 100%; Air Mutate toward 0, or 50%; Weather Drift toward 0, or 70%; Echo Wow toward 0, or 50%; the volume down 1.5 dB × m, moving only |
 | **Glow** | Ground Tone and Bloom Tone × 2^(2 g) (two octaves either way; Bloom Tone only on LP: on BP or HP it picks a band, not a brightness); Tilt + 30 points × g; Space Damp × 2^g; Shimmer + 35 points × g, bright only (not with Shimmer Int at −12, which darkens); Ground Body × 2^(−g) (twice as much, darker vowels, toward dark; half toward bright); the volume down 1.5 dB × (−g), dark only; Air Tone × 2^(2 g) (two octaves either way); Weather Tilt + 30 points × g; Echo High Cut × 2^g |
 | **Density** | Ground Sub, Gnd Octave and Ground Color × (1 + d) sparse (to 0), × 2^d thick (Root and Fifth stay); Bloom Detune and Bloom Breath likewise (no detune: unison 2 plays as one voice); Strum × 2^(−d) + 0.6 s × (−d) sparse (one note after another even from 0), × (1 − 0.75 d) thick (a quarter); the volume down 1 dB × d, thick only; Air Density × (1 + d) sparse (under 0.05 a minute is off, as the knob reads it), × 2^d thick (at most 60 a minute); Grains likewise, rounded, 1 to 16; Wthr Level × √(grains after ÷ grains before) sparse only, in Cloud and Stretch, so each grain left is as loud as one of the preset's own (6 grains down to 1 is 7.8 dB down, not a single grain as loud as the whole cloud); Stream plays two grains whatever Grains says, and keeps its level |
 
@@ -167,12 +167,13 @@ What each one moves (h, m, g, d: the macro from −1 to +1):
   send at 0, a partial at 0, Body off, no Beat, Air or Weather at level 0, an Echo send at 0),
   Shimmer aside: Glow's bright half adds one (unless the preset's shimmer goes down). So a macro
   never brings Air, Weather or the echo into a preset that doesn't use them: the factory presets of
-  0.0.2 sound the same at every macro position as they did.
+  0.0.2 sound the same at every macro position as they did, except that Motion toward +100% now takes
+  the volume down 1.5 dB.
 - Two macros can move one control (Horizon and Glow both move the Tones, Echo High Cut and Space Damp); each adds
   its share. Bloom Tone moves only on Bloom Filter LP: on BP or HP it picks a band (Overtone Choir's
   whistle), and the macros leave it there.
 - The level stays near the preset's: at either end of a macro a preset moves by a few LU at most
-  (far is up to about 4 LU quieter, the dry stepping back; dark and thick are trimmed by the
+  (far is up to about 4 LU quieter, the dry stepping back; dark, thick and moving are trimmed by the
   volume), except where Horizon meets a preset that is nearly all reverb: Frozen Sky drops 8.0 LU
   near (its sends down) and 7.1 LU far. No macro at either end drives a factory preset into the
   limiter.
