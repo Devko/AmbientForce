@@ -66,11 +66,13 @@ on branch `m2`.
   2026-10-24. It runs a PGO build of `m2` with Task 12 and the Q-Link fix, packaged as 0.0.3 (`.so`
   md5 `383d5bbd…`), for the author to play. v0.0.2's `.so` is kept on the author's machine to go back
   to.
-- **Tests on `m2`** at `ab19427` (Task 10 merged), all passing:
-  - `make test` 9137, the full macro sweep 9161;
-  - `make test-arm` 8959, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 8947;
-  - `make soak HOURS=1`: peak −1.01 dBFS, nothing non-finite, no guard trips;
-  - `make arm-icount`: every case as in PERFORMANCE.md's M2 table.
+- **Tests on `m2`** at `d0eda13` (Task 12, the Q-Link fix and the fields' DC fix merged), all passing:
+  - `make test` 9447, the full macro sweep 9495 over 52 presets;
+  - `make test-arm` 9125, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 9113;
+  - `make soak HOURS=1`, seeds 1 and 2: no window's DC above −60 dBFS. Before the fields' fix,
+    Abyssal Plain's Surf took seed 1's last window to −45 dBFS.
+  - `make arm-icount`: every case as in PERFORMANCE.md's M2 table. M1's "worst" is 399.5k (was
+    399.4k).
 - **Budget** (`make arm-icount`, the counting qemu): M2's worst case is 528.7k ARM instructions a
   block, about **14.2% of p99** at 0.0268 points a thousand (device: pending). The gate is 15%, and
   the plan's caps begin at 14.5%.
