@@ -1,6 +1,6 @@
 ambientforce 1
 about=a slow summer night, crickets and glass
-volume=1.8
+volume=-0.2
 h_key=0
 h_scale=3
 h_chord=3
@@ -29,7 +29,7 @@ a_density=3
 a_pattern=0
 a_reg=2
 a_range=1.5
-w_level=0.4
+w_level=0.5
 w_mode=1
 w_drift=0.2
 w_spray=0.2

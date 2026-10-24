@@ -1,6 +1,6 @@
 ambientforce 1
 about=a luminous stream, glinting an octave up
-volume=-4.1
+volume=-4.6
 h_key=5
 h_scale=0
 h_chord=3
@@ -28,7 +28,7 @@ e_div=9
 e_feedback=0.3
 e_highcut=9000
 e_diffuse=0.5
-w_level=0.5
+w_level=0.55
 w_mode=0
 w_drift=0.4
 w_spray=0.5
