@@ -171,7 +171,7 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
   - Horizon by ear on Horizon Line, Snow Constellation and Kalimba Loop, with Cave Kalimba as the
     dark control.
 - **The Source stepper:** one item per detent; "Surf ..." becoming "Surf"; load times in the trace
-  (a field takes 202–359M ARM instructions to build).
+  (a field takes 202–368M ARM instructions to build).
 - **ROADMAP's Phase 0 list:** what Stop sends to an instrument, CC 64 and the pad latch, MIDI
   channels, two instances at once.
 - **Bench and release:** `make bench-device` on M2, and `tested.json` for v0.0.2 (from CI's
