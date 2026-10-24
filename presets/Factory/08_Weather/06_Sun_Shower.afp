@@ -1,6 +1,6 @@
 ambientforce 1
 about=bright rain falls in each chord, bars rising
-volume=-3.5
+volume=-4.6
 h_key=10
 h_scale=3
 h_chord=5
@@ -36,7 +36,7 @@ a_range=2
 a_gravity=1
 a_echo=0.2
 w_listen=1
-w_level=0.42
+w_level=0.55
 w_mode=0
 w_drift=0.5
 w_spray=0.6

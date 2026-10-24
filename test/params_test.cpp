@@ -596,7 +596,9 @@ std::vector<MacroSpec> macroSpecs() {
         {P_M_MOTION, {{"g.sway", 1, 0, 1}, {"b.sway", 1, 0, 1}, {"g.swayHz", 1, lo(P_G_SWAYRATE), hi(P_G_SWAYRATE)},
                       {"b.swayHz", 1, lo(P_B_SWAYRATE), hi(P_B_SWAYRATE)}, {"b.smear", 1, 0, 1}, {"g.breath", 1, 0, 1},
                       {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}, {"g.breathHz", 1, lo(P_G_BREATHRATE), hi(P_G_BREATHRATE)},
-                      {"a.rubato", 1, 0, 1}, {"a.mutate", 1, 0, 1}, {"w.drift", 1, 0, 1}, {"e.wow", 1, 0, 1}}},
+                      {"a.rubato", 1, 0, 1}, {"a.mutate", 1, 0, 1}, {"w.drift", 1, 0, 1}, {"e.wow", 1, 0, 1},
+                      // moving only, one way (down): the volume, as thick Density's
+                      {"volumeDb", -1, lo(P_VOLUME), hi(P_VOLUME)}}},
         {P_M_GLOW, {{"g.cutoffHz", 1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)}, {"b.cutoffHz", 1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)},
                     {"tilt", 1, lo(P_O_TILT), hi(P_O_TILT)}, {"r.dampHz", 1, lo(P_S_DAMP), hi(P_S_DAMP)},
                     {"r.shimmer", 1, 0, 1}, {"g.body", -1, 0, 1}, {"volumeDb", 1, lo(P_VOLUME), hi(P_VOLUME)},
@@ -605,7 +607,9 @@ std::vector<MacroSpec> macroSpecs() {
         {P_M_DENSITY, {{"g.sub", 1, 0, 1}, {"g.octave", 1, 0, 1}, {"g.color", 1, 0, 1},
                        {"b.detuneCents", 1, lo(P_B_DETUNE), hi(P_B_DETUNE)}, {"b.breath", 1, 0, 1},
                        {"strumS", -1, lo(P_H_STRUM), hi(P_H_STRUM)}, {"volumeDb", -1, lo(P_VOLUME), hi(P_VOLUME)},
-                       {"a.density", 1, lo(P_A_DENSITY), hi(P_A_DENSITY)}, {"w.grains", 1, lo(P_W_GRAINS), hi(P_W_GRAINS)}}},
+                       {"a.density", 1, lo(P_A_DENSITY), hi(P_A_DENSITY)}, {"w.grains", 1, lo(P_W_GRAINS), hi(P_W_GRAINS)},
+                       // sparse only, with the grains in Cloud and Stretch: the level falls with the count
+                       {"w.level", 1, 0, 1}}},
     };
 }
 
@@ -830,6 +834,11 @@ void testMacros() {
               near(mMove.weather.drift, 0.4f + 0.6f * 0.7f) && near(mMove.echo.delay.wow, 0.3f + 0.7f * 0.5f));
         CHECK(mStill.air.gen.rubato == 0.0f && mStill.air.gen.mutate == 0.0f && mStill.weather.drift == 0.0f &&
               mStill.echo.delay.wow == 0.0f);
+        // The volume: down 1.5 dB at +1 (linear in between), moving only; still leaves it. (The faster, deeper breath
+        // swells Ground to its top inside a phrase: Wind over Fifths and Abyssal Plain put the limiter on 1% to 4% of
+        // it at Motion +100% without.)
+        CHECK(near(mMove.volumeDb, mid.volumeDb - 1.5f) && near(bent(af::P_M_MOTION, 0.5f).volumeDb, mid.volumeDb - 0.75f) &&
+              mStill.volumeDb == mid.volumeDb && bent(af::P_M_MOTION, -0.5f).volumeDb == mid.volumeDb);
         // Glow: Air Tone x 2^(2 g), Weather Tilt + 0.3 g, Echo High Cut x 2^g.
         const af::Patch gBright = bent(af::P_M_GLOW, 1.0f), gDark = bent(af::P_M_GLOW, -1.0f);
         CHECK(near(gBright.air.voice.toneHz, 12000.0f) && near(gBright.weather.tilt, 0.1f) && near(gBright.echo.delay.highCutHz, 9000.0f));
@@ -841,6 +850,36 @@ void testMacros() {
         // Grains are rounded to the nearest: 6 x 2^0.4 = 7.92 is 8 (a cut-off makes 7), 6 x (1 - 0.3) = 4.2 is 4 (a
         // ceiling makes 5).
         CHECK(bent(af::P_M_DENSITY, 0.4f).weather.grains == 8 && bent(af::P_M_DENSITY, -0.3f).weather.grains == 4);
+        // Weather's level falls with the grains (Cloud and Stretch keep their loudness at any count, so the grains left
+        // would be as loud as the whole cloud): x sqrt(after / before), the rounded counts, sparse only. Grains 6 to 1 is
+        // x sqrt(1/6), 6 to 3 is x sqrt(1/2), 6 to 4 (at -30%, 4.2 rounded) is x sqrt(2/3), not sqrt(0.7). Thick leaves it
+        // bit for bit, as does a count already at 1 (the low preset: 1 to 1).
+        CHECK(near(dSparse.weather.level, mid.weather.level * std::sqrt(1.0f / 6.0f)) &&
+              near(dHalf.weather.level, mid.weather.level * std::sqrt(0.5f)) &&
+              near(bent(af::P_M_DENSITY, -0.3f).weather.level, mid.weather.level * std::sqrt(4.0f / 6.0f)));
+        CHECK(dThick.weather.level == mid.weather.level && bent(af::P_M_DENSITY, 0.4f).weather.level == mid.weather.level);
+        {
+            const af::Patch ones = af::patchFromKnobs(on[2].data());
+            af::Patch p = ones;
+            af::applyMacros(p, only(af::P_M_DENSITY, -1.0f));
+            CHECK(ones.weather.grains == 1 && p.weather.grains == 1 && p.weather.level == ones.weather.level);
+        }
+        // Stretch takes the count into its gain as Cloud does (weather.h: at Cloud's level), so it falls the same;
+        // Stream's two grains are its own whatever Grains says, so its level stays where the preset has it. A level
+        // at 0 stays 0 in all three.
+        for (int mode : {af::WM_CLOUD, af::WM_STRETCH, af::WM_STREAM}) {
+            af::Patch p = mid, off = mid;
+            p.weather.mode = off.weather.mode = mode;
+            off.weather.level = 0.0f;
+            af::applyMacros(p, only(af::P_M_DENSITY, -1.0f));
+            af::applyMacros(off, only(af::P_M_DENSITY, -1.0f));
+            const bool falls = mode != af::WM_STREAM;
+            const bool good = (falls ? near(p.weather.level, mid.weather.level * std::sqrt(1.0f / 6.0f))
+                                     : p.weather.level == mid.weather.level) &&
+                              p.weather.grains == 1 && off.weather.level == 0.0f;
+            if (!good) std::printf("  Density -100%% on %s: level %g from %g\n", af::kWeatherModeNames[mode], p.weather.level, mid.weather.level);
+            CHECK(good);
+        }
         // Under the knob's "off" mark Air Density is off, as the knob reads: Init's 12 a minute at -99.8% would be 0.024 a
         // minute, a note every 40 minutes that keeps Air awake; at -99% it is still 0.12.
         {
