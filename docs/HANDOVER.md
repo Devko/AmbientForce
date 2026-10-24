@@ -1,4 +1,4 @@
-# Handover, 2026-10-09
+# Handover, 2026-10-24
 
 This is for an agent continuing AmbientForce without the people and the machine it was built on.
 Read it top to bottom before touching anything.
@@ -31,8 +31,8 @@ on branch `m2`.
 6. [`docs/plans/2026-10-08-m2-presets-proposal.md`](plans/2026-10-08-m2-presets-proposal.md):
    Task 12's 24 presets, **approved by the author**.
 7. [`docs/USER_GUIDE.md`](USER_GUIDE.md) and [`docs/PERFORMANCE.md`](PERFORMANCE.md) as needed.
-8. Devko/AmbientForce#2 (`m2` → `main`, merged on 2026-10-09): M2's status through Task 11, task
-   by task.
+8. Devko/AmbientForce#2 (`m2` → `main`, merged on 2026-10-24): M2's status through Task 11, task
+   by task. A new draft PR (`m2` → `main`) tracks Tasks 12 and 13.
 
 ## Where things stand
 
@@ -42,10 +42,18 @@ on branch `m2`.
   - the M2 plan and M2's Tasks 1–5 as standalone modules;
   - the fix for a Space ghost that 0.0.2 would otherwise have shipped with.
 
-  **On 2026-10-09 the author had `m2` merged into `main`**: `main` now also has everything below
+  **On 2026-10-24 the author had `m2` merged into `main`**: `main` now also has everything below
   through Task 11. It is unreleased; 0.0.3 comes after Task 13.
-- **`m2`** (pushed) has M2's Tasks 1–11 merged, plus the approved presets proposal. Tasks 12 and 13
-  go on `m2`, with a new draft PR.
+- **`m2`** (pushed) has M2's Tasks 1–12 merged. Task 13 goes on `m2` too.
+  - **Task 12 (2026-10-24):** the 24 approved presets, 52 factory presets in all. Three macro changes
+    the author decided: Horizon far darkens Air and Echo, sparse Density quiets Weather with its
+    grains, and Motion toward +1 trims the volume 1.5 dB. The plan's Task 12 As-built block has every
+    departure from the recipes and the measurements.
+  - **The Q-Link fix** from the siblings (sd88me/mpc-vst-plugins #486–#489, 2026-10-24):
+    - at most one `audioMasterUpdateDisplay` per 50 ms (`Surface::kTextGap`), with the CPU meter
+      going through it;
+    - `surface/params.lock`, which pins the parameters' order. Task 10 had moved the preset stepper
+      and browser after M2's parameters, so the lock starts from M2's order (CHANGELOG, Unreleased).
   - Every task was reviewed twice, once for the spec and once adversarially, and every fix was
     re-reviewed.
   - **Air, Weather, Echo and Memory sound in the engine and have their pages.** Weather's Source
@@ -54,9 +62,10 @@ on branch `m2`.
     in the tests.
   - Task 10's fix round passed its re-review on 2026-10-09 with no must-fix. Its one should-fix, a
     Remember racing `updateMemory()`, is fixed in `d1ccf43`. The plan's As-built block has the rest.
-- **The author's Force** (`local.mk`'s `FORCE`; its address changes, 192.168.1.133 on 2026-10-09)
-  runs a PGO build of `m2` at `ab19427`, packaged as 0.0.3 (`.so` md5 `d96ae97d…`), for the author
-  to play. v0.0.2's `.so` is kept on the author's machine to go back to.
+- **The author's Force** (`local.mk`'s `FORCE`): its address changes; it was 192.168.1.113 on
+  2026-10-24. It runs a PGO build of `m2` with Task 12 and the Q-Link fix, packaged as 0.0.3 (`.so`
+  md5 `383d5bbd…`), for the author to play. v0.0.2's `.so` is kept on the author's machine to go back
+  to.
 - **Tests on `m2`** at `ab19427` (Task 10 merged), all passing:
   - `make test` 9137, the full macro sweep 9161;
   - `make test-arm` 8959, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 8947;
@@ -73,25 +82,18 @@ on branch `m2`.
 
 ## Next, in order
 
-1. **Task 12, the presets:** build the 24 in the approved proposal.
-   - First add Horizon far darkening Air's Tone and Echo's High Cut by half an octave, as the author
-     approved. The recipe is in the plan's Task 12 section.
-   - Then level-match with `make preset-levels`, and judge Horizon by ear on Horizon Line, Snow
-     Constellation and Kalimba Loop.
-   - The full macro sweep and the soak grow to 52 presets. The Memory presets' level rule is in the
-     proposal (question 3).
-2. **Task 13:**
-   - the soak with the new strata on (24 h is M2's gate; 1 h for "done");
+1. **Task 13:**
+   - the soak with the new strata on, walking all 52 presets (24 h is M2's gate; 1 h for "done");
    - the PGO trainer over the new presets;
    - the docs:
-     - USER_GUIDE: the new pages, presets, Memory and Keep, and that a project naming Memory reloads
-       with nothing remembered;
+     - USER_GUIDE: the new pages, the 24 presets' rows, Memory and Keep, and that a project naming
+       Memory reloads with nothing remembered;
      - ARCHITECTURE;
      - ROADMAP and its Decisions log, from the plan's As-built blocks;
-     - CHANGELOG 0.0.3;
+     - CHANGELOG 0.0.3 (it takes the Unreleased section);
      - PERFORMANCE, with the measured budget table.
-3. **The device** (the author): a build of `m2` is on the Force. Play it, bench it
-   (`make bench-device`), and answer the device questions below.
+2. **The device** (the author): a build of `m2` with the 24 presets is on the Force. Play it, bench
+   it (`make bench-device`), and answer the device questions below.
 
 ## Decisions the author took on 2026-10-08
 
@@ -111,11 +113,23 @@ All are recorded in the plan, in its As-built blocks and Decisions.
 - **Macros:**
   - Levels and sends are only multiplied, so 0 stays 0.
   - Air Density snaps to off under the knob's mark.
-  - Horizon far darkens Air and Echo; this is to be added in Task 12.
+  - Horizon far darkens Air and Echo (done in Task 12).
 - **Task 12:** the 24 presets in the proposal. The Memory presets name `memory:` and sound whole
   before any Remember.
 - **Offline tools** (demos, preset levels, the trainer, the soak, the test host) wait for Weather's
   source to load, so renders are deterministic.
+
+## Decisions the author took on 2026-10-24
+
+- **`m2` merged into `main`** through Task 11, unreleased.
+- **Sparse Density quiets Weather with its grains** (Cloud and Stretch: each remaining grain as loud
+  as one grain of the preset's own cloud), rather than a floor of 3 grains or lower preset levels.
+- **Motion toward +1 trims the volume, 1.5 dB at +1**, as thick Density trims 1 dB, rather than
+  reworking two presets or a gentler Motion breath.
+- **Glow keeps no trim:** Kalimba Loop's Air (60%) and Night Crickets' Weather (42%) stay below their
+  recipes instead.
+- **The help text stays on a control's first move**, though it asks MPC for one redraw. The author
+  checks on the Force whether that costs a Q-Link its first step on track edit → automation.
 
 ## How the work is done (agreed with the author)
 
@@ -149,6 +163,13 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
   - Do the Remember and Keep Q-Links send a press (a value over 0.5)?
   - At project load, does MPC call `setParameter` on plugin-owned parameters by index? That would
     step the Source stepper.
+- **Q-Links on track edit → automation** (the 50 ms redraw gate): does a Q-Link keep its value while
+  it turns, and does a control's first step survive the help text's one redraw?
+- **Task 12's presets:**
+  - a listen and a CPU check per preset;
+  - Felt Echoes' Split at C5 against the pad rows;
+  - Horizon by ear on Horizon Line, Snow Constellation and Kalimba Loop, with Cave Kalimba as the
+    dark control.
 - **The Source stepper:** one item per detent; "Surf ..." becoming "Surf"; load times in the trace
   (a field takes 202–359M ARM instructions to build).
 - **ROADMAP's Phase 0 list:** what Stop sends to an instrument, CC 64 and the pad latch, MIDI
