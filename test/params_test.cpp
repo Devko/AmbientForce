@@ -1,11 +1,12 @@
 // The parameters as surface.py declares them, against the engine they drive: every default and the text it
 // reads, the display formats, the popups, the help lines, the patch map (the defaults play what a Patch{} plays,
-// every option lands on its value, M2's strata off in every factory preset), the macros (at 0 nothing, else their
-// own fields one way, in range), and every sound value at both ends of its range while a chord sounds, Air,
-// Weather and Echo on for the new ones. That the option lists are the engine's names is checked as
-// plugin/patch_map.cpp compiles.
+// every option lands on its value, M2's strata off in the 28 factory presets of 0.0.2: test/presets_of_002.h), the
+// macros (at 0 nothing, else their own fields one way, in range), and every sound value at both ends of its range
+// while a chord sounds, Air, Weather and Echo on for the new ones. That the option lists are the engine's names is
+// checked as plugin/patch_map.cpp compiles.
 #include "host.h"
 #include "factory_presets.h"
+#include "presets_of_002.h"
 #include "../plugin/surface.h"
 
 #include <algorithm>
@@ -587,9 +588,11 @@ std::vector<MacroSpec> macroSpecs() {
                        {"r.predelayMs", 1, lo(P_S_PREDELAY), hi(P_S_PREDELAY)}, {"g.cutoffHz", -1, lo(P_G_CUTOFF), hi(P_G_CUTOFF)},
                        {"b.cutoffHz", -1, lo(P_B_CUTOFF), hi(P_B_CUTOFF)}, {"r.dampHz", -1, lo(P_S_DAMP), hi(P_S_DAMP)},
                        {"rise", 1, 0, 1},
-                       // M2: the sends of Air, Weather and Echo, and their levels (far steps the dry back)
+                       // M2: the sends of Air, Weather and Echo, and their levels (far steps the dry back), and far
+                       // darkens Air's Tone and Echo's High Cut like the other Tones
                        {"airSpace", 1, 0, 1}, {"weatherSpace", 1, 0, 1}, {"groundEcho", 1, 0, 1}, {"bloomEcho", 1, 0, 1},
-                       {"airEcho", 1, 0, 1}, {"weatherEcho", 1, 0, 1}, {"a.level", -1, 0, 1}, {"w.level", -1, 0, 1}}},
+                       {"airEcho", 1, 0, 1}, {"weatherEcho", 1, 0, 1}, {"a.level", -1, 0, 1}, {"w.level", -1, 0, 1},
+                       {"a.toneHz", -1, lo(P_A_TONE), hi(P_A_TONE)}, {"e.highCutHz", -1, lo(P_E_HIGHCUT), hi(P_E_HIGHCUT)}}},
         {P_M_MOTION, {{"g.sway", 1, 0, 1}, {"b.sway", 1, 0, 1}, {"g.swayHz", 1, lo(P_G_SWAYRATE), hi(P_G_SWAYRATE)},
                       {"b.swayHz", 1, lo(P_B_SWAYRATE), hi(P_B_SWAYRATE)}, {"b.smear", 1, 0, 1}, {"g.breath", 1, 0, 1},
                       {"g.beatHz", 1, lo(P_G_BEAT), hi(P_G_BEAT)}, {"g.breathHz", 1, lo(P_G_BREATHRATE), hi(P_G_BREATHRATE)},
@@ -612,9 +615,10 @@ af::Macros only(int id, float x) {
     return m;
 }
 
-// Three presets with Air, Weather and Echo sounding, for the macros' checks to bend: the factory presets have them
-// off (levels and sends at 0, which a macro leaves at 0), so on them the new fields never move. In the middle of the
-// ranges, at the top (every bend meets its clamp from below) and near the bottom (from above); the knobs' real values.
+// Three presets with Air, Weather and Echo sounding, for the macros' checks to bend: the 28 factory presets of 0.0.2
+// have them off (levels and sends at 0, which a macro leaves at 0), so on them the new fields never move. In the
+// middle of the ranges, at the top (every bend meets its clamp from below) and near the bottom (from above); the
+// knobs' real values.
 std::vector<std::vector<float>> strataOn() {
     const struct {
         int id;
@@ -641,22 +645,28 @@ std::vector<std::vector<float>> strataOn() {
 void testMacros() {
     std::printf("== the macros\n");
     // Every factory preset, as the plugin loads it: with its macros at 0 (as saved) it plays the knobs' patch bit for
-    // bit, through patchFromParams as the audio thread builds it.
+    // bit, through patchFromParams as the audio thread builds it. The 28 presets of 0.0.2 (test/presets_of_002.h) are
+    // held to more: 0.0.2's Patch bit for bit, and M2's fields at Patch{}'s. The presets added since sound Air,
+    // Weather and Echo, and are not.
+    CHECK(presetsOf002Gone() == 0);   // all 28 are there, once: a rename would shrink what is pinned
     std::vector<std::vector<float>> presets;   // each one's 0..1
+    std::vector<size_t> of002;                 // the 28's places among them
     bool same = true, newOff = true;
     int asBefore = 0;
     uint64_t golden = 1469598103934665603ull;
     for (int k = 0; k < af::kNumFactoryPresets; ++k) {
+        const bool before = isPresetOf002(af::kFactoryPresets[k].name);
+        if (before) of002.push_back(presets.size());
         Host h;
         CHECK(h.load(af::kFactoryPresets[k].text) == 1);
         std::vector<float> norm(af::P_COUNT);
         for (int i = 0; i < af::P_COUNT; ++i) norm[static_cast<size_t>(i)] = h.get(i);
         for (int id : {af::P_M_HORIZON, af::P_M_MOTION, af::P_M_GLOW, af::P_M_DENSITY})
             CHECK(af::paramValue(id, norm[static_cast<size_t>(id)]) == 0.0f);
-        // A preset that leaves Breath Rate and the Syncs alone breathes and sways as it always did: Ground's own
-        // 0.07 Hz, bit for bit, nothing on the bars.
+        // A preset of 0.0.2 that leaves Breath Rate and the Syncs alone breathes and sways as it always did: Ground's
+        // own 0.07 Hz, bit for bit, nothing on the bars.
         const std::string text = af::kFactoryPresets[k].text;
-        if (text.find("g_breathrate=") == std::string::npos && text.find("sync=") == std::string::npos) {
+        if (before && text.find("g_breathrate=") == std::string::npos && text.find("sync=") == std::string::npos) {
             const af::Patch q = af::patchFromKnobs(norm.data());
             const bool free = sameBits(q.ground.breathHz, af::GroundPatch{}.breathHz) && q.ground.breathBeats == 0.0f &&
                               q.ground.pos.swayBeats == 0.0f && q.bloom.pos.swayBeats == 0.0f;
@@ -671,20 +681,23 @@ void testMacros() {
                 std::printf("  %s: %s %g with the macros at 0, %g without\n", af::kFactoryPresets[k].name, a[f].name, a[f].v, b[f].v);
                 same = false;
             }
-        golden = foldFields(golden, fields(knobs));
-        // M2's fields are Patch{}'s (the presets of 0.0.2 name none of its parameters), the new strata and every Echo
-        // send exactly off.
-        const auto fresh = newFields(af::Patch{}), mine = newFields(knobs);
-        for (size_t f = 0; f < mine.size(); ++f)
-            if (!near(mine[f].v, fresh[f].v)) {
-                std::printf("  %s: %s is %g, not Patch{}'s %g\n", af::kFactoryPresets[k].name, mine[f].name, mine[f].v, fresh[f].v);
-                newOff = false;
-            }
-        newOff = newOff && knobs.air.level == 0.0f && knobs.weather.level == 0.0f && knobs.groundEcho == 0.0f &&
-                 knobs.bloomEcho == 0.0f && knobs.airEcho == 0.0f && knobs.weatherEcho == 0.0f;
+        if (before) {
+            golden = foldFields(golden, fields(knobs));
+            // M2's fields are Patch{}'s (the presets of 0.0.2 name none of its parameters), the new strata and every
+            // Echo send exactly off.
+            const auto fresh = newFields(af::Patch{}), mine = newFields(knobs);
+            for (size_t f = 0; f < mine.size(); ++f)
+                if (!near(mine[f].v, fresh[f].v)) {
+                    std::printf("  %s: %s is %g, not Patch{}'s %g\n", af::kFactoryPresets[k].name, mine[f].name, mine[f].v, fresh[f].v);
+                    newOff = false;
+                }
+            newOff = newOff && knobs.air.level == 0.0f && knobs.weather.level == 0.0f && knobs.groundEcho == 0.0f &&
+                     knobs.bloomEcho == 0.0f && knobs.airEcho == 0.0f && knobs.weatherEcho == 0.0f;
+        }
         presets.push_back(std::move(norm));
     }
-    CHECK(same && newOff && presets.size() == static_cast<size_t>(af::kNumFactoryPresets) && asBefore >= af::kNumFactoryPresets - 2);
+    CHECK(same && newOff && presets.size() == static_cast<size_t>(af::kNumFactoryPresets) &&
+          of002.size() == static_cast<size_t>(kNumPresetsOf002) && asBefore >= kNumPresetsOf002 - 2);
     // The 28 presets give 0.0.2's Patch, bit for bit, apart from M2's fields (just checked at their defaults): the
     // 0.0.2 fields of all of them folded into one number, taken from 0.0.2's patch map (the merge of Tasks 1-8 before
     // this task; the patch map did not change in them). x86 only: the arithmetic behind a field (pow, log, exp) is
@@ -693,11 +706,11 @@ void testMacros() {
     CHECK(golden == 0x6c3af5238ae84bbaull);
 #endif
 
-    // Air, Weather and Echo are off in every factory preset, and a macro brings none of them in: what a preset has at 0 and
-    // a macro scales stays 0 (exactly) under every macro, alone at five positions each and in the 16 corners of all four.
-    // On the factory presets that is Air's and Weather's levels and the four Echo sends. On the three presets with the new
-    // strata on (below) it is Air Space, Wthr Space and Air Density, which those presets are then given at 0. With a
-    // value open the same macros do move it (the sweep below).
+    // Air, Weather and Echo are off in the 28 presets of 0.0.2, and a macro brings none of them in: what a preset has at 0
+    // and a macro scales stays 0 (exactly) under every macro, alone at five positions each and in the 16 corners of all
+    // four. On those 28 that is Air's and Weather's levels and the four Echo sends (the presets since have them on). On
+    // the three presets with the new strata on (below) it is Air Space, Wthr Space and Air Density, which those presets
+    // are then given at 0. With a value open the same macros do move it (the sweep below).
     const std::vector<std::vector<float>> on = strataOn();
     {
         std::vector<af::Macros> tries;
@@ -712,8 +725,8 @@ void testMacros() {
             tries.push_back(m);
         }
         bool stays = true, staysOn = true;
-        for (const auto& norm : presets) {
-            const af::Patch knobs = af::patchFromKnobs(norm.data());
+        for (size_t at : of002) {
+            const af::Patch knobs = af::patchFromKnobs(presets[at].data());
             for (const af::Macros& m : tries) {
                 af::Patch p = knobs;
                 af::applyMacros(p, m);
@@ -735,9 +748,9 @@ void testMacros() {
     }
     for (const auto& norm : on) presets.push_back(norm);   // after the factory presets: the sweep takes them too
 
-    // Each macro swept from -1 to +1 on every factory preset and on the three presets with the new strata on: its own
-    // fields each one way, inside their range; nothing else moves (bit for bit); and each field it owns moves on some
-    // preset.
+    // Each macro swept from -1 to +1 on every factory preset (those since 0.0.2 too) and on the three presets with the
+    // new strata on: its own fields each one way, inside their range; nothing else moves (bit for bit); and each field
+    // it owns moves on some preset.
     for (const MacroSpec& spec : macroSpecs()) {
         std::vector<int> movedOn(spec.owned.size(), 0);
         bool others = true, monotonic = true, inRange = true;
@@ -804,6 +817,10 @@ void testMacros() {
               near(hNear.airEcho, s * 0.5f) && near(hNear.weatherEcho, s * 0.5f) && near(hNear.weatherSpace, mid.weatherSpace * 0.5f));
         CHECK(near(hFar.air.level, mid.air.level / std::sqrt(2.0f)) && near(hFar.weather.level, mid.weather.level / std::sqrt(2.0f)) &&
               hNear.air.level == mid.air.level && hNear.weather.level == mid.weather.level);
+        // Tones: Air Tone and Echo High Cut x 2^(-0.5 h) like Ground's and Bloom's, half an octave darker far, brighter near.
+        CHECK(near(hFar.air.voice.toneHz, 3000.0f / std::sqrt(2.0f)) && near(hNear.air.voice.toneHz, 3000.0f * std::sqrt(2.0f)) &&
+              near(hFar.echo.delay.highCutHz, 4500.0f / std::sqrt(2.0f)) &&
+              near(hNear.echo.delay.highCutHz, 4500.0f * std::sqrt(2.0f)));
         // Echo's own return and its Space send are not sends into it: Horizon leaves them.
         CHECK(hFar.echoReturn == mid.echoReturn && hFar.echoSpace == mid.echoSpace && hNear.echoReturn == mid.echoReturn &&
               hNear.echoSpace == mid.echoSpace);
@@ -857,12 +874,13 @@ void testMacros() {
               low.weather.grains == 1 && low.air.gen.density == 0.0f);
     }
 
-    // Off is off under the macros, heard. Air, Weather and Echo are off in every factory preset, and the new bends move
-    // their other fields all the same (Air Tone, Rubato and Mutate, Weather Drift and Tilt, Echo Wow and High Cut, the
-    // Space sends of a silent Air, Grains): none of it may be heard. A chord, two seconds through the engine itself
-    // with the macros at +-1 in four mixes: the patch as the macros make it and the same patch with every field the new
-    // bends touch put back as the knobs have it give the same samples, bit for bit. (The control: let Air in, and the
-    // render differs, so the comparison can hear a stratum.)
+    // Off is off under the macros, heard. Air, Weather and Echo are off in the 28 presets of 0.0.2, and the new bends
+    // move their other fields all the same (Air Tone, Rubato and Mutate, Weather Drift and Tilt, Echo Wow and High Cut,
+    // the Space sends of a silent Air, Grains): none of it may be heard. (The presets since sound them: there the bends
+    // are meant to be heard.) A chord, two seconds through the engine itself with the macros at +-1 in four mixes: the
+    // patch as the macros make it and the same patch with every field the new bends touch put back as the knobs have it
+    // give the same samples, bit for bit. (The control: let Air in, and the render differs, so the comparison can hear a
+    // stratum.)
     {
         static af::TableSet tables;   // the sine in every slot: it is the engine's arithmetic that is compared
         const auto play = [](const af::Patch& p, std::vector<float>& L, std::vector<float>& R) {
@@ -893,12 +911,13 @@ void testMacros() {
         const std::vector<std::string> subset = {"Init", "Harbour at 4am", "Fifth Light", "Sine Garden", "Choir in Haze"};
         const std::initializer_list<int> mixes = {15, 0};
 #else
-        const std::vector<std::string> subset;   // every one
+        const std::vector<std::string> subset;   // every one of the 28
         const std::initializer_list<int> mixes = {15, 0, 5, 10};
 #endif
         int compared = 0, played = 0;
         bool silent = true, control = false;
         for (int i = 0; i < af::kNumFactoryPresets; ++i) {
+            if (!isPresetOf002(af::kFactoryPresets[i].name)) continue;
             if (!subset.empty() && std::find(subset.begin(), subset.end(), std::string(af::kFactoryPresets[i].name)) == subset.end()) continue;
             ++played;
             const af::Patch k = af::patchFromKnobs(presets[static_cast<size_t>(i)].data());
@@ -928,7 +947,7 @@ void testMacros() {
                 }
             }
         }
-        CHECK(silent && control && played == (subset.empty() ? af::kNumFactoryPresets : static_cast<int>(subset.size())) &&
+        CHECK(silent && control && played == (subset.empty() ? kNumPresetsOf002 : static_cast<int>(subset.size())) &&
               compared == played * static_cast<int>(mixes.size()));
     }
 

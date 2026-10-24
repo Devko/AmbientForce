@@ -264,13 +264,14 @@ float fadeOrScale(float v, float x, float oct, float hi) {
 // after the note. Near takes the sends down 6 dB and leaves Space Level alone: on a preset that is nearly all
 // reverb (Frozen Sky) more took it 11 LU down. A Tone moves only on Bloom's low-pass: a band-pass's or
 // high-pass's Tone picks a band, not a brightness (Overtone Choir's whistle), and moving it changes the sound
-// more than the level allows.
+// more than the level allows. Far darkens Air's strike and Echo's repeats too (Air Tone, Echo High Cut), so
+// the bright strikes and repeats recede with the bed instead of staying close.
 constexpr float kHorizonSendNear = 1.0f;    // the sends (Space and Echo): x 2^h near (to -6 dB) ...
 constexpr float kHorizonSendFar = 0.5f;     // ... x 2^(0.5 h) far (to +3 dB)
 constexpr float kHorizonDryOct = 0.5f;      // toward far only: the dry levels down to x 2^-0.5 (-3 dB)
 constexpr float kHorizonDecayOct = 1.3f;    // Space Decay x 2^(1.3 h): 0.41x..2.46x
 constexpr float kHorizonPredelayMs = 50.0f; // Pre-Delay + 50 h ms
-constexpr float kHorizonToneOct = -0.5f;    // both Tones and Space Damp, x 2^(-0.5 h): half an octave darker far
+constexpr float kHorizonToneOct = -0.5f;    // the Tones, Echo High Cut, Space Damp: x 2^(-0.5 h), half an octave darker far
 constexpr float kHorizonRiseUp = 0.6f;      // Rise toward 1 by 60% far, toward 0 near
 // Air's and Weather's sends into Space, and all four Echo sends (Ground's, Bloom's, Air's, Weather's), move by
 // the same octaves as Ground's and Bloom's Space sends; Air's and Weather's levels step back far like theirs.
@@ -334,6 +335,8 @@ void applyMacros(Patch& p, const Macros& m) {
         r.predelayMs = clampTo(P_S_PREDELAY, r.predelayMs + kHorizonPredelayMs * h);
         g.cutoffHz = clampTo(P_G_CUTOFF, octaves(g.cutoffHz, kHorizonToneOct * h));
         if (b.filterMode == FM_LP) b.cutoffHz = clampTo(P_B_CUTOFF, octaves(b.cutoffHz, kHorizonToneOct * h));
+        a.voice.toneHz = clampTo(P_A_TONE, octaves(a.voice.toneHz, kHorizonToneOct * h));
+        e.highCutHz = clampTo(P_E_HIGHCUT, octaves(e.highCutHz, kHorizonToneOct * h));
         r.dampHz = clampTo(P_S_DAMP, octaves(r.dampHz, kHorizonToneOct * h));
         p.space.rise = toward(p.space.rise, h, 0.0f, 1.0f, 1.0f, kHorizonRiseUp);
     }
