@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -759,7 +760,10 @@ size_t sourcesInUse() {
     return n;
 }
 
-// The loader's thread held where a hook calls (a Keep's write, a source's load), the test's to let go.
+// The loader's thread held where a hook calls (a Keep's write, a source's load), the test's to let go. A gate
+// lives as long as the process (newGate()): when the test's scope ends, the loader's thread may still be in
+// hold() (woken by release(), its wait not yet returned) or about to call a hook it read before the test took
+// it away, and a gate on the test's stack would be gone under it (ASan: stack-use-after-scope in hold()).
 struct Gate {
     std::mutex m;
     std::condition_variable cv;
@@ -783,6 +787,10 @@ struct Gate {
         cv.notify_all();
     }
 };
+Gate& newGate() {
+    static std::deque<Gate> gates;   // a deque never moves what it holds
+    return gates.emplace_back();
+}
 void holdKeepWrite(void* ctx, int stage) {
     if (stage == af::KS_WRITE) static_cast<Gate*>(ctx)->hold();
 }
@@ -792,7 +800,7 @@ void holdLoad(void* ctx, const std::string& key) {
 }
 // A load of `key` held for the scope's life (let go, and the hook taken away, at its end).
 struct HeldLoad {
-    Gate gate;
+    Gate& gate = newGate();
     explicit HeldLoad(const std::string& key) {
         gate.key = key;
         af::setLoadHook(holdLoad, &gate);
@@ -1066,7 +1074,7 @@ void testKeep() {
     // A Keep pressed while one writes: ignored. (Back on Memory first: Keep's file becomes the source only in
     // place of Memory.)
     CHECK(h.load("ambientforce 1\nw_source=memory:\n") == 1);
-    Gate gate;
+    Gate& gate = newGate();
     af::setKeepHook(holdKeepWrite, &gate);
     h.press(af::P_W_KEEP);
     CHECK(gate.entered());
@@ -1107,7 +1115,7 @@ void testKeepSwitch() {
         tap(h, af::P_W_REMEMBER);
         h.run(1);
         CHECK(showsSource(h, "Memory"));
-        Gate gate;
+        Gate& gate = newGate();
         af::setKeepHook(holdKeepWrite, &gate);
         tap(h, af::P_W_KEEP);
         CHECK(gate.entered());
@@ -1129,7 +1137,7 @@ void testKeepSwitch() {
         tap(g, af::P_W_REMEMBER);
         g.run(1);
         CHECK(showsSource(g, "Memory"));
-        Gate gate;
+        Gate& gate = newGate();
         af::setKeepHook(holdKeepWrite, &gate);
         tap(g, af::P_W_KEEP);
         CHECK(gate.entered());
@@ -1285,7 +1293,7 @@ void testSourceLifetime() {
         k->run(kBlocksPerSec);
         tap(*k, af::P_W_REMEMBER);
         k->run(1);
-        Gate gate;
+        Gate& gate = newGate();
         af::setKeepHook(holdKeepWrite, &gate);
         tap(*k, af::P_W_KEEP);
         CHECK(gate.entered());
