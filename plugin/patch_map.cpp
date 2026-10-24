@@ -304,6 +304,7 @@ constexpr float kDensityStrumS = 0.6f;
 constexpr float kDensityStrumThick = 0.75f;
 constexpr float kDensityAirOct = 1.0f;      // Air Density to 0 sparse, x 2^d thick (capped at 60 a minute)
 constexpr float kDensityGrainsOct = 1.0f;   // Weather Grains to 1 sparse, x 2^d thick (rounded, 1..16)
+constexpr float kDensityGrainsLevelPow = 0.5f; // sparse only, Cloud and Stretch: Weather Level x (grains after / before)^0.5
 constexpr float kDensityThickTrimDb = 1.0f; // thick only: the volume down 1 dB at +1 (the partials add level)
 
 } // namespace
@@ -379,9 +380,16 @@ void applyMacros(Patch& p, const Macros& m) {
         a.gen.density = fadeOrScale(a.gen.density, x, kDensityAirOct, PARAM_SPECS[P_A_DENSITY].hi);
         // Under the knob's "off" mark is off, as the knob has it: a rate of a few notes an hour would keep Air awake.
         if (a.gen.density < kAirDensityOff) a.gen.density = 0.0f;
+        const int grainsBefore = w.grains;
         w.grains = std::clamp(static_cast<int>(std::lround(fadeOrScale(static_cast<float>(w.grains), x, kDensityGrainsOct,
                                                                        PARAM_SPECS[P_W_GRAINS].hi))),
                               static_cast<int>(PARAM_SPECS[P_W_GRAINS].lo), static_cast<int>(PARAM_SPECS[P_W_GRAINS].hi));
+        // Cloud and Stretch keep their loudness at any count (each grain at 1/sqrt(grains)): a sparse cloud's last grains
+        // would be as loud as the whole cloud, with the field's full crest (peaks 3.6 to 4.9 dB up, the limiter working).
+        // Fewer drops, quieter: the level falls with the count, so each grain left is as loud as one of the preset's own
+        // cloud. Thick leaves it (more grains at the same loudness lower the crest), Stream ignores the count.
+        if (w.grains < grainsBefore && w.mode != WM_STREAM)
+            w.level *= std::pow(static_cast<float>(w.grains) / static_cast<float>(grainsBefore), kDensityGrainsLevelPow);
         float& strum = p.harmony.strumS;
         strum = clampTo(P_H_STRUM, x < 0.0f ? octaves(strum, -kDensityStrumOct * x) - kDensityStrumS * x
                                             : strum * (1.0f - kDensityStrumThick * x));
