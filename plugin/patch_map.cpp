@@ -240,7 +240,7 @@ Macros macrosFromParams(const float* norm) {
 // 0.0.2, which has Air, Weather and Echo off, sounds the same at every macro position as it did. (Air Rubato
 // and Mutate, Weather Drift and Echo Wow are depths and do move where nothing plays: nothing is heard of it.)
 // Where two macros share a field (Horizon and Glow both move the tones) they apply one after the other, each
-// clamping. Far steps the dry back, and dark and thick take a little off the volume, so the level stays near
+// clamping. Far steps the dry back, and dark, thick and moving take a little off the volume, so the level stays near
 // the preset's (test/preset_test.cpp: none leans on the limiter or drops far).
 namespace {
 
@@ -264,13 +264,14 @@ float fadeOrScale(float v, float x, float oct, float hi) {
 // after the note. Near takes the sends down 6 dB and leaves Space Level alone: on a preset that is nearly all
 // reverb (Frozen Sky) more took it 11 LU down. A Tone moves only on Bloom's low-pass: a band-pass's or
 // high-pass's Tone picks a band, not a brightness (Overtone Choir's whistle), and moving it changes the sound
-// more than the level allows.
+// more than the level allows. Far darkens Air's strike and Echo's repeats too (Air Tone, Echo High Cut), so
+// the bright strikes and repeats recede with the bed instead of staying close.
 constexpr float kHorizonSendNear = 1.0f;    // the sends (Space and Echo): x 2^h near (to -6 dB) ...
 constexpr float kHorizonSendFar = 0.5f;     // ... x 2^(0.5 h) far (to +3 dB)
 constexpr float kHorizonDryOct = 0.5f;      // toward far only: the dry levels down to x 2^-0.5 (-3 dB)
 constexpr float kHorizonDecayOct = 1.3f;    // Space Decay x 2^(1.3 h): 0.41x..2.46x
 constexpr float kHorizonPredelayMs = 50.0f; // Pre-Delay + 50 h ms
-constexpr float kHorizonToneOct = -0.5f;    // both Tones and Space Damp, x 2^(-0.5 h): half an octave darker far
+constexpr float kHorizonToneOct = -0.5f;    // the Tones, Echo High Cut, Space Damp: x 2^(-0.5 h), half an octave darker far
 constexpr float kHorizonRiseUp = 0.6f;      // Rise toward 1 by 60% far, toward 0 near
 // Air's and Weather's sends into Space, and all four Echo sends (Ground's, Bloom's, Air's, Weather's), move by
 // the same octaves as Ground's and Bloom's Space sends; Air's and Weather's levels step back far like theirs.
@@ -284,6 +285,7 @@ constexpr float kMotionRubatoUp = 0.6f;     // Air Rubato toward 1 by 60% (towar
 constexpr float kMotionMutateUp = 0.5f;     // Air Mutate toward 1 by 50% (toward 0 still)
 constexpr float kMotionDriftUp = 0.7f;      // Weather Drift toward 1 by 70% (toward 0 still)
 constexpr float kMotionWowUp = 0.5f;        // Echo Wow toward 1 by 50% (toward 0 still)
+constexpr float kMotionTrimDb = 1.5f;       // moving only: the volume down 1.5 dB at +1 (the faster, deeper breath swells to its top)
 // Glow, dark (-1) to bright (+1).
 constexpr float kGlowToneOct = 2.0f;        // both Tones x 2^(2 g): two octaves either way (Bloom's on LP only)
 constexpr float kGlowTilt = 0.3f;           // Tilt + 0.3 g
@@ -303,6 +305,7 @@ constexpr float kDensityStrumS = 0.6f;
 constexpr float kDensityStrumThick = 0.75f;
 constexpr float kDensityAirOct = 1.0f;      // Air Density to 0 sparse, x 2^d thick (capped at 60 a minute)
 constexpr float kDensityGrainsOct = 1.0f;   // Weather Grains to 1 sparse, x 2^d thick (rounded, 1..16)
+constexpr float kDensityGrainsLevelPow = 0.5f; // sparse only, Cloud and Stretch: Weather Level x (grains after / before)^0.5
 constexpr float kDensityThickTrimDb = 1.0f; // thick only: the volume down 1 dB at +1 (the partials add level)
 
 } // namespace
@@ -334,6 +337,8 @@ void applyMacros(Patch& p, const Macros& m) {
         r.predelayMs = clampTo(P_S_PREDELAY, r.predelayMs + kHorizonPredelayMs * h);
         g.cutoffHz = clampTo(P_G_CUTOFF, octaves(g.cutoffHz, kHorizonToneOct * h));
         if (b.filterMode == FM_LP) b.cutoffHz = clampTo(P_B_CUTOFF, octaves(b.cutoffHz, kHorizonToneOct * h));
+        a.voice.toneHz = clampTo(P_A_TONE, octaves(a.voice.toneHz, kHorizonToneOct * h));
+        e.highCutHz = clampTo(P_E_HIGHCUT, octaves(e.highCutHz, kHorizonToneOct * h));
         r.dampHz = clampTo(P_S_DAMP, octaves(r.dampHz, kHorizonToneOct * h));
         p.space.rise = toward(p.space.rise, h, 0.0f, 1.0f, 1.0f, kHorizonRiseUp);
     }
@@ -351,6 +356,7 @@ void applyMacros(Patch& p, const Macros& m) {
         a.gen.mutate = toward(a.gen.mutate, x, 0.0f, 1.0f, 1.0f, kMotionMutateUp);
         w.drift = toward(w.drift, x, 0.0f, 1.0f, 1.0f, kMotionDriftUp);
         e.wow = toward(e.wow, x, 0.0f, 1.0f, 1.0f, kMotionWowUp);
+        trim(p, -kMotionTrimDb * std::max(x, 0.0f));
     }
     if (m.glow != 0.0f) {
         const float x = std::clamp(m.glow, -1.0f, 1.0f);
@@ -376,9 +382,16 @@ void applyMacros(Patch& p, const Macros& m) {
         a.gen.density = fadeOrScale(a.gen.density, x, kDensityAirOct, PARAM_SPECS[P_A_DENSITY].hi);
         // Under the knob's "off" mark is off, as the knob has it: a rate of a few notes an hour would keep Air awake.
         if (a.gen.density < kAirDensityOff) a.gen.density = 0.0f;
+        const int grainsBefore = w.grains;
         w.grains = std::clamp(static_cast<int>(std::lround(fadeOrScale(static_cast<float>(w.grains), x, kDensityGrainsOct,
                                                                        PARAM_SPECS[P_W_GRAINS].hi))),
                               static_cast<int>(PARAM_SPECS[P_W_GRAINS].lo), static_cast<int>(PARAM_SPECS[P_W_GRAINS].hi));
+        // Cloud and Stretch keep their loudness at any count (each grain at 1/sqrt(grains)): a sparse cloud's last grains
+        // would be as loud as the whole cloud, with the field's full crest (peaks 3.6 to 4.9 dB up, the limiter working).
+        // Fewer drops, quieter: the level falls with the count, so each grain left is as loud as one of the preset's own
+        // cloud. Thick leaves it (more grains at the same loudness lower the crest), Stream ignores the count.
+        if (w.grains < grainsBefore && w.mode != WM_STREAM)
+            w.level *= std::pow(static_cast<float>(w.grains) / static_cast<float>(grainsBefore), kDensityGrainsLevelPow);
         float& strum = p.harmony.strumS;
         strum = clampTo(P_H_STRUM, x < 0.0f ? octaves(strum, -kDensityStrumOct * x) - kDensityStrumS * x
                                             : strum * (1.0f - kDensityStrumThick * x));

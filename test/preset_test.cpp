@@ -6,8 +6,10 @@
 #include "host.h"
 #include "../plugin/loader.h"
 #include "../plugin/presets.h"
+#include "../plugin/surface.h"
 #include "../tools/phrase.h"
 #include "factory_presets.h"
+#include "presets_of_002.h"
 
 #include <array>
 #include <cmath>
@@ -313,10 +315,10 @@ void testBrowser() {
         CHECK(now != before && now.compare(0, 15, "PRESET  Drift /") == 0);
     }
     // The plugin pushes the tiles it lit to MPC (audioMasterAutomate) from the audio thread, and
-    // tells it to read the texts again.
+    // tells it to read the texts again (at most once per 50 ms: plugin_test.cpp).
     h.log.automated.clear();
     h.log.updates = 0;
-    h.run(8);
+    h.run(af::Surface::kTextGap / kBlock + 1);
     CHECK(!h.log.automated.empty() && h.log.updates > 0);
 }
 
@@ -425,7 +427,9 @@ void testStepping() {
 // matched by its volume and not by the limiter, which works on at most 1% of the phrase. The whole
 // 40 s, as the level match measures it. Under qemu (the ARM build) a preset takes 7.6 s, so five play
 // there: the template, Ground on Free into Haze (Harbour at 4am), Abyss with Shimmer (Fifth Light),
-// FM (Sine Garden) and unison 2 in Haze (Choir in Haze); x86 plays all of them.
+// FM (Sine Garden) and unison 2 in Haze (Choir in Haze); x86 plays all of them. Of the phrases only those of
+// the 28 presets of 0.0.2 (test/presets_of_002.h) are fingerprinted: the presets since sound Air, Weather and
+// Echo, and are held to the level alone.
 struct Played {
     int index;    // in kFactoryPresets
     float peak;   // on its phrase, as saved
@@ -477,8 +481,8 @@ void testFactory() {
 #else
     const std::vector<std::string> only;   // every one
 #endif
-    size_t played = 0;
-    uint64_t prints = 1469598103934665603ull;   // every phrase's fingerprint, folded in order
+    size_t played = 0, folded = 0;
+    uint64_t prints = 1469598103934665603ull;   // the fingerprint of every phrase of 0.0.2's presets, folded in order
     for (int i = 0; i < af::kNumFactoryPresets; ++i) {
         const std::string name = af::kFactoryPresets[i].name;
         if (!only.empty() && std::find(only.begin(), only.end(), name) == only.end()) continue;
@@ -502,22 +506,34 @@ void testFactory() {
         CHECK(peak <= afl::kPeakCap);
         CHECK(limited <= afl::kMaxLimitedShare);
         g_played.push_back({i, peak});
-        fold(prints, fingerprint(L, R));
+        if (isPresetOf002(name.c_str())) {
+            fold(prints, fingerprint(L, R));
+            ++folded;
+        }
     }
     CHECK(played == (only.empty() ? static_cast<size_t>(af::kNumFactoryPresets) : only.size()));   // none renamed away
+    CHECK(presetsOf002Gone() == 0);   // all 28 are there, once: a rename would shrink the fold
+    CHECK(folded == (only.empty() ? static_cast<size_t>(kNumPresetsOf002) : only.size()));
     // Off is off (M2's Task 8): Air, Weather and Echo off in every preset of 0.0.2 (their files name
     // none of them), the phrases play 0.0.2's samples, bit for bit: the fingerprints folded above,
     // taken from 0.0.2's own build (3e1fb35) of these presets: x86's all 28, the device's (NEON
-    // fuses multiply-adds) the five qemu plays. The plain builds only; against profile-guided objects
-    // (make test-arm-pgo) the profile moves the fusing. A preset added or changed moves it: then it
-    // is taken again.
+    // fuses multiply-adds) the five qemu plays. The presets added since are not in it (they sound the
+    // new strata). The plain builds only; against profile-guided objects (make test-arm-pgo) the
+    // profile moves the fusing. A 0.0.2 preset changed moves it: then it is taken again. So it was on
+    // 2026-10-24, for Bloom's FM DC blocker (dsp/bloom.h): Sine Garden and Glass Tines, the two with
+    // Couple on FM, lost their DC offset and nothing else (every other factory preset's phrase the same
+    // samples before and after); the 26 others are still 0.0.2's.
     std::printf("  the phrases' fingerprints, folded: %016llx\n", static_cast<unsigned long long>(prints));
 #if AF_PGO_OBJECTS
     std::printf("  (checked in the plain builds, not against profile-guided objects)\n");
 #elif defined(__arm__)
-    CHECK(prints == 0x85132c48c2712eccull);
+    // 2026-10-24: Bloom's FM DC blocker; Sine Garden and Glass Tines changed by their DC only, the author's
+    // decision (0.0.2's was 0x85132c48c2712ecc; of the five, Sine Garden moved).
+    CHECK(prints == 0x555ab002dcfe54d5ull);
 #else
-    CHECK(prints == 0x17654dd27920e4e0ull);
+    // 2026-10-24: Bloom's FM DC blocker; Sine Garden and Glass Tines changed by their DC only, the author's
+    // decision (0.0.2's was 0x17654dd27920e4e0).
+    CHECK(prints == 0x5019ba22056aaee7ull);
 #endif
 }
 

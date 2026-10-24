@@ -1,4 +1,4 @@
-# Handover, 2026-10-09
+# Handover, 2026-10-24
 
 This is for an agent continuing AmbientForce without the people and the machine it was built on.
 Read it top to bottom before touching anything.
@@ -31,8 +31,8 @@ on branch `m2`.
 6. [`docs/plans/2026-10-08-m2-presets-proposal.md`](plans/2026-10-08-m2-presets-proposal.md):
    Task 12's 24 presets, **approved by the author**.
 7. [`docs/USER_GUIDE.md`](USER_GUIDE.md) and [`docs/PERFORMANCE.md`](PERFORMANCE.md) as needed.
-8. Devko/AmbientForce#2 (`m2` → `main`, merged on 2026-10-09): M2's status through Task 11, task
-   by task.
+8. Devko/AmbientForce#2 and #3 (`m2` → `main`, both merged on 2026-10-24): M2's status through
+   Task 12, task by task. Open a new draft PR for Task 13.
 
 ## Where things stand
 
@@ -42,29 +42,46 @@ on branch `m2`.
   - the M2 plan and M2's Tasks 1–5 as standalone modules;
   - the fix for a Space ghost that 0.0.2 would otherwise have shipped with.
 
-  **On 2026-10-09 the author had `m2` merged into `main`**: `main` now also has everything below
-  through Task 11. It is unreleased; 0.0.3 comes after Task 13.
-- **`m2`** (pushed) has M2's Tasks 1–11 merged, plus the approved presets proposal. Tasks 12 and 13
-  go on `m2`, with a new draft PR.
+  **On 2026-10-24 the author had `m2` merged into `main` twice**: through Task 11 in the morning,
+  and with Task 12, the Q-Link fix and both DC fixes in the evening. `main` now has everything
+  below. It is unreleased; 0.0.3 comes after Task 13.
+- **`m2`** (pushed) has M2's Tasks 1–12 merged. Task 13 goes on `m2` too.
+  - **Task 12 (2026-10-24):** the 24 approved presets, 52 factory presets in all. Three macro changes
+    the author decided: Horizon far darkens Air and Echo, sparse Density quiets Weather with its
+    grains, and Motion toward +1 trims the volume 1.5 dB. The plan's Task 12 As-built block has every
+    departure from the recipes and the measurements.
+  - **The Q-Link fix** from the siblings (sd88me/mpc-vst-plugins #486–#489, 2026-10-24):
+    - at most one `audioMasterUpdateDisplay` per 50 ms (`Surface::kTextGap`), with the CPU meter
+      going through it;
+    - `surface/params.lock`, which pins the parameters' order. Task 10 had moved the preset stepper
+      and browser after M2's parameters, so the lock starts from M2's order (CHANGELOG, Unreleased).
   - Every task was reviewed twice, once for the spec and once adversarially, and every fix was
     re-reviewed.
   - **Air, Weather, Echo and Memory sound in the engine and have their pages.** Weather's Source
     picks a field, a WAV or Memory; Remember and Keep work (Task 10).
-  - Init and the 28 factory presets still play bit for bit as 0.0.2; their fingerprints are pinned
-    in the tests.
+  - Init and the 28 factory presets of 0.0.2 still play bit for bit as 0.0.2, but for Sine Garden
+    and Glass Tines: Bloom's FM DC blocker (2026-10-24, the author's decision) took their DC offset
+    off (−36 and −58 dBFS by the soak's measure, held 180 s; now −98 and −105) and moved nothing
+    else. The fingerprints are pinned in the tests, re-taken then.
   - Task 10's fix round passed its re-review on 2026-10-09 with no must-fix. Its one should-fix, a
     Remember racing `updateMemory()`, is fixed in `d1ccf43`. The plan's As-built block has the rest.
-- **The author's Force** (`local.mk`'s `FORCE`; its address changes, 192.168.1.133 on 2026-10-09)
-  runs a PGO build of `m2` at `ab19427`, packaged as 0.0.3 (`.so` md5 `d96ae97d…`), for the author
-  to play. v0.0.2's `.so` is kept on the author's machine to go back to.
-- **Tests on `m2`** at `ab19427` (Task 10 merged), all passing:
-  - `make test` 9137, the full macro sweep 9161;
-  - `make test-arm` 8959, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 8947;
-  - `make soak HOURS=1`: peak −1.01 dBFS, nothing non-finite, no guard trips;
-  - `make arm-icount`: every case as in PERFORMANCE.md's M2 table.
-- **Budget** (`make arm-icount`, the counting qemu): M2's worst case is 528.7k ARM instructions a
-  block, about **14.2% of p99** at 0.0268 points a thousand (device: pending). The gate is 15%, and
-  the plan's caps begin at 14.5%.
+- **The author's Force** (`local.mk`'s `FORCE`): its address changes; it was 192.168.1.113 on
+  2026-10-24. It runs a PGO build of `m2` at `fce749b`, packaged as 0.0.3 (`.so` md5 `c037b0ab…`):
+  Task 12, the Q-Link fix and both DC fixes, for the author to play. v0.0.2's `.so` is kept on the
+  author's machine to go back to.
+- **Tests on `m2`** at `fce749b` (Task 12, the Q-Link fix and both DC fixes merged), all passing:
+  - `make test` 9453, the full macro sweep 9501 over 52 presets;
+  - `make test-arm` 9131, `make arm-plugin` with PGO and its suite (`test-arm-pgo`) 9119;
+  - `make soak HOURS=1` with seeds 1 and 2: no window's DC above −60 dBFS. Before the fields' fix,
+    Abyssal Plain's Surf took seed 1's last window to −45 dBFS.
+  - `make arm-icount`: as in PERFORMANCE.md's M2 table, but for Bloom's FM blocker (bloom 6x2 318.7k,
+    worst m2 529.8k) and M1's "worst" at 399.5k (was 399.4k).
+  - A 24 h soak (seed 1, about 14 minutes on x86) passes with the Bloom fix, its worst DC window at
+    −68.5 dBFS. It has five windows with limiter warnings, which were there before the fix too; Task
+    13 looks at them.
+- **Budget** (`make arm-icount`, the counting qemu): M2's worst case is 529.8k ARM instructions a
+  block (528.7k before Bloom's FM DC blocker), about **14.2% of p99** at 0.0268 points a thousand
+  (device: pending). The gate is 15%, and the plan's caps begin at 14.5%.
   - Air is 35.9k against its 32k share, Echo 32.4k against 28k, Weather 60.9k against 60k.
   - M3 has about 0.8 points left to the gate.
 - **Device bench** (M1.1, MPC OS 3.9, PGO build), p99 of the 2902 µs block: idle 0.13%, Init chord
@@ -73,25 +90,18 @@ on branch `m2`.
 
 ## Next, in order
 
-1. **Task 12, the presets:** build the 24 in the approved proposal.
-   - First add Horizon far darkening Air's Tone and Echo's High Cut by half an octave, as the author
-     approved. The recipe is in the plan's Task 12 section.
-   - Then level-match with `make preset-levels`, and judge Horizon by ear on Horizon Line, Snow
-     Constellation and Kalimba Loop.
-   - The full macro sweep and the soak grow to 52 presets. The Memory presets' level rule is in the
-     proposal (question 3).
-2. **Task 13:**
-   - the soak with the new strata on (24 h is M2's gate; 1 h for "done");
+1. **Task 13:**
+   - the soak with the new strata on, walking all 52 presets (24 h is M2's gate; 1 h for "done");
    - the PGO trainer over the new presets;
    - the docs:
-     - USER_GUIDE: the new pages, presets, Memory and Keep, and that a project naming Memory reloads
-       with nothing remembered;
+     - USER_GUIDE: the new pages, the 24 presets' rows, Memory and Keep, and that a project naming
+       Memory reloads with nothing remembered;
      - ARCHITECTURE;
      - ROADMAP and its Decisions log, from the plan's As-built blocks;
-     - CHANGELOG 0.0.3;
+     - CHANGELOG 0.0.3 (it takes the Unreleased section);
      - PERFORMANCE, with the measured budget table.
-3. **The device** (the author): a build of `m2` is on the Force. Play it, bench it
-   (`make bench-device`), and answer the device questions below.
+2. **The device** (the author): a build of `m2` with the 24 presets is on the Force. Play it, bench
+   it (`make bench-device`), and answer the device questions below.
 
 ## Decisions the author took on 2026-10-08
 
@@ -111,11 +121,24 @@ All are recorded in the plan, in its As-built blocks and Decisions.
 - **Macros:**
   - Levels and sends are only multiplied, so 0 stays 0.
   - Air Density snaps to off under the knob's mark.
-  - Horizon far darkens Air and Echo; this is to be added in Task 12.
+  - Horizon far darkens Air and Echo (done in Task 12).
 - **Task 12:** the 24 presets in the proposal. The Memory presets name `memory:` and sound whole
   before any Remember.
 - **Offline tools** (demos, preset levels, the trainer, the soak, the test host) wait for Weather's
   source to load, so renders are deterministic.
+
+## Decisions the author took on 2026-10-24
+
+- **`m2` merged into `main`** twice: through Task 11, then through Task 12 and its fixes. Both are
+  unreleased.
+- **Sparse Density quiets Weather with its grains** (Cloud and Stretch: each remaining grain as loud
+  as one grain of the preset's own cloud), rather than a floor of 3 grains or lower preset levels.
+- **Motion toward +1 trims the volume, 1.5 dB at +1**, as thick Density trims 1 dB, rather than
+  reworking two presets or a gentler Motion breath.
+- **Glow keeps no trim:** Kalimba Loop's Air (60%) and Night Crickets' Weather (42%) stay below their
+  recipes instead.
+- **The help text stays on a control's first move**, though it asks MPC for one redraw. The author
+  checks on the Force whether that costs a Q-Link its first step on track edit → automation.
 
 ## How the work is done (agreed with the author)
 
@@ -149,8 +172,15 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
   - Do the Remember and Keep Q-Links send a press (a value over 0.5)?
   - At project load, does MPC call `setParameter` on plugin-owned parameters by index? That would
     step the Source stepper.
+- **Q-Links on track edit → automation** (the 50 ms redraw gate): does a Q-Link keep its value while
+  it turns, and does a control's first step survive the help text's one redraw?
+- **Task 12's presets:**
+  - a listen and a CPU check per preset;
+  - Felt Echoes' Split at C5 against the pad rows;
+  - Horizon by ear on Horizon Line, Snow Constellation and Kalimba Loop, with Cave Kalimba as the
+    dark control.
 - **The Source stepper:** one item per detent; "Surf ..." becoming "Surf"; load times in the trace
-  (a field takes 202–359M ARM instructions to build).
+  (a field takes 202–368M ARM instructions to build).
 - **ROADMAP's Phase 0 list:** what Stop sends to an instrument, CC 64 and the pad latch, MIDI
   channels, two instances at once.
 - **Bench and release:** `make bench-device` on M2, and `tested.json` for v0.0.2 (from CI's
@@ -161,6 +191,10 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
 - **Space's short-Decay network ghost (M1):** at Space Decay near 0.1 s with Haze's long lines,
   Freeze set after a silence can let out a faint ring. It is documented in `dsp/reverb.h` and not
   planned.
+- **Bloom's AM and Ring can make DC by construction** when A has a sine-phase part at harmonic N.
+  For example, a sine A at B Oct 0 under Ring 0.7 gives 0.35 of full scale. No factory preset does
+  (Ring Bells measures −98 dB), but a user can dial it. It is noted in `dsp/bloom.h`; the FM
+  blocker could be extended to them in Task 13.
 - **Small ideas, noted but not planned:**
   - a Decay stage for Bloom;
   - "1 Bar" is 4 quarter notes, because MPC's time signature is ignored;
@@ -170,7 +204,7 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
 
 - **Branches:** work on **`m2`** and push it.
   - Keep a draft PR (`m2` → `main`) saying what's done, decided and open. Devko/AmbientForce#2
-    was merged with Tasks 1–11; open a new one when Task 12 starts.
+    was merged with Tasks 1–11 and #3 with Task 12; open a new one when Task 13 starts.
   - **Merge into `main` or tag only when the author asks.**
 - **No device:** no `bench-device` or `plugin-install`. Never invent device numbers; mark them
   "(device: pending)".
@@ -178,7 +212,8 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
   Host callbacks come only from `processReplacing`. 64-bit counters for anything that runs for
   hours. Getters read caches only.
 - **Parameters:** 0.x, so the list may change, but **append** new parameters after the existing
-  sound parameters (see `surface.py`) so saved projects keep their indices. Every moved control
+  sound parameters (see `surface.py`) so saved projects keep their indices (`surface/params.lock`
+  stops the build when a key moves; `GEN_VST_RELOCK=1` accepts a deliberate break). Every moved control
   needs a `help=` line (the build checks it). Names are ≤ 13 characters and unique; the build
   checks text fit deterministically.
 - **Voice:**

@@ -1,0 +1,26 @@
+ambientforce 1
+about=Remember: the tide plays you back
+volume=-3.8
+h_key=3
+h_scale=4
+h_chord=2
+h_voicing=2
+h_strum=0.4
+g_level=0.45
+g_sub=0
+g_fifth=0.5
+g_oct=0
+b_level=0.6
+b_table=0
+b_age=0.5
+b_swell=2
+b_release=8
+s_mode=1
+s_decay=8
+w_level=0.5
+w_mode=2
+w_drift=0.2
+w_hp=60
+w_duck=0.3
+w_memtap=1
+w_source=builtin:Surf

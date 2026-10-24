@@ -32,7 +32,8 @@ flowchart LR
   writes `params.json`, `layout.conf`, `vst.json`, `build/param_ids.h` (ids, value curves, limits,
   option lists, defaults), `build/factory_presets.h` (the factory presets, embedded) and
   `build/skin_style.json` (for `skin_polish.py`), after checking the layout (geometry, names that fit
-  MPC's labels, Q-Link sets, page groups) and every factory preset (keys, ranges, names).
+  MPC's labels, Q-Link sets, page groups) and every factory preset (keys, ranges, names), and the
+  parameters' order against `params.lock`.
 - **`dsp/`** is the sound: the harmony brain, the strata, Space and the engine. No VST, no files, no
   threads. It renders a `Patch` for the keys it is given.
 - **`plugin/`** is everything between the engine and MPC: VST2 entry points, MIDI, parameters, the
@@ -313,8 +314,15 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 - MPC only notices value changes the plugin makes (lit browser tiles, the stepper, snapped steps)
   when they are pushed with `audioMasterAutomate`, and only re-reads texts after
   `audioMasterUpdateDisplay`. The plugin pushes from `processReplacing` only: at most 48 values per
-  block (round-robin), a display update for changed texts (the status line's among them) at most
-  every 4 blocks, plus the CPU meter's at most twice a second.
+  block (round-robin), and a display update for changed texts (the status line's among them, the
+  CPU meter's at most twice a second) at most once per 50 ms (`Surface::kTextGap`).
+- MPC rebuilds its parameter screen on every `audioMasterUpdateDisplay`, and a Q-Link turned on track
+  edit → automation meanwhile loses its value (sd88me/mpc-vst-plugins, NOTES.md 2026-10-21). So a
+  sound parameter's write asks for no redraw of its own (its text is made when MPC asks); only texts
+  that change on their own or follow another parameter ask (the status line, the stepper, the
+  browser), all through that one gate. A change inside the gap is told at its end, never dropped. The
+  status line's help line is one of them: a control's first move puts its line up, one redraw, and
+  the same control's detents after it ask for none.
 - The status line (parameter 0) is the plugin's own text: the CPU meter, or for 4 s after a move the
   control's help line, for 6 s after a preset load its description, for 6 s after a Remember or a
   Keep what came of it (said in atomics, by the audio thread or the loader's). The UI thread only notes the
@@ -349,7 +357,10 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 ## Parameters and saved state
 
 - **Parameters** may still change during 0.x (the previews); from v0.1 they are **append-only**:
-  MPC projects store values by index. Sound parameters (kind `synth`, 144 of them: 0.0.2's 86 with
+  MPC projects store values by index. `surface/params.lock` (sd88me's format) keeps a change
+  deliberate: a parameter that moves stops `surface.py`; `GEN_VST_RELOCK=1` accepts the break. It
+  locks the order M2 left (the preset stepper and the browser come after the new sound parameters:
+  0.0.2's 98..150 are 165..217 now); see the CHANGELOG. Sound parameters (kind `synth`, 144 of them: 0.0.2's 86 with
   the volume, the four macros and the seven of the free or synced cycles, which come after Tilt in
   that order, then M2's 58) are saved and automatable; the surface's own values (the preset stepper,
   Weather's Source stepper, Remember and Keep, tiles, popup flags) are not. 218 parameters in all.

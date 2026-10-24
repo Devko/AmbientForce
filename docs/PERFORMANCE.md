@@ -159,7 +159,10 @@ Task 6 merged (`61642fe`: init chord 203.0k, worst 400.4k, air 149.0k, weather 1
 in the engine's pieces of 32; bloom 6x2 317.7k to 317.8k, the rest unchanged at this rounding), and
 on the block a sleep that keeps the ring comes in 12.5k at most for the seal itself, nothing
 staged, with 0.5k more for its fade-in over the writes after (7.4k in all with 127 frames staged);
-once a sleep, in a block that goes silent from there.
+once a sleep, in a block that goes silent from there. Bloom's FM DC blocker (2026-10-24, `bloom.h`)
+puts 0.8k a block on the plugin's cases with Couple on FM, counted just before it and after: bloom
+6x2 317.9k to 318.7k, worst 399.5k to 400.3k; 1.1k on the engine's, which the bench compiles itself:
+worst engine 398.9k to 400.0k, worst m2 528.7k to 529.8k (14.20%). The other cases don't move.
 
 The strata's figures below and the oscillator's were counted before `arm-icount` too: compare them
 with each other, not with the table above.
