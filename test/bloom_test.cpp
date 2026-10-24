@@ -967,6 +967,81 @@ void testWidthAndMute() {
     }
 }
 
+// The soak's measure of DC (tools/soak.cpp): each 10 s's mean, its magnitude, averaged (a last piece
+// of a second or more counts), in dBFS.
+double soakDc(const Buf& x) {
+    constexpr size_t kSeg = 441000;
+    double sum = 0.0, abs = 0.0;
+    int pieces = 0;
+    for (size_t i = 0; i < x.size(); ++i) {
+        sum += x[i];
+        const size_t in = (i + 1) % kSeg;
+        if (in == 0 || i + 1 == x.size()) {
+            const size_t len = in == 0 ? kSeg : in;
+            if (len >= 44100) {
+                abs += std::fabs(sum / static_cast<double>(len));
+                ++pieces;
+            }
+            sum = 0.0;
+        }
+    }
+    return db(pieces ? abs / pieces : 0.0);
+}
+
+// Couple FM puts out no DC (bloom.h says where FM makes it, and the DC blocker that takes it off).
+// Felt Piano at Glass Tines' Age, Sway and Smear, unison 2, FM 0.35, B two octaves up (Glass Tines)
+// and one (its second harmonic's sideband: +0.17 of full scale an oscillator): a seventh held 30 s
+// and released over 6 s, 60 s in all. The soak's measure, at most -60 dBFS, on the dry and the send,
+// L and R (without the blocker -52 and -21 dBFS; with it -102 and -75). Then muted while it sounds:
+// the blocker plays out what it holds after the voices stop being rendered, so nothing steps from
+// 80 ms on (the voices 70 dB down by then); dropped there, it stepped 6.5e-3.
+void testFmDc() {
+    std::printf("== bloom: no DC from FM\n");
+    const auto patch = [](int oct) {
+        af::BloomPatch p = plain();
+        p.table = af::TB_FELT_PIANO;
+        p.pos = af::LifePos{0.1f, 0.2f, 0.3f, 0.05f};
+        p.bOctave = oct;
+        p.couple = af::CP_FM;
+        p.coupleAmt = 0.35f;
+        p.unison = 2;
+        p.releaseS = 6.0f;
+        p.width = 0.5f;
+        return p;
+    };
+    for (int oct : {2, 1}) {
+        Bloom b;
+        b.seed(21);
+        b.set(patch(oct), af::HarmonyPatch{});
+        b.play(chordOf({55, 59, 62, 65}), 55, 1.0f);
+        Run r;
+        render(b, r, samples(30.0));
+        b.release(55);
+        render(b, r, samples(30.0));
+        const double worst = std::max({soakDc(r.L), soakDc(r.R), soakDc(r.SL), soakDc(r.SR)});
+        std::printf("  B Oct +%d: DC %.1f dBFS (dry L %.1f R %.1f, send L %.1f R %.1f), RMS %.1f dBFS\n", oct, worst,
+                    soakDc(r.L), soakDc(r.R), soakDc(r.SL), soakDc(r.SR), db(rms(r.L, 0, static_cast<size_t>(samples(30.0)))));
+        CHECK(worst <= -60.0);
+        CHECK(allFinite(r.L) && allFinite(r.SL));
+    }
+    Bloom b;
+    b.seed(22);
+    af::BloomPatch p = patch(1);
+    b.set(p, af::HarmonyPatch{});
+    b.play(chordOf({55, 59, 62, 65}), 55, 1.0f);
+    Run r;
+    render(b, r, samples(2.0));
+    p.mute = true;
+    b.set(p, af::HarmonyPatch{});
+    const size_t at = r.L.size();
+    render(b, r, samples(1.0));
+    // From 80 ms on (the voices at -70 dB, their steps under 1e-4) to the end.
+    const float step = maxStep(r.L, at + static_cast<size_t>(samples(0.08)));
+    std::printf("  muted: the largest step from 80 ms on %.1e, the last sample %.1e\n", step, r.L.back());
+    CHECK(step < 1e-4f);
+    CHECK(b.checkInvariants());
+}
+
 // The same seed and calls give the same output to the bit (reset() too); another seed differs.
 void testDeterminism() {
     std::printf("== bloom: determinism\n");
@@ -1137,6 +1212,7 @@ void bloomTests() {
     testEnvelopeBounds();
     testOddInput();
     testWidthAndMute();
+    testFmDc();
     testDeterminism();
     testNoAllocation();
 }

@@ -16,6 +16,8 @@ may still change between releases.
   plugin catalog's wrapper, 2026-10-21). The texts that change (the status line, the stepper, the
   browser) now ask at most once per 50 ms, instead of up to every 12 ms, and the status line's CPU
   figures go through the same gate (they asked MPC directly).
+- **Bloom's FM no longer adds a DC offset** (its sidebands at B's octave landed on 0 Hz); Sine Garden
+  and Glass Tines lose theirs, and nothing else in them changes.
 
 ## 0.0.2
 

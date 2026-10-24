@@ -1,7 +1,9 @@
 #pragma once
 // The 28 factory presets of 0.0.2, by name. M2 must leave them sounding as they did: Air, Weather and Echo are off
-// in them (their files name none of M2's parameters). So the checks that hold M2 to 0.0.2 cover these and no
-// others: the fingerprints of their phrases (test/preset_test.cpp), the patch map's golden hash, the fields at
+// in them (their files name none of M2's parameters). One exception, the author's decision of 2026-10-24: Bloom's
+// FM DC blocker took Sine Garden's and Glass Tines' DC offset off (their Couple is FM), and nothing else, so the
+// phrases' fingerprints were taken again. The checks that hold M2 to 0.0.2 cover these and no others: the
+// fingerprints of their phrases (test/preset_test.cpp), the patch map's golden hash, the fields at
 // Patch{}'s defaults and the exact-0 checks (test/params_test.cpp). A preset added since sounds Air, Weather
 // and Echo; it is held to the level contract and the macro sweeps like every preset, not to 0.0.2, and
 // does not join this list. The list is checked against af::kFactoryPresets, so a rename in presets/Factory

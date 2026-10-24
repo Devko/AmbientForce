@@ -12,6 +12,25 @@
 //   -> the SVF (dsp/svf.h): LP, BP or HP at Tone; Reso is its Q, 0.5 x 32^reso (0.5 at 0, 0.71
 //     at 0.1, 16 at 1); BP is the band output, whose peak matches LP's resonant peak
 //   x envelope x velocity -> pan (equal power) -> the dry and the send
+//   (Couple FM: the voices' dry sum through a DC blocker first, below)
+//
+// Couple FM makes DC. B runs in step with A at N = 2^(B Oct) times its pitch (a voice starts both at
+// 0, and B's phase step is exactly N times A's), so FM's sidebands of A's harmonics at multiples of N
+// land on 0 Hz: an oscillator's mean is the sum over m of a_mN (-1)^m J_m(2 pi m N beta), a_h the
+// cosine part (against B's sine) of A's harmonic h, beta = Amount / 2 cycles. Sine Bloom at Age 0.5,
+// B an octave up, FM 0.12 (Sine Garden): -0.056 of full scale, mostly its second harmonic's 0.148
+// times -J_1(0.75) = -0.35; Felt Piano at Age 0.1, two octaves up, 0.35 (Glass Tines): +0.005; one
+// octave up, +0.17 (renderCoupled plays each within 0.1% of that). A chord's voices, and a voice's two
+// halves, add theirs in phase. So in FM the dry sum goes through a DC blocker, a one-pole high-pass
+// at 5 Hz (-0.26 dB at 20 Hz, -0.06 at 40, -0.01 at 80, at most +0.003 above), before the send is
+// taken from it. Only in FM: every other Couple plays its samples as before. It starts from nothing
+// each time FM does and when no voice sounds (the last ended under -60 dB, or faded out), and plays
+// out what it holds through a muted Bloom's silence (else that, a twentieth of the DC 0.1 s after
+// Mute, would step to 0 as the voices stop being rendered). A handoff's send beyond the dry keeps its
+// DC: Space's low cut takes it off. AM and Ring make DC too where A has a sine part at harmonic N
+// (A times B: a sine at B Oct 0 under Ring 0.7, 0.35 of full scale), but no factory preset does
+// (Ring Bells: -98 dB); they are left as they are.
+//
 // A new Table or Table B (another one chosen, or the slot's table published over the sine it
 // played until it was built) fades in over 20 ms in every sounding voice, both pairs of tables
 // read only for that long, as Ground does; a second change waits for the fade under way. So Bloom
@@ -94,7 +113,8 @@
 // 121k with FM; unison 2 153k, FM 203k. By PolyForce's calibration (about 1 ns an instruction on
 // the device) that is 3.3% / 4.2% of a block at unison 1 and 5.3% / 7.0% at unison 2, against
 // Bloom's 4% (CONCEPT.md 11): if the device bench agrees, unison 2 is the first cap to fall. A
-// table change reads both pairs of tables for its 20 ms.
+// table change reads both pairs of tables for its 20 ms. FM's DC blocker adds about 6 a sample (make
+// arm-icount, 2026-10-24: bloom 6x2 317.9k to 318.7k a block; worst m2, the engine's, 1.1k more).
 //
 // Real-time rules: everything lives in fixed arrays. Nothing allocates, locks or throws.
 #include "common.h"
@@ -303,6 +323,7 @@ private:
     float a1_ = 0.0f, a2_ = 0.0f, a3_ = 0.0f;
     float ga1_[kChunk] = {}, ga2_[kChunk] = {}, ga3_[kChunk] = {}, gm_[3][kChunk] = {};
     bool sendOn_ = false;                 // a voice may send beyond its dry in this render (sendX_ in use)
+    f2 dc_ = {};                          // Couple FM: the DC the blocker takes off the dry bus, L and R
     // The tables the voices read (TableSet's, as of the last render), and while a new pair fades
     // in the old pair and the samples of the fade to go.
     const Wavetable* tabA_ = nullptr;

@@ -23,6 +23,9 @@ constexpr float kToneRms = 0.70710678f;  // a lifetime frame's (a full-scale sin
 constexpr float kInvSqrt2 = 0.70710678f;
 constexpr float kLog2e = 1.44269504f;
 constexpr float kLog2Thousand = 9.96578428f;   // -60 dB in octaves of amplitude
+// Couple FM's DC blocker on the dry bus (bloom.h says why): y = x - s, s += kDcStep y, a one-pole
+// high-pass with its pole at 1 - kDcStep = exp(-2 pi 5 Hz / rate).
+constexpr float kDcStep = 7.1213e-4f;
 
 // cos(pi / 2 u)^2 for u in 0..1: the handoff's fades, 1 to 0. At most 1: sinCycle's quarter-wave
 // series reads up to 3.6e-6 over 1 near the peak.
@@ -212,6 +215,7 @@ void Bloom::reset() {
     panDirty_ = true;
     tabA_ = tabB_ = oldA_ = oldB_ = nullptr;
     tableFade_ = 0;
+    dc_ = splat2(0.0f);
 }
 
 // --- owners and voices ------------------------------------------------------------------------
@@ -740,6 +744,7 @@ void Bloom::renderBlock(const TableSet& tables, float* outL, float* outR, float*
         tabB_ = tb;
         oldA_ = oldB_ = nullptr;
         tableFade_ = 0;
+        dc_ = splat2(0.0f);   // the voices ended at -60 dB or faded out: what it held is less still
     } else if (tableFade_ == 0 && (ta != tabA_ || tb != tabB_)) {
         // New tables fade in over kTableFade, every sounding voice's oscillators as they are now
         // reading the old ones under them in step. A second change waits for this fade to end.
@@ -801,6 +806,21 @@ void Bloom::renderBlock(const TableSet& tables, float* outL, float* outR, float*
         for (Voice& v : v_)
             if (v.next >= 0 && v.wait > 0) v.wait -= m;
         o += m;
+    }
+    // Couple FM: the dry bus through the DC blocker (bloom.h says why), the send taken from it too.
+    // With nothing heard (Bloom muted) it plays out what it holds over the silence.
+    if (p_.couple != CP_FM) {
+        dc_ = splat2(0.0f);
+    } else if (heard || !zero2(dc_)) {
+        f2 s = dc_;
+        const f2 k = splat2(kDcStep);
+        for (int i = 0; i < n; ++i) {
+            const f2 y = bus_[i] - s;
+            s += k * y;
+            bus_[i] = y;
+        }
+        dc_ = f2{std::fabs(s[0]) < 1e-20f ? 0.0f : s[0], std::fabs(s[1]) < 1e-20f ? 0.0f : s[1]};
+        heard = true;
     }
     if (!heard) {
         send_ = spaceSend;

@@ -519,14 +519,21 @@ void testFactory() {
     // taken from 0.0.2's own build (3e1fb35) of these presets: x86's all 28, the device's (NEON
     // fuses multiply-adds) the five qemu plays. The presets added since are not in it (they sound the
     // new strata). The plain builds only; against profile-guided objects (make test-arm-pgo) the
-    // profile moves the fusing. A 0.0.2 preset changed moves it: then it is taken again.
+    // profile moves the fusing. A 0.0.2 preset changed moves it: then it is taken again. So it was on
+    // 2026-10-24, for Bloom's FM DC blocker (dsp/bloom.h): Sine Garden and Glass Tines, the two with
+    // Couple on FM, lost their DC offset and nothing else (every other factory preset's phrase the same
+    // samples before and after); the 26 others are still 0.0.2's.
     std::printf("  the phrases' fingerprints, folded: %016llx\n", static_cast<unsigned long long>(prints));
 #if AF_PGO_OBJECTS
     std::printf("  (checked in the plain builds, not against profile-guided objects)\n");
 #elif defined(__arm__)
-    CHECK(prints == 0x85132c48c2712eccull);
+    // 2026-10-24: Bloom's FM DC blocker; Sine Garden and Glass Tines changed by their DC only, the author's
+    // decision (0.0.2's was 0x85132c48c2712ecc; of the five, Sine Garden moved).
+    CHECK(prints == 0x555ab002dcfe54d5ull);
 #else
-    CHECK(prints == 0x17654dd27920e4e0ull);
+    // 2026-10-24: Bloom's FM DC blocker; Sine Garden and Glass Tines changed by their DC only, the author's
+    // decision (0.0.2's was 0x17654dd27920e4e0).
+    CHECK(prints == 0x5019ba22056aaee7ull);
 #endif
 }
 
