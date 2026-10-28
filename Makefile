@@ -89,7 +89,7 @@ $(OBJ)/$(1)/%.o: %.cpp $(OBJ)/$(1)/flags | $(GEN)
 $(call flagsrule,$(1),$(2),$(3))
 endef
 
-.PHONY: all surface skin test test-arm test-arm-pgo test-module test-module-arm bench soak arm-plugin arm-bench arm-bench-stages arm-icount bench-device preview demos preset-levels plugin-package plugin-install clean FORCE
+.PHONY: all surface skin test test-arm test-arm-pgo test-module test-module-arm bench soak arm-plugin arm-bench arm-bench-stages arm-icount bench-device preview demos preset-levels plugin-package test-install plugin-install clean FORCE
 # A recipe that fails leaves no half-written target behind for the next make to trust.
 .DELETE_ON_ERROR:
 # The stage-timing build too: a -DAF_STAGE_TIMING break shows here, not at bench time.
@@ -435,7 +435,14 @@ plugin-package: $(ARM_SO) $(SKIN)
 		--about "AmbientWerk ambient instrument (preview, in development)." \
 		--requires "root SSH (MockbaMod); MPC OS 3.x for the pages" \
 		--user-data Presets --user-data preset_favorites.txt --user-data preset_recent.txt \
-		-o dist
+		--previous-name "$(strip $(PREV_NAME))" -o dist
+
+# The package's installer against scratch folders: an upgrade from the old name moves the user's files over; and
+# release.py refuses an old name that isn't one. (Used as $(strip $(PREV_NAME)): make keeps the space before a comment.)
+PREV_NAME := AmbientForce # werk-rename: keep
+test-install: plugin-package
+	sh test/install_test.sh dist/AmbientWerk-$(PLUGIN_VERSION)-mpc-armv7.zip "$(strip $(PREV_NAME))"
+	sh test/release_test.sh "$(PY)" $(MV)/tools/release.py $(ARM_SO) "$(SKIN_DIR)" $(SURF_OUT)/pluginlist-entry.xml
 
 # Install on a device: stops MPC, backs up + edits MPC.settings, restarts MPC. Save the MPC
 # project first. Usage: make plugin-install FORCE=root@<ip>
