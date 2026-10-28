@@ -1,6 +1,6 @@
-// From EffectForce dsp/reverb.h (4160e87), namespace ef -> af; Haze and Abyss added.
+// From EffectWerk dsp/reverb.h (4160e87), namespace ef -> af; Haze and Abyss added.
 #pragma once
-// Reverb (EffectForce's docs/DESIGN.md, "Modules"; here inside Space, dsp/space.h): the flagship,
+// Reverb (EffectWerk's docs/DESIGN.md, "Modules"; here inside Space, dsp/space.h): the flagship,
 // so it spends its CPU on a smooth tail.
 //
 //   predelay -> low cut -> 4 series allpasses per side -> into 8 lines (L the even, R the odd)
@@ -11,11 +11,11 @@
 // Modes choose the lines' base lengths (primes spread 1:3 geometrically), the diffusion and the
 // modulation: Room 10..30 ms lines, dense and quick; Hall 30..92 ms, smooth, a little modulation;
 // Plate 9..28 ms with Dattorro's input diffusion, the fastest build-up, bright; Space 75..250 ms,
-// slow and deep modulation. AmbientForce adds two, for pads that live in the reverb: Haze, Space's
+// slow and deep modulation. AmbientWerk adds two, for pads that live in the reverb: Haze, Space's
 // lines veiled and distant (the strongest input diffusion, so nothing arrives as an edge; half as
 // much modulation again as Space; the damping from half the Damp asked for, so darker); and Abyss,
 // near-endless (lines 1.3x Space's, 98..325 ms, Hall's diffusion, Space's modulation, and four times
-// the decay asked for: Decay 30 rings for two minutes). EffectForce's four play as they did there,
+// the decay asked for: Decay 30 rings for two minutes). EffectWerk's four play as they did there,
 // bit for bit. A mode change fades the wet out (12 ms), starts the network afresh in the new mode
 // and fades it in: a program change, never a click.
 //
@@ -84,7 +84,7 @@ public:
         int shimmerInterval = 0;    // 0: +12, 1: +7, 2: +19, 3: -12 semitones
     };
     enum Interval : int { UP_OCTAVE, UP_FIFTH, UP_TWELFTH, DOWN_OCTAVE, kIntervals };
-    // AmbientForce's surface names them so (its option lists must be these, entry by entry:
+    // AmbientWerk's surface names them so (its option lists must be these, entry by entry:
     // plugin/patch_map.cpp checks it as it compiles).
     static constexpr const char* kModeNames[] = {"Room", "Hall", "Plate", "Space", "Haze", "Abyss"};
     static constexpr const char* kIntervalNames[] = {"+12", "+7", "+19", "-12"};

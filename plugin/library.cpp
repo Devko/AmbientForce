@@ -1,4 +1,4 @@
-// From SubForce plugin/library.cpp (8846421), namespace sf -> af, unchanged otherwise.
+// From SubWerk plugin/library.cpp (8846421), namespace sf -> af, unchanged otherwise.
 #include "library.h"
 
 #include <algorithm>

@@ -1,4 +1,4 @@
-// From SubForce test/plugin_test.cpp (8846421), sft -> aft; the synth's own checks left out.
+// From SubWerk test/plugin_test.cpp (8846421), sft -> aft; the synth's own checks left out.
 // The test suite: the engine on its own (engine_test.cpp), then the whole plugin driven through
 // its VST2 entry points the way MPC drives it (128-frame blocks, events with deltaFrames, 0..1
 // params). Built with ASan/UBSan by `make test`, for the Force's CPU under qemu by `make test-arm`.
@@ -102,7 +102,7 @@ double pitchHz(const std::vector<float>& x, size_t from, size_t to) {
     return n > 0 ? 44100.0 * n / (last - first) : 0.0;
 }
 
-// SubForce's test/engine_test.cpp toneAmp (8846421), shared here.
+// SubWerk's test/engine_test.cpp toneAmp (8846421), shared here.
 double toneAmp(const std::vector<float>& x, double hz) {
     double re = 0.0, im = 0.0, wsum = 0.0;
     const double n = static_cast<double>(x.size());
@@ -130,7 +130,7 @@ void testBasics() {
     CHECK(h.e->uniqueID == vst::fourcc("AmFc"));
     char b[256] = {};
     h.e->dispatcher(h.e, vst::effGetEffectName, 0, 0, b, 0.0f);
-    CHECK(std::string(b) == "AmbientForce");
+    CHECK(std::string(b) == "AmbientWerk");
     h.e->dispatcher(h.e, vst::effGetVendorString, 0, 0, b, 0.0f);
     CHECK(std::string(b) == "Devko");
     CHECK(h.e->dispatcher(h.e, vst::effCanDo, 0, 0, const_cast<char*>("receiveVstMidiEvent"), 0.0f) == 1);
@@ -326,11 +326,11 @@ void testTrace() {
     const std::string dir = fixtureDir() + "/trace";
     std::filesystem::create_directories(dir);
     setenv("AF_TRACE_DIR", dir.c_str(), 1);
-    std::ofstream(dir + "/ambientforce.trace").put('\n');
+    std::ofstream(dir + "/ambientwerk.trace").put('\n');
     const auto wait = [] { std::this_thread::sleep_for(std::chrono::milliseconds(1100)); };
     wait();   // the trace looks for its flag file once a second
     const auto log = [&dir] {
-        std::ifstream f(dir + "/ambientforce.log");
+        std::ifstream f(dir + "/ambientwerk.log");
         return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
     };
     Host h;
@@ -365,7 +365,7 @@ void testTrace() {
     h.run(1);
     h.display(af::P_STATUS);
     CHECK(log().find("midi: 44 more events dropped") != std::string::npos);
-    std::filesystem::remove(dir + "/ambientforce.trace");
+    std::filesystem::remove(dir + "/ambientwerk.trace");
     unsetenv("AF_TRACE_DIR");
     wait();   // off again for whatever comes next
 }
@@ -987,11 +987,11 @@ void testMemoryKey() {
     std::printf("== Weather's source: Memory is the engine's\n");
     Host h;
     CHECK(showsSource(h, "Rain on Roof"));
-    CHECK(h.load("ambientforce 1\nw_source=memory:\n") == 1 && sourceText(h) == "Memory");
+    CHECK(h.load("ambientwerk 1\nw_source=memory:\n") == 1 && sourceText(h) == "Memory");
     std::this_thread::sleep_for(std::chrono::milliseconds(400));   // past the debounce, many of the loader's passes
     h.run(4);
     CHECK(sourceText(h) == "Memory" && h.chunk().find("\nw_source=memory:\n") != std::string::npos);
-    CHECK(h.load("ambientforce 1\nw_source=builtin:Rain on Roof\n") == 1 && sourceText(h) == "Rain on Roof");
+    CHECK(h.load("ambientwerk 1\nw_source=builtin:Rain on Roof\n") == 1 && sourceText(h) == "Rain on Roof");
 }
 
 // Check 3, and the button's way to the engine: a Remember pressed through setParameter reaches the engine at the
@@ -1050,7 +1050,7 @@ void testRemember() {
     m.run(3 * kBlocksPerSec);
     {
         HeldLoad held("plugin:Weather/Held.wav");
-        m.loadRaw("ambientforce 1\nw_source=plugin:Weather/Held.wav\n");
+        m.loadRaw("ambientwerk 1\nw_source=plugin:Weather/Held.wav\n");
         CHECK(held.gate.entered());
         tap(m, af::P_W_REMEMBER);
         m.run(1);
@@ -1079,12 +1079,12 @@ void testLeavingMemory() {
         weatherAlone(a);
         a.on(57);
         a.run(kBlocksPerSec);
-        CHECK(a.load("ambientforce 1\nw_source=memory:\n") == 1);
+        CHECK(a.load("ambientwerk 1\nw_source=memory:\n") == 1);
         a.run(kBlocksPerSec / 2);   // (the grains fading)
         const Heard onMemory = heard(a, kBlocksPerSec);
         af::SourceCache::get().clear();   // Held.wav to be read: its load held
         HeldLoad held("plugin:Weather/Held.wav");
-        a.loadRaw("ambientforce 1\nw_source=plugin:Weather/Held.wav\n");
+        a.loadRaw("ambientwerk 1\nw_source=plugin:Weather/Held.wav\n");
         CHECK(held.gate.entered());
         const Heard loading = heard(a, kBlocksPerSec);
         std::printf("  nothing remembered: on Memory %.1f dBFS, while Held.wav loads %.1f dBFS (the field the loader has)\n",
@@ -1105,7 +1105,7 @@ void testLeavingMemory() {
         Heard loading{}, loaded{};
         {
             HeldLoad held("plugin:Weather/Held.wav");
-            b.loadRaw("ambientforce 1\nw_source=plugin:Weather/Held.wav\n");
+            b.loadRaw("ambientwerk 1\nw_source=plugin:Weather/Held.wav\n");
             CHECK(held.gate.entered());
             loading = heard(b, kBlocksPerSec);
         }
@@ -1124,7 +1124,7 @@ void testLeavingMemory() {
 // No SSD: it says it couldn't write.
 void testKeep() {
     std::printf("== Keep through the plugin\n");
-    const std::string memories = sourceDir() + "/ssd/AmbientForce/Memories";
+    const std::string memories = sourceDir() + "/ssd/AmbientWerk/Memories";
     std::error_code ec;
     std::filesystem::remove_all(memories, ec);
     Host a;
@@ -1140,7 +1140,7 @@ void testKeep() {
     h.press(af::P_W_KEEP);
     CHECK(statusSays(h, "KEEP: Memory 001 on the SSD") && std::filesystem::exists(memories + "/Memory 001.wav"));
     CHECK(showsSource(h, "Memory 001"));
-    const std::string key = "ssd:AmbientForce/Memories/Memory 001.wav";
+    const std::string key = "ssd:AmbientWerk/Memories/Memory 001.wav";
     const std::string project = h.chunk();
     CHECK(project.find("\nw_source=" + key + "\n") != std::string::npos);
     af::WavData w;
@@ -1156,7 +1156,7 @@ void testKeep() {
 
     // A Keep pressed while one writes: ignored. (Back on Memory first: Keep's file becomes the source only in
     // place of Memory.)
-    CHECK(h.load("ambientforce 1\nw_source=memory:\n") == 1);
+    CHECK(h.load("ambientwerk 1\nw_source=memory:\n") == 1);
     Gate& gate = newGate();
     af::setKeepHook(holdKeepWrite, &gate);
     h.press(af::P_W_KEEP);
@@ -1202,7 +1202,7 @@ void testKeepSwitch() {
         af::setKeepHook(holdKeepWrite, &gate);
         tap(h, af::P_W_KEEP);
         CHECK(gate.entered());
-        h.loadRaw("ambientforce 1\nw_source=builtin:Surf\n");   // picked while the file is written
+        h.loadRaw("ambientwerk 1\nw_source=builtin:Surf\n");   // picked while the file is written
         gate.release();
         CHECK(waitFor([&] {
             h.run(1);
@@ -1247,7 +1247,7 @@ void testStepperListing() {
     makeWav(sourceDir() + "/plugin/Weather/Bb.wav", 1.0, 300.0);
     makeWav(sourceDir() + "/plugin/Weather/Cc.wav", 1.0, 400.0);
     Host h;
-    CHECK(h.load("ambientforce 1\nw_source=plugin:Weather/Bb.wav\n") == 1 && sourceText(h) == "Bb");
+    CHECK(h.load("ambientwerk 1\nw_source=plugin:Weather/Bb.wav\n") == 1 && sourceText(h) == "Bb");
     for (int k = 0; k < 20; ++k) {
         char name[64];
         std::snprintf(name, sizeof name, "/plugin/Weather/A%02d.wav", k);
@@ -1261,7 +1261,7 @@ void testStepperListing() {
     // A long name, cut.
     const std::string longName = "Rain on the tin roof of the boathouse";
     makeWav(sourceDir() + "/plugin/Weather/" + longName + ".wav", 1.0, 600.0);
-    CHECK(h.load("ambientforce 1\nw_source=plugin:Weather/" + longName + ".wav\n") == 1);
+    CHECK(h.load("ambientwerk 1\nw_source=plugin:Weather/" + longName + ".wav\n") == 1);
     const std::string shown = sourceText(h);
     std::printf("  \"%s\" shows as \"%s\"\n", longName.c_str(), shown.c_str());
     CHECK(shown == af::fitText("", longName, "", af::kSourceTextRoom) && shown.size() < longName.size() &&
@@ -1294,10 +1294,10 @@ void testSourceBlocks() {
         // plays whole, on the transport as it last was: Weather sounds on, Surf is let go of in the first.
         Host w;
         w.set(af::P_W_LEVEL, 1.0f);
-        CHECK(w.load("ambientforce 1\nw_source=builtin:Surf\n") == 1 && showsSource(w, "Surf"));
+        CHECK(w.load("ambientwerk 1\nw_source=builtin:Surf\n") == 1 && showsSource(w, "Surf"));
         w.on(60);
         w.run(kBlocksPerSec);
-        CHECK(w.load("ambientforce 1\nw_source=builtin:Stream\n") == 1 && showsSource(w, "Stream"));
+        CHECK(w.load("ambientwerk 1\nw_source=builtin:Stream\n") == 1 && showsSource(w, "Stream"));
         w.log.throwOnTime = true;
         const float during = w.run(3);
         w.log.throwOnTime = false;
@@ -1310,31 +1310,31 @@ void testSourceBlocks() {
     }
     {
         Host h;   // Weather silent (level 0): its blocks hold nothing, the throw changes none of that
-        CHECK(h.load("ambientforce 1\nw_source=builtin:Surf\n") == 1 && showsSource(h, "Surf"));
+        CHECK(h.load("ambientwerk 1\nw_source=builtin:Surf\n") == 1 && showsSource(h, "Surf"));
         h.run(4);
         h.log.throwOnTime = true;
         CHECK(h.run(3) == 0.0f && h.finite);
         h.log.throwOnTime = false;
-        CHECK(h.load("ambientforce 1\nw_source=builtin:Stream\n") == 1 && showsSource(h, "Stream"));
+        CHECK(h.load("ambientwerk 1\nw_source=builtin:Stream\n") == 1 && showsSource(h, "Stream"));
         CHECK(inUse(1));
     }
     {
         Host q;   // suspended, Weather silent: a source picked meanwhile frees the one before at once
-        CHECK(q.load("ambientforce 1\nw_source=builtin:Surf\n") == 1 && showsSource(q, "Surf"));
+        CHECK(q.load("ambientwerk 1\nw_source=builtin:Surf\n") == 1 && showsSource(q, "Surf"));
         q.run(4);
         q.e->dispatcher(q.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
-        CHECK(q.load("ambientforce 1\nw_source=builtin:Stream\n") == 1 && showsSource(q, "Stream"));
+        CHECK(q.load("ambientwerk 1\nw_source=builtin:Stream\n") == 1 && showsSource(q, "Stream"));
         CHECK(inUse(1));
         q.e->dispatcher(q.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);
     }
     {
         Host w;   // suspended with Weather sounding: the source it reads stays until a block has run
         w.set(af::P_W_LEVEL, 1.0f);
-        CHECK(w.load("ambientforce 1\nw_source=builtin:Surf\n") == 1 && showsSource(w, "Surf"));
+        CHECK(w.load("ambientwerk 1\nw_source=builtin:Surf\n") == 1 && showsSource(w, "Surf"));
         w.on(60);
         w.run(kBlocksPerSec);
         w.e->dispatcher(w.e, vst::effMainsChanged, 0, 0, nullptr, 0.0f);
-        CHECK(w.load("ambientforce 1\nw_source=builtin:Stream\n") == 1 && showsSource(w, "Stream"));
+        CHECK(w.load("ambientwerk 1\nw_source=builtin:Stream\n") == 1 && showsSource(w, "Stream"));
         passes();
         CHECK(sourcesInUse() == 2);
         w.e->dispatcher(w.e, vst::effMainsChanged, 0, 1, nullptr, 0.0f);
@@ -1366,7 +1366,7 @@ void testSourceLifetime() {
     {
         HeldLoad held("plugin:Weather/Lot 0.wav");
         Host* h = new Host;
-        h->loadRaw("ambientforce 1\nw_source=plugin:Weather/Lot 0.wav\n");
+        h->loadRaw("ambientwerk 1\nw_source=plugin:Weather/Lot 0.wav\n");
         CHECK(held.gate.entered());
         CHECK(waitsThenGoes(h, held.gate));
     }
@@ -1386,7 +1386,7 @@ void testSourceLifetime() {
     const auto t0 = std::chrono::steady_clock::now();
     for (int k = 0; k < 20; ++k) {
         Host h;
-        h.loadRaw("ambientforce 1\nw_source=plugin:Weather/Lot " + std::to_string(k) + ".wav\n");
+        h.loadRaw("ambientwerk 1\nw_source=plugin:Weather/Lot " + std::to_string(k) + ".wav\n");
         h.run(1);
     }
     {
@@ -1394,7 +1394,7 @@ void testSourceLifetime() {
         af::SourceCache::get().clear();
         for (int k = 0; k < 20; ++k) {
             hs.push_back(std::make_unique<Host>());
-            hs.back()->loadRaw("ambientforce 1\nw_source=plugin:Weather/Lot " + std::to_string(19 - k) + ".wav\n");
+            hs.back()->loadRaw("ambientwerk 1\nw_source=plugin:Weather/Lot " + std::to_string(19 - k) + ".wav\n");
             hs.back()->run(1);
         }
     }
@@ -1457,7 +1457,7 @@ void testAudioThreadQuiet() {
     h.press(af::P_W_KEEP);   // Keep writing on the loader's thread, then Weather moved to the file
     CHECK(until([&] { return sourceText(h).compare(0, 8, "Memory 0") == 0 && sourceText(h).find("...") == std::string::npos; }));
     play(kBlocksPerSec);
-    h.load("ambientforce 1\nw_source=builtin:Surf\n");   // away from the file
+    h.load("ambientwerk 1\nw_source=builtin:Surf\n");   // away from the file
     CHECK(until([&] { return sourceText(h) == "Surf"; }));
     play(kBlocksPerSec / 2);
     std::printf("  %d blocks: %d allocations, %d locks\n", blocks, allocs, g_locks);

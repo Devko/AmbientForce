@@ -24,7 +24,7 @@ namespace {
 // keeps its tables to the end: the OS takes them back. The builder looks at `stop` between pairs
 // of frames, so the wait is a few ms.
 //
-// The unload itself was tried by hand: a loader that dlopens build/ambientforce.so, makes and
+// The unload itself was tried by hand: a loader that dlopens build/ambientwerk.so, makes and
 // closes an instance and dlcloses it, mid-build (dlclose took 1 ms) and after all tables were
 // built (2 ms; resident memory flat over four such cycles). The tests link the plugin
 // statically, so they go through releaseTables() instead.

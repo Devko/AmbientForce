@@ -1,4 +1,4 @@
-// From SubForce plugin/trace.cpp (8846421), namespace sf -> af, unchanged otherwise.
+// From SubWerk plugin/trace.cpp (8846421), namespace sf -> af, unchanged otherwise.
 #include "trace.h"
 
 #include <chrono>
@@ -42,7 +42,7 @@ bool tracing() {
         checked = true;
         checkedMs = now;
         struct stat st{};
-        on = ::stat((traceDir() + "/ambientforce.trace").c_str(), &st) == 0;
+        on = ::stat((traceDir() + "/ambientwerk.trace").c_str(), &st) == 0;
         if (!on && logFile) {
             std::fclose(logFile);
             logFile = nullptr;
@@ -54,7 +54,7 @@ bool tracing() {
 void trace(const char* fmt, ...) {
     if (!tracing()) return;
     std::lock_guard<std::mutex> lk(mtx);
-    if (!logFile) logFile = std::fopen((traceDir() + "/ambientforce.log").c_str(), "a");
+    if (!logFile) logFile = std::fopen((traceDir() + "/ambientwerk.log").c_str(), "a");
     if (!logFile || std::ftell(logFile) > kMaxBytes) return;
     // Wall-clock time, to line up with MPC's own log (journalctl -u acvs).
     const auto t = std::chrono::system_clock::now();

@@ -1,4 +1,4 @@
-// From SubForce test/host.h (8846421), sft -> aft; without the synth's bare voice.
+// From SubWerk test/host.h (8846421), sft -> aft; without the synth's bare voice.
 #pragma once
 // A fake MPC: drives the plugin through its VST2 entry points the way MPC does (128-frame
 // blocks, events with deltaFrames, 0..1 params), records what the plugin pushes back
@@ -189,7 +189,7 @@ struct Turn {
 
 void engineTests();      // engine_test.cpp: the engine on its own (Listen routing, keys, Stop, the mix, the output)
 void reverbTests();      // reverb_test.cpp: the Reverb and Space on their own
-void echoTests();        // echo_test.cpp: the Delay and Echo on their own (EffectForce's checks, Diffuse, silent(), the return after it)
+void echoTests();        // echo_test.cpp: the Delay and Echo on their own (EffectWerk's checks, Diffuse, silent(), the return after it)
 void harmonyTests();     // harmony_test.cpp: the harmony brain on its own (scales, chords, memory)
 void airgenTests();      // airgen_test.cpp: Air's generator on its own (timing, Gravity, patterns, Echo, Loop)
 void tablesTests();      // tables_test.cpp: the table library, the life models, the builder thread

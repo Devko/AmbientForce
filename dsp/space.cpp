@@ -28,7 +28,7 @@ const float kAttack = smoothCoef(0.005f), kRelease = smoothCoef(0.4f), kGlide = 
 
 } // namespace
 
-// Wet only before any set() too: Reverb::Params' own mix is EffectForce's 0.3.
+// Wet only before any set() too: Reverb::Params' own mix is EffectWerk's 0.3.
 Space::Space() {
     rev_.mix = 1.0f;
     reset();

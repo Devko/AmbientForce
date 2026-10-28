@@ -1,10 +1,10 @@
 #pragma once
-// The lifetime oscillator (CONCEPT.md 5.2). A wavetable oscillator over PolyForce's table layout
+// The lifetime oscillator (CONCEPT.md 5.2). A wavetable oscillator over PolyWerk's table layout
 // (wavetable.h); LifeScan, the read position that moves through a lifetime table (Age, Sway and
 // Smear); and the Couple modes that join oscillator A to oscillator B. Header-only: templates and
 // small inline functions, compiled into each stratum that uses them.
 //
-// Two reads, chosen at compile time: 4-point Hermite interpolation (TableOsc) and PolyForce's
+// Two reads, chosen at compile time: 4-point Hermite interpolation (TableOsc) and PolyWerk's
 // linear one (TableOscLinear). Mip levels 2 to 5 keep 8 samples per cycle of their top harmonic
 // (levels 0 and 1, below 51 Hz, fewer; levels 6 and up more), and linear interpolation there
 // leaves images of the top harmonics folded anywhere into the audio band: at worst -64 dB under a
@@ -19,7 +19,7 @@
 // and about 100 more per render (the pitch, the position, the read's set-up), 3 a sample at the
 // control step's 32. With 32-sample renders a moving position crosses frames in about 1 render in
 // 3 at the fastest sway (depth 1, 2 Hz), 1 in 10 at 0.5 Hz, 1 in 30 at full Smear, and 1 in 250
-// at Bloom's and Ground's default settings. By PolyForce's calibration (its ARM instructions per
+// at Bloom's and Ground's default settings. By PolyWerk's calibration (its ARM instructions per
 // block against its device bench: about 1 ns an instruction), a Hermite oscillator over a pair of
 // frames is about 0.29% of a 128-frame block and a linear one over one frame about 0.09%. So
 // Bloom's oscillator A reads with Hermite and its oscillator B, mostly a digital wave, linearly
@@ -196,7 +196,7 @@ AF_INLINE void taps(const int16_t* p, uint32_t j, uint32_t wrap, float& xm, floa
 // n samples into out; returns the phase after the last. The phase is a 32-bit fixed-point fraction
 // of a cycle: its top bits index the level, the rest are the interpolation fraction, and the
 // wrap-around is integer overflow. FM: fm[i] (cycles) moves the read, not the phase itself.
-// Hermite: four samples a frame; else two (linear, PolyForce's read). K: the ReadKind. The span comes
+// Hermite: four samples a frame; else two (linear, PolyWerk's read). K: the ReadKind. The span comes
 // by value: a span whose address went out would give span() a stack guard on every render.
 template <bool Hermite, int K, bool FM>
 uint32_t play(const Span s, uint32_t ph, uint32_t dph, float* out, int n, const float* fm) {
@@ -268,7 +268,7 @@ uint32_t play(const Span s, uint32_t ph, uint32_t dph, float* out, int n, const 
 // Hermite: the 4-point read (TableOsc), else the linear one (TableOscLinear); see the top of this
 // file for what each costs and leaves behind.
 //
-// The phase is a 32-bit fixed-point fraction of a cycle, as in PolyForce. Adding the increment
+// The phase is a 32-bit fixed-point fraction of a cycle, as in PolyWerk. Adding the increment
 // wraps it by integer overflow, which is exact: after any number of samples, hours of them, the
 // phase is exactly where that many increments put it. Its one error is the increment's rounding
 // to 2^-32 cycles, a pitch at most 1e-5 Hz off that never changes. (A float phase wrapped every

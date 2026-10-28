@@ -17,7 +17,7 @@
 ## Getting started
 
 1. Install it (`make plugin-install`, or a release zip's `install.sh`; both restart MPC).
-2. On a track, add **AmbientForce** from MPC's instrument plugins.
+2. On a track, add **AmbientWerk** from MPC's instrument plugins.
 3. Open its screen: the **PLAY** page. Init is in C Major, tuned Just, with Input on Snap, so every
    pad is in key.
 4. Press one pad and hold it. **Bloom** plays a chord on it (an open triad) that swells in over
@@ -36,7 +36,7 @@ says what it does for a few seconds.
 
 ## One gesture, several strata
 
-AmbientForce is built from layers of sound, the **strata**, that all answer one MIDI stream. A key
+AmbientWerk is built from layers of sound, the **strata**, that all answer one MIDI stream. A key
 goes to the **harmony brain** first (key, scale, tuning, chord, memory), and every stratum then
 hears it in its own way. M1 has two strata; Air (generative melody) and Weather (texture) come in
 M2 ([Roadmap](ROADMAP.md)).
@@ -89,7 +89,7 @@ your hands are on: **Level, Tone, Age, Sway**, then each one's character (Ground
 Bloom's **Blend**), its time (**Gravity**, **Swell**), its **Space** send and its **Width**.
 
 The status line at the top of every page: `VOICES 4   CPU 6%   PEAK 9%`. VOICES counts Bloom's
-voices in use and Ground while it sounds; CPU is AmbientForce's share of MPC's audio block over the
+voices in use and Ground while it sounds; CPU is AmbientWerk's share of MPC's audio block over the
 last half second, PEAK its slowest block in that time.
 
 **The status line also says what you just did.** Move any control and for 4 s it shows that
@@ -292,7 +292,7 @@ by the harmony.
 
 ### Hold and the pedal
 
-- **Hold** latches what you play. Let go, and the keys stay down for AmbientForce. The first note-on
+- **Hold** latches what you play. Let go, and the keys stay down for AmbientWerk. The first note-on
   after **all** your fingers have left starts the next chord: the latched one lets go once the new
   one has started, so the notes they share carry on. Keys pressed while a finger is still down join
   what is sounding. Turning Hold off lets the latched keys go (to the pedal, if it is down).
@@ -425,7 +425,7 @@ The table library, every one of them computed when the plugin loads (no samples 
 | Tape Strings | A string section on tape: a mellowing saw, every partial gently beating |
 | Sine, Triangle, Saw, Square | The digital waves, one frame each (Age and Sway do nothing on them) |
 
-The tables are built on a background thread when the first AmbientForce loads, in this order, and
+The tables are built on a background thread when the first AmbientWerk loads, in this order, and
 shared by every instance. Until a table is ready, its slots play a sine, then fade into the table
 over 20 ms when it arrives.
 
@@ -639,7 +639,7 @@ without leaning on the limiter.
 - **PRESETS page**: categories on the left (FAVORITES and RECENT first), presets on the right; tap
   to load. **FAV** marks the loaded preset as a favorite, **RND** loads a random preset of the
   category shown (never the one loaded), **SAVE** writes `User NNN.afp` to `Presets/User/` in the
-  plugin folder (`/sdcard/Synths/Devko - VST - AmbientForce/`; there is no text entry on the device,
+  plugin folder (`/sdcard/Synths/Devko - VST - AmbientWerk/`; there is no text entry on the device,
   so presets are numbered, and a number is never used twice; rename them on a computer), **INIT**
   loads Init.
 - **The preset stepper** at the top of PLAY (and Q-Link 1 on PRESETS) walks all presets, one per
@@ -647,10 +647,10 @@ without leaning on the limiter.
 - There is no Randomize: an instant jump of every value under a drone that holds for minutes isn't
   music. The instrument's answer comes in M3: Evolve, which glides to a mutation of the preset over
   minutes ([Roadmap](ROADMAP.md)).
-- Presets on the Force's drive: `/media/AkaiForce/AmbientForce Presets/`. Folders inside become
+- Presets on the Force's drive: `/media/AkaiForce/AmbientWerk Presets/`. Folders inside become
   categories, loose files go to "Unsorted", and a folder named like a factory category shows as
   "<Name> (files)". Files added, renamed or deleted while MPC runs show up when you browse.
-- A preset file is plain text: `ambientforce 1`, then `key=value` lines of real values (Hz,
+- A preset file is plain text: `ambientwerk 1`, then `key=value` lines of real values (Hz,
   seconds, an option's number), the same as an MPC project stores. An optional `about=` line is the
   preset's description: the status line shows `NAME: description` for 6 s when it loads, or the name
   alone without one. SAVE writes none; add one on a computer, in plain ASCII, about 40 characters
@@ -663,14 +663,14 @@ without leaning on the limiter.
 **On Stop** (HARMONY page) says what Stop does to a sounding landscape:
 
 - **Keep**: nothing. It plays on with the transport stopped.
-- **Fade** (Init): the output fades to silence over 8 s; then AmbientForce resets (the harmony
+- **Fade** (Init): the output fades to silence over 8 s; then AmbientWerk resets (the harmony
   forgotten) and sleeps until the next note. A note-on, or the transport starting again, during the
   fade turns it round: the sound comes back up.
 - **Cut**: silence at once, and sleep.
 
 On Stop changed during a fade applies at once: Keep turns the fade round, Cut silences.
 
-AmbientForce takes the transport stopping as Stop, and also a short suspend (MPC stopping and
+AmbientWerk takes the transport stopping as Stop, and also a short suspend (MPC stopping and
 restarting processing within 250 ms). A longer suspend resets it.
 What MPC sends an instrument on Stop is one of the questions for the first device run
 ([Roadmap](ROADMAP.md#phase-0-the-probe)).
@@ -686,7 +686,7 @@ What MPC sends an instrument on Stop is one of the questions for the first devic
 | CC 123 | All notes off: every key let go (held by a finger, the pedal or Hold); what the memory keeps plays on |
 | Pitch bend, mod wheel, aftertouch | Not used in M1 |
 
-AmbientForce listens on every MIDI channel. Whether the Force's own pad latch and a sustain pedal
+AmbientWerk listens on every MIDI channel. Whether the Force's own pad latch and a sustain pedal
 reach a plugin as notes and CC 64, and whether MIDI tracks can feed one plugin track on separate
 channels, are still to be found out on the device.
 
@@ -715,7 +715,7 @@ Measured on the Force (MPC OS 3.9), in percent of MPC's audio block, average and
 
 - **One stereo output.** MPC hears only a plugin's first stereo pair, so the strata can't go to
   separate tracks or mixer channels.
-- **No MIDI out.** AmbientForce sends none, and MPC drops a plugin's MIDI output anyway: later, Air's
+- **No MIDI out.** AmbientWerk sends none, and MPC drops a plugin's MIDI output anyway: later, Air's
   notes won't be able to play other tracks.
 - **No file import yet.** Lifetime tables from your own recordings come in M3; the tables are the
   computed ones.

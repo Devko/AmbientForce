@@ -1,4 +1,4 @@
-// From EffectForce test/module_main.cpp (4160e87), eft -> aft; the suite in namespace aft.
+// From EffectWerk test/module_main.cpp (4160e87), eft -> aft; the suite in namespace aft.
 // One dsp suite on its own: make test-module M=<suite> builds this with -DMODULE_TESTS=<suite>Tests,
 // test/<suite>_test.cpp and every dsp/*.cpp. The full suite (make test) calls every suite from
 // plugin_test.cpp's main.

@@ -1,4 +1,4 @@
-// From EffectForce dsp/reverb.cpp (4160e87), namespace ef -> af; Haze and Abyss added.
+// From EffectWerk dsp/reverb.cpp (4160e87), namespace ef -> af; Haze and Abyss added.
 #include "reverb.h"
 
 #include <algorithm>
@@ -441,7 +441,7 @@ void Reverb::chunkSetup(int n) {
     // at fd instead overdamps long lines below it: Space came out 3 dB darker than Room.) Frozen:
     // gain 1, no damping; short of it, under kGainMax. The gains carry the Hadamard's 1 / sqrt(8).
     // The gains don't depend on Damp: damping alone moving (modulated, say) leaves them be. The
-    // mode's factors on Decay and Damp are 1 for EffectForce's four, so their arithmetic is theirs.
+    // mode's factors on Decay and Damp are 1 for EffectWerk's four, so their arithmetic is theirs.
     const bool gains = snap || scale_ != coefS_ || p_.decayS != coefDecay_ || fz_ != coefFz_;
     if (gains || p_.dampHz != coefDamp_) {
         coefS_ = scale_;

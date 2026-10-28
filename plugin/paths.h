@@ -1,16 +1,16 @@
-// From SubForce plugin/paths.h (8846421), namespace sf -> af; sourceRoots() added for Weather's sources.
+// From SubWerk plugin/paths.h (8846421), namespace sf -> af; sourceRoots() added for Weather's sources.
 #pragma once
-// Where AmbientForce finds its files on the device, with test overrides.
+// Where AmbientWerk finds its files on the device, with test overrides.
 //
-//   pluginDir()   the folder our own .so was loaded from ("/sdcard/Synths/Devko - VST - AmbientForce"),
+//   pluginDir()   the folder our own .so was loaded from ("/sdcard/Synths/Devko - VST - AmbientWerk"),
 //                 read from /proc/self/maps (the mapping that holds this code). Not dladdr(): built
 //                 against glibc >= 2.34 that binds GLIBC_2.34. "" when it can't tell (tests).
 //   presetRoots() preset folders, in order: <plugin dir>/Presets ("plugin"), then the SSD
-//                 /media/AkaiForce/AmbientForce Presets ("ssd"). A missing folder simply contributes
+//                 /media/AkaiForce/AmbientWerk Presets ("ssd"). A missing folder simply contributes
 //                 nothing. AF_PRESET_ROOTS (colon-separated) replaces both.
 //   sourceRoots() Weather's sources (plugin/sources.h), in order: the plugin folder itself ("plugin";
 //                 its WAVs are in Weather/ under it) and the SSD's root /media/AkaiForce ("ssd"; they
-//                 are in AmbientForce/Weather/, and Keep writes to AmbientForce/Memories/). The roots
+//                 are in AmbientWerk/Weather/, and Keep writes to AmbientWerk/Memories/). The roots
 //                 are the bases, the keys name the folders in them. A missing root simply contributes
 //                 nothing. AF_SOURCE_ROOTS (colon-separated, plugin then ssd) replaces both.
 //   dataDir()     the presets' favorites and recent lists: the plugin folder. AF_DATA_DIR

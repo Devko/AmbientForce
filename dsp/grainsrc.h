@@ -7,13 +7,13 @@
 // interleaved L R, at three rates. Level 0 is the source at 44.1 kHz; level 1 is level 0 through
 // the halfband decimator (dsp/halfband.h) at half the rate, level 2 level 1's at a quarter. A grain
 // pitched up reads a slower level, so what it would shift past 22 kHz was filtered out first
-// (EffectForce's Grain buffer, which records the same three). Every level loops: the kGuard frames
+// (EffectWerk's Grain buffer, which records the same three). Every level loops: the kGuard frames
 // after its end repeat its start (cyclically, if the level is shorter than that), so the reads of
 // one control step never have to wrap; the reader wraps once a step.
 //
 // Level L's frame m stands for level-0 time 2^L m + 1 - tau (level 1) or 3 - 3 tau (level 2), tau
 // being the decimator's delay at low frequencies (3.19 input samples): the reader takes that into
-// account, as EffectForce's does, so a grain on another level reads the same moment.
+// account, as EffectWerk's does, so a grain on another level reads the same moment.
 //
 // buildSource() makes a source of any signal: the loop, the level, the levels. It allocates and
 // takes tens of ms for a minute of audio, so it runs on a loader thread, never the audio thread.
@@ -24,7 +24,7 @@
 
 namespace af {
 
-// A Weather source: stereo, 16 bit, at three rates (EffectForce's levels: a grain pitched up reads a
+// A Weather source: stereo, 16 bit, at three rates (EffectWerk's levels: a grain pitched up reads a
 // decimated copy, so what it would shift past 22 kHz was filtered out first). Interleaved L R. Each
 // level loops: GrainSource::kGuard frames after its end repeat its start, so a call's reads never wrap.
 // Ready only with all three levels and frames a multiple of 4: Weather has no fallback, since level

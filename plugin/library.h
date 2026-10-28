@@ -1,7 +1,7 @@
-// From SubForce plugin/library.h (8846421), namespace sf -> af, unchanged otherwise.
+// From SubWerk plugin/library.h (8846421), namespace sf -> af, unchanged otherwise.
 #pragma once
 // File libraries: a process-wide listing of the files under some roots (plugin/paths.h) plus
-// built-in entries; AmbientForce has one, the presets (plugin/presets.h). UI thread only: the audio
+// built-in entries; AmbientWerk has one, the presets (plugin/presets.h). UI thread only: the audio
 // thread never touches a library.
 //
 //   key        what state, favorites and recent store: "<root label>:<relative path>"

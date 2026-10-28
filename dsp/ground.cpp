@@ -11,7 +11,7 @@ constexpr int kParts = Ground::PT_COUNT;
 constexpr float kFloorDb = -60.0f;       // the fade's bottom: off from here
 constexpr float kToneK = 1.41421356f;    // the Tone's 1 / Q: Q 0.707, flat up to the cutoff, no peak
 constexpr float kBodyK = 0.25f;          // the formants' 1 / Q: Q 4
-constexpr float kF2 = 0.63f;             // the second formant under the first (PolyForce's vowel filter)
+constexpr float kF2 = 0.63f;             // the second formant under the first (PolyWerk's vowel filter)
 // At full Body the dry falls to 0.75 and the formants come in at 0.9 of their band-passes' unity
 // peak: a harmonic on a formant is lifted 4.7 dB at most (the second formant's skirt included),
 // and stands 7 dB over one between the formants, so the vowel is there without Body making a
@@ -47,7 +47,7 @@ constexpr float kPythagorean[CI_COUNT] = {32.0f / 27.0f, 81.0f / 64.0f, 4.0f / 3
 constexpr int kSemis[CI_COUNT] = {3, 4, 5, 10, 14, 17};
 
 // Equal-power pan gains for -1..1: unity in the middle (exactly, so L and R are equal there), sqrt 2
-// at the sides (PolyForce's).
+// at the sides (PolyWerk's).
 void panGains(float pan, float& l, float& r) {
     if (pan == 0.0f) {
         l = r = 1.0f;

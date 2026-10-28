@@ -1,5 +1,5 @@
-// From SubForce plugin/plugin.cpp (8846421), namespace sf -> af; the engine is af::Engine.
-// AmbientForce as a VST2 instrument for MPC OS (Force / MPC standalone).
+// From SubWerk plugin/plugin.cpp (8846421), namespace sf -> af; the engine is af::Engine.
+// AmbientWerk as a VST2 instrument for MPC OS (Force / MPC standalone).
 //
 // The engine (dsp/engine.h) behind the touchscreen pages generated from surface/surface.py;
 // plugin/surface.* decides what every parameter does, and the status line carries a CPU meter
@@ -317,7 +317,7 @@ void Plugin::keep() {
         surface.say(MSG_KEEP_FAILED);
         return;
     }
-    const size_t space = key.rfind(' ');   // "ssd:AmbientForce/Memories/Memory 007.wav": 7
+    const size_t space = key.rfind(' ');   // "ssd:AmbientWerk/Memories/Memory 007.wav": 7
     surface.say(MSG_KEPT, space == std::string::npos ? 0u : static_cast<uint32_t>(std::strtoul(key.c_str() + space + 1, nullptr, 10)));
     surface.replaceSourceKey(kMemoryKey, key, [this, generation] { return engine.memory().generation() == generation; });
 }
@@ -831,7 +831,7 @@ extern "C" __attribute__((visibility("default"))) AEffect* VSTPluginMain(audioMa
 // The profiling build only (make arm-bench-stages): the engine's time per render stage since
 // the last call, in microseconds, with the stages' names; tools/bench.cpp reads it with dlsym.
 // Returns the number of stages written.
-extern "C" __attribute__((visibility("default"))) int AmbientForceStageTimes(double* us, const char** names, int max) {
+extern "C" __attribute__((visibility("default"))) int AmbientWerkStageTimes(double* us, const char** names, int max) {
     if (!us || !names || max < af::STG_COUNT) return 0;   // all stages or none (each read starts them over)
     for (int i = 0; i < af::STG_COUNT; ++i) {
         us[i] = static_cast<double>(af::g_stageNs[i]) * 1e-3;

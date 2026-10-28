@@ -271,7 +271,7 @@ std::vector<Partial> partials(const LifeModel& m) {
     return ps;
 }
 
-// A resonance's magnitude at f: 1 at its centre, 1/sqrt(2) half a bandwidth away (PolyForce's peak()).
+// A resonance's magnitude at f: 1 at its centre, 1/sqrt(2) half a bandwidth away (PolyWerk's peak()).
 double peak(double f, const Formant& r) {
     const double z = (f - r.hz) / (0.5 * r.bw);
     return r.gain / std::sqrt(1.0 + z * z);
@@ -342,7 +342,7 @@ bool buildLife(int id, Wavetable& t, const std::atomic<bool>* cancel) {
     return true;
 }
 
-// --- the digital waves: the exact Fourier series (PolyForce's), band-limited per level like any table
+// --- the digital waves: the exact Fourier series (PolyWerk's), band-limited per level like any table
 
 void buildDigital(int id, Wavetable& t) {
     Spectrum s;

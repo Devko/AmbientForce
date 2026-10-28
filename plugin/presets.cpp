@@ -1,4 +1,4 @@
-// From SubForce plugin/presets.cpp (8846421), namespace sf -> af, unchanged otherwise.
+// From SubWerk plugin/presets.cpp (8846421), namespace sf -> af, unchanged otherwise.
 #include "presets.h"
 
 #include "factory_presets.h"

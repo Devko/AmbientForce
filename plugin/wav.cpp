@@ -1,4 +1,4 @@
-// From PolyForce dsp/wavetable.cpp (61543b4), "WAV import", pf -> af: the RIFF walk, the sample formats and
+// From PolyWerk dsp/wavetable.cpp (61543b4), "WAV import", pf -> af: the RIFF walk, the sample formats and
 // EXTENSIBLE's tag. Here the reader streams, resamples and refuses more kinds of bad file, and the
 // writer is new: see wav.h.
 #ifndef _FILE_OFFSET_BITS

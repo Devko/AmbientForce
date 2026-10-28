@@ -1,4 +1,4 @@
-# From SubForce .github/workflows/build.yml (8846421), renamed.
+# From SubWerk .github/workflows/build.yml (8846421), renamed.
 # The release build. The plugin catalog (sd88me/mpc-vst-plugins) lists only plugins that need glibc 2.32 or
 # less, so they load on MPC OS 2.x as well as 3.x: the device build runs in arm32v7/gcc:11-bullseye (GCC 11,
 # glibc 2.31) under QEMU, as the catalog's own ports do, profile-guided, and the test suite runs against the
@@ -57,10 +57,10 @@ jobs:
       - name: Catalog check
         run: >-
           python3 third_party/mpc-vst-plugins/tools/catalog_check.py dist/*-mpc-armv7.zip
-          --catalog --expect-id ambientforce --expect-repo Devko/AmbientForce
+          --catalog --expect-id ambientwerk --expect-repo Devko/AmbientWerk
       - uses: actions/upload-artifact@v4
         with:
-          name: AmbientForce-mpc-armv7
+          name: AmbientWerk-mpc-armv7
           path: dist/*-mpc-armv7.zip
           if-no-files-found: error
       # The release's notes are CHANGELOG.md's section for the tag's version ("## X.Y.Z"): the catalog shows

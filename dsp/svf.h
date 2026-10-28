@@ -1,4 +1,4 @@
-// From EffectForce dsp/svf.h (4160e87), namespace ef -> af.
+// From EffectWerk dsp/svf.h (4160e87), namespace ef -> af.
 #pragma once
 // Andrew Simper's linear trapezoidal state-variable filter (Cytomic, "Solving the continuous SVF
 // equations using trapezoidal integration and equivalent currents"), the core of Filter and EQ.

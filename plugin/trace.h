@@ -1,7 +1,7 @@
-// From SubForce plugin/trace.h (8846421), namespace sf -> af, unchanged otherwise.
+// From SubWerk plugin/trace.h (8846421), namespace sf -> af, unchanged otherwise.
 #pragma once
-// Device diagnostics (PolyForce's): every value MPC sets and what the plugin made of it, appended
-// to <dir>/ambientforce.log while <dir>/ambientforce.trace exists (dir = /tmp, or AF_TRACE_DIR). Create
+// Device diagnostics (PolyWerk's): every value MPC sets and what the plugin made of it, appended
+// to <dir>/ambientwerk.log while <dir>/ambientwerk.trace exists (dir = /tmp, or AF_TRACE_DIR). Create
 // the flag file to start and remove it to stop, with MPC running: it is looked for at most once
 // a second. The log stops growing at 2 MB. File I/O: never from the audio thread.
 

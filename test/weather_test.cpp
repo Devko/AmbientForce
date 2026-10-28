@@ -94,7 +94,7 @@ double dbRms(const Out& o, size_t from) {
 size_t at(double seconds) { return static_cast<size_t>(seconds * kSec); }
 double cents(double f, double ref) { return 1200.0 * std::log2(f / ref); }
 
-// The frequency of the tone near `hz` in x[from, to) (EffectForce's grain test): x shifted down by
+// The frequency of the tone near `hz` in x[from, to) (EffectWerk's grain test): x shifted down by
 // hz, summed over a few periods, and the phase that turns through in 20 ms, averaged weighted by
 // level. Grains of one tone at random phases are still that tone; the wander of their sum's phase
 // averages out, where a single long spectrum's peak is speckled by it.
@@ -329,7 +329,7 @@ void testToKey() {
 void testLevel() {
     std::printf("== weather: level across grains\n");
     // Mono: the pans then keep the power (a hard-panned grain of uncorrelated channels keeps half
-    // of it, EffectForce's pan law, which narrows a grain's own stereo as it moves out).
+    // of it, EffectWerk's pan law, which narrows a grain's own stereo as it moves out).
     const auto sb = source(whiteNoise(10 * kSec, 0.5f, 11));
     double lo = 1e9, hi = -1e9;
     for (int grains : {1, 4, 16}) {

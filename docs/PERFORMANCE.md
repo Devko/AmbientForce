@@ -15,7 +15,7 @@
 MPC renders 128-frame blocks: **2902 µs per block**, per plugin instance. A plugin passes at
 **p99 ≤ 15%** and **max ≤ 50%** of the block (warns up to 35% / 80%), the rule the family uses.
 
-AmbientForce's ceiling is everything on at once, so the whole budget is planned up front
+AmbientWerk's ceiling is everything on at once, so the whole budget is planned up front
 ([CONCEPT §11](CONCEPT.md#11-budget)) from the siblings' measured costs. The part M1 builds:
 
 | Block | Load | Target (p99, % of the block) |
@@ -181,10 +181,10 @@ Ground's partials) 20 / 34 / 52; FM adds 3 to 5. A Bloom voice at unison 1 is ab
 instructions a sample: A's read 74, the breath, SVF, pan and gains 36, the control steps and the
 bus the rest.
 
-**The calibration.** Before the device run the percentages took PolyForce's figure, about 1 ns an
+**The calibration.** Before the device run the percentages took PolyWerk's figure, about 1 ns an
 instruction on the Force, and put the worst case at 14.6–14.9% (with the earlier counts), inside the
 gate with little room for the device's jitter. Against `arm-icount`'s counts the device ran
-AmbientForce's code at **about 0.61–0.66 ns an instruction** on average (init chord 0.62, drone 0.61,
+AmbientWerk's code at **about 0.61–0.66 ns an instruction** on average (init chord 0.62, drone 0.61,
 bloom 6x2 0.62, worst 0.66), with p99 1.2–1.3 times the average: 1 ns an instruction over-predicts
 by 50–65%. The counts stay the measure of a change between device runs; for the budget, the
 device's figures count.
@@ -226,6 +226,6 @@ device's figures count.
 
 The caps fall in the concept's order ([§11](CONCEPT.md#11-budget)): **Bloom's unison 2 → 1** first,
 then Air 6 → 4 voices, then Weather 16 → 12 grains. M1 needs none of them (its worst case is p99
-10.6%); M2's device bench decides for Air and Weather. The PolyForce CPU guard (shedding tails above
+10.6%); M2's device bench decides for Air and Weather. The PolyWerk CPU guard (shedding tails above
 40% and 65% of a block) is planned as the second line of defence
 ([Roadmap](ROADMAP.md#planned-not-yet-placed)).

@@ -1,4 +1,4 @@
-// Weather: see weather.h. Its grains from EffectForce dsp/grain.cpp (d94bde0) and dsp/grain.h
+// Weather: see weather.h. Its grains from EffectWerk dsp/grain.cpp (d94bde0) and dsp/grain.h
 // (f78d36a), namespace ef -> af: the voice and its envelope (ramp, release, window4), the staged
 // reads (render -> renderVoice, readVoice, cubic2), and Cloud's and Stretch's spawning (grains ->
 // startGrains, spawn), reading a fixed 16-bit source instead of a live float recording. The
@@ -29,7 +29,7 @@ namespace af {
 
 namespace {
 
-// --- reads (EffectForce's, the samples 16 bit) -------------------------------------------------
+// --- reads (EffectWerk's, the samples 16 bit) -------------------------------------------------
 
 AF_INLINE f2 loadPair(const float* p) {
 #if AF_NEON
@@ -48,7 +48,7 @@ AF_INLINE void storePair(float* p, f2 v) {
 }
 
 // The 4-point, 3rd-order Hermite between x0 and x1 at t (common.h's hermite()), on both sides of an
-// interleaved stereo ring, in de Soras's arrangement (EffectForce's cubicOf):
+// interleaved stereo ring, in de Soras's arrangement (EffectWerk's cubicOf):
 //   y = x0 + t (c1 + t (a t - b)),   c1 = d1 / 2,   a = c1 + 2 d2 + d3 / 2,   b = a + c1 + d2,
 // with d1 = x1 - x[-1], d2 = x0 - x1, d3 = x2 - x0. On 16-bit taps the differences are taken as
 // the samples widen, and the conversion to float halves d1 and d3 itself (a fixed-point
@@ -593,7 +593,7 @@ void Weather::startGrains(int m) {
 // A new voice at sample k of the step, at `pos` (level-0 frames from the source's start), `semis`
 // away, a Hann window `length` samples long. Panned: the side away from the pan loses gain at
 // constant power (sqrt 2 at the near side when hard over), and the grain's own stereo narrows
-// toward mono as it moves out, so a hard-panned grain keeps both channels' material (EffectForce's
+// toward mono as it moves out, so a hard-panned grain keeps both channels' material (EffectWerk's
 // law).
 void Weather::spawn(int k, double pos, float semis, bool back, int length, float pan, float amp) {
     Voice* v = nullptr;
@@ -765,7 +765,7 @@ AF_INLINE void Weather::readVoice(const Voice& v, int k0, int groups) {
 }
 
 // A voice's part of a step: its positions and envelope four samples at a time, then the reads.
-// The positions go by the step (EffectForce's segment): its first position (in double) as a whole
+// The positions go by the step (EffectWerk's segment): its first position (in double) as a whole
 // frame `base` and a float offset that stays at least 1 at every staged sample (so truncation is
 // the floor), base moved into the ring once (the guard frames past its end take what runs over; a
 // voice that has run past the ring's end is moved back by whole rings, so that is rare).

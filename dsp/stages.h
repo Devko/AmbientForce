@@ -1,7 +1,7 @@
-// From SubForce dsp/stages.h (8846421), namespace sf -> af; the engine's stages.
+// From SubWerk dsp/stages.h (8846421), namespace sf -> af; the engine's stages.
 #pragma once
 // Where a block's time goes, for the profiling build only (-DAF_STAGE_TIMING: `make
-// arm-bench-stages`, read by tools/bench.cpp through AmbientForceStageTimes). Engine::render laps
+// arm-bench-stages`, read by tools/bench.cpp through AmbientWerkStageTimes). Engine::render laps
 // a clock between its stages; in the normal build StageClock is empty and lap() compiles to
 // nothing.
 #include <cstdint>

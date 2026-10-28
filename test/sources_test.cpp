@@ -924,10 +924,10 @@ void testKeys() {
     const std::vector<Root> roots = sourceRoots();
     CHECK(roots.size() == 2 && roots[0].label == "plugin" && roots[0].dir == plug && roots[1].label == "ssd" && roots[1].dir == ssd);
     CHECK(resolveKey("ssd:../x.wav", roots).empty());
-    CHECK(resolveKey("ssd:AmbientForce/Weather/../../x.wav", roots).empty());
+    CHECK(resolveKey("ssd:AmbientWerk/Weather/../../x.wav", roots).empty());
     CHECK(resolveKey("plugin:/etc/passwd", roots).empty());
     CHECK(resolveKey("plugin:Weather/Creek.wav", roots) == plug + "/Weather/Creek.wav");
-    CHECK(resolveKey("ssd:AmbientForce/Memories/Memory 001.wav", roots) == ssd + "/AmbientForce/Memories/Memory 001.wav");
+    CHECK(resolveKey("ssd:AmbientWerk/Memories/Memory 001.wav", roots) == ssd + "/AmbientWerk/Memories/Memory 001.wav");
     CHECK(resolveKey("other:x.wav", roots).empty());
 
     // With nothing on the disk: the fields, then Memory.
@@ -946,13 +946,13 @@ void testKeys() {
     makeWav(plug + "/Weather/Sub/.hid/Under.wav", 500);
     makeWav(plug + "/Other/Elsewhere.wav", 500);
     makeWav(plug + "/Weather/Too/A/B/C/D/Deep.wav", 500);   // below the walk's depth
-    makeWav(ssd + "/AmbientForce/Weather/Alpha.WAV", 500);
-    makeWav(ssd + "/AmbientForce/Weather/beta.wav", 500);
-    makeWav(ssd + "/AmbientForce/Memories/Memory 001.wav", 500);
-    makeWav(ssd + "/AmbientForce/Memories/Same.wav", 500);   // two of one name: the key puts Memories first, the walk Weather
-    makeWav(ssd + "/AmbientForce/Weather/Same.wav", 500);
+    makeWav(ssd + "/AmbientWerk/Weather/Alpha.WAV", 500);
+    makeWav(ssd + "/AmbientWerk/Weather/beta.wav", 500);
+    makeWav(ssd + "/AmbientWerk/Memories/Memory 001.wav", 500);
+    makeWav(ssd + "/AmbientWerk/Memories/Same.wav", 500);   // two of one name: the key puts Memories first, the walk Weather
+    makeWav(ssd + "/AmbientWerk/Weather/Same.wav", 500);
     makeWav(ssd + "/Elsewhere.wav", 500);
-    makeWav(ssd + "/AmbientForce/Elsewhere.wav", 500);
+    makeWav(ssd + "/AmbientWerk/Elsewhere.wav", 500);
     { std::ofstream(plug + "/Weather/notes.txt") << "not audio"; }
     { std::ofstream(plug + "/Weather/Creek.wav.bak") << "not audio"; }
     std::error_code ec;
@@ -962,10 +962,10 @@ void testKeys() {
     rescanSources();
     keys = sourceKeys();
     const std::vector<std::string> wavs(keys.begin() + FD_COUNT + 1, keys.end());
-    const std::vector<std::string> expect = {"ssd:AmbientForce/Weather/Alpha.WAV",     "ssd:AmbientForce/Weather/beta.wav",
+    const std::vector<std::string> expect = {"ssd:AmbientWerk/Weather/Alpha.WAV",     "ssd:AmbientWerk/Weather/beta.wav",
                                              "plugin:Weather/Creek.wav",               "plugin:Weather/Sub/Deep.wav",
-                                             "ssd:AmbientForce/Memories/Memory 001.wav", "ssd:AmbientForce/Memories/Same.wav",
-                                             "ssd:AmbientForce/Weather/Same.wav",      "plugin:Weather/zebra.wav"};
+                                             "ssd:AmbientWerk/Memories/Memory 001.wav", "ssd:AmbientWerk/Memories/Same.wav",
+                                             "ssd:AmbientWerk/Weather/Same.wav",      "plugin:Weather/zebra.wav"};
     CHECK(wavs == expect);
     if (wavs != expect)
         for (const std::string& k : wavs) std::printf("  listed: %s\n", k.c_str());
@@ -982,8 +982,8 @@ void testKeys() {
     // Names: the field, Memory, the file's stem.
     CHECK(sourceName("builtin:Surf") == "Surf" && sourceName("memory:") == "Memory");
     CHECK(sourceName("plugin:Weather/Creek.wav") == "Creek" && sourceName("plugin:Weather/Sub/Deep.wav") == "Deep");
-    CHECK(sourceName("ssd:AmbientForce/Memories/Memory 003.wav") == "Memory 003");
-    CHECK(sourceName("ssd:AmbientForce/Weather/gone.wav") == "gone");
+    CHECK(sourceName("ssd:AmbientWerk/Memories/Memory 003.wav") == "Memory 003");
+    CHECK(sourceName("ssd:AmbientWerk/Weather/gone.wav") == "gone");
 
     // The scan is looked at again after 2 s, not before: a file added shows within that, not at once.
     keys = sourceKeys();
@@ -1006,7 +1006,7 @@ void testKeys() {
     setenv("AF_SOURCE_ROOTS", plug.c_str(), 1);
     rescanSources();
     keys = sourceKeys();
-    CHECK(sourceRoots().size() == 1 && contains(keys, "plugin:Weather/Creek.wav") && !contains(keys, "ssd:AmbientForce/Weather/beta.wav"));
+    CHECK(sourceRoots().size() == 1 && contains(keys, "plugin:Weather/Creek.wav") && !contains(keys, "ssd:AmbientWerk/Weather/beta.wav"));
 
     // Without the override: the plugin's own folder (what it is loaded from) and the SSD's root.
     unsetenv("AF_SOURCE_ROOTS");
@@ -1020,7 +1020,7 @@ void testKeys() {
     useRoots(plug, ssd);
     std::string err;
     CHECK(!loadSource("ssd:../x.wav", &err) && !err.empty());
-    CHECK(!loadSource("ssd:AmbientForce/Weather/../../x.wav", &err));
+    CHECK(!loadSource("ssd:AmbientWerk/Weather/../../x.wav", &err));
     CHECK(!loadSource("ssd:Elsewhere.wav", &err) && err == "no such source");    // a WAV, but not in a source folder
     CHECK(!loadSource("plugin:Other/Elsewhere.wav", &err) && err == "no such source");
     CHECK(!loadSource("plugin:Weather/notes.txt", &err) && err == "no such source");
@@ -1423,7 +1423,7 @@ void testLoaderStates() {
 void testGraveyard() {
     std::printf("== sources: when a replaced object is freed\n");
     {
-        // No block has ever run: a replaced object goes (PolyForce's test of the same).
+        // No block has ever run: a replaced object goes (PolyWerk's test of the same).
         Fake f;
         Loader L({f.type()});
         L.want(0, "x", true);
@@ -1771,7 +1771,7 @@ void testGraveModel() {
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     std::printf("  the rule: %zu states, %s (%.0f ms)\n", states, bug ? "A BUG" : "no read of a freed object", ms);
     CHECK(!bug && states > 100000);
-    // The model finds the bugs of weaker rules: PolyForce's (the audio side holding nothing between blocks,
+    // The model finds the bugs of weaker rules: PolyWerk's (the audio side holding nothing between blocks,
     // so it frees when none runs), a count short by one, and a never-seen rule that forgets a block running
     // as the object went in, or one that started before it.
     const char* names[] = {"", "holds ignored", "no +1", "never seen, ignoring a block running at the store", "never seen, ignoring blocks before the store"};
@@ -2115,7 +2115,7 @@ void testSourceSlot() {
     useRoots(plug, ssd);
     af::SourceCache::get().clear();
     makeWav(plug + "/Weather/Tone.wav", 44100, 440.0);
-    makeWav(ssd + "/AmbientForce/Weather/Short.wav", 3);
+    makeWav(ssd + "/AmbientWerk/Weather/Short.wav", 3);
     const std::string tone = "plugin:Weather/Tone.wav";
 
     Loader L({sourceSlotType()});
@@ -2172,7 +2172,7 @@ void testSourceSlot() {
         fs::remove(plug + "/Weather/Long.wav");
     }
     // A WAV of 3 frames is a source (a loop of 4).
-    L.want(0, "ssd:AmbientForce/Weather/Short.wav", true);
+    L.want(0, "ssd:AmbientWerk/Weather/Short.wav", true);
     CHECK(until([&] { return L.loads() == 5; }));
     CHECK(sourceOf(L.live(0)) && sourceOf(L.live(0))->ready() && sourceOf(L.live(0))->frames == 4);
     // A file that isn't a WAV: Missing with the reason.
@@ -2411,7 +2411,7 @@ void testKeepNumbers() {
     fs::create_directories(plug);
     fs::create_directories(ssd);
     useRoots(plug, ssd);
-    const std::string folder = ssd + "/AmbientForce/Memories", prefix = "ssd:AmbientForce/Memories/";
+    const std::string folder = ssd + "/AmbientWerk/Memories", prefix = "ssd:AmbientWerk/Memories/";
     auto mem = remembered(1.0);
     std::string err;
     const auto note = [&](const char* text) { std::ofstream(folder + "/.last") << text; };
@@ -2450,7 +2450,7 @@ void testKeepNumbers() {
     fs::create_directories(plug2);
     fs::create_directories(ssd2);
     useRoots(plug2, ssd2);
-    const std::string folder2 = ssd2 + "/AmbientForce/Memories";
+    const std::string folder2 = ssd2 + "/AmbientWerk/Memories";
     fs::create_directories(folder2);
     const auto plant = [&](const char* file, bool empty, int ageSeconds) {
         const std::string p = folder2 + "/" + file;
@@ -2478,8 +2478,8 @@ void testKeep() {
     fs::create_directories(plug);
     fs::create_directories(ssd);
     useRoots(plug, ssd);
-    const std::string folder = ssd + "/AmbientForce/Memories";
-    const std::string prefix = "ssd:AmbientForce/Memories/";
+    const std::string folder = ssd + "/AmbientWerk/Memories";
+    const std::string prefix = "ssd:AmbientWerk/Memories/";
     std::string err;
 
     // Nothing remembered: nothing written.
@@ -2667,7 +2667,7 @@ void testKeep() {
         CHECK(letGo(*m2));
         const std::string blocked = dir() + "/keep/blocked";
         fs::create_directories(blocked);
-        { std::ofstream(blocked + "/AmbientForce") << "a file where the folder should be"; }
+        { std::ofstream(blocked + "/AmbientWerk") << "a file where the folder should be"; }
         setenv("AF_SOURCE_ROOTS", (plug + ":" + blocked).c_str(), 1);
         CHECK(keepMemory(*m2, &err).empty() && err == "cannot make the Memories folder");
         CHECK(letGo(*m2));
@@ -2676,7 +2676,7 @@ void testKeep() {
         for (int n = 1; n <= 3; ++n) {
             char b[32];
             std::snprintf(b, sizeof b, "Memory %03d.wav", n);
-            fs::create_directories(trap + "/AmbientForce/Memories/" + b + "/in");   // the first three names are folders
+            fs::create_directories(trap + "/AmbientWerk/Memories/" + b + "/in");   // the first three names are folders
         }
         setenv("AF_SOURCE_ROOTS", (plug + ":" + trap).c_str(), 1);
         key = keepMemory(*m2, &err);   // 001..003 exist (as folders): it takes 004
@@ -2703,30 +2703,30 @@ void testKeep() {
             ::setrlimit(RLIMIT_FSIZE, &was);
             if (failed.empty()) {   // (a host that doesn't enforce the limit, qemu perhaps, writes it)
                 CHECK(err == "cannot write");
-                CHECK(wavFiles(room + "/AmbientForce/Memories") == 1);
+                CHECK(wavFiles(room + "/AmbientWerk/Memories") == 1);
                 int others = 0;
-                for (const auto& e : fs::directory_iterator(room + "/AmbientForce/Memories"))
+                for (const auto& e : fs::directory_iterator(room + "/AmbientWerk/Memories"))
                     if (e.path().extension() != ".wav" && e.path().filename() != ".last") ++others;
                 CHECK(others == 0);
                 std::string last;
-                CHECK(af::readFile(room + "/AmbientForce/Memories/.last", last) && std::atoi(last.c_str()) == 1);
+                CHECK(af::readFile(room + "/AmbientWerk/Memories/.last", last) && std::atoi(last.c_str()) == 1);
                 CHECK(keepMemory(*m2, &err) == prefix + "Memory 002.wav");
             }
         }
         // The Memories folder not writable (a read-only folder; not for root, which writes anywhere).
         if (::geteuid() != 0) {
             const std::string ro = dir() + "/keep/ro";
-            fs::create_directories(ro + "/AmbientForce/Memories");
-            fs::permissions(ro + "/AmbientForce/Memories", fs::perms::owner_read | fs::perms::owner_exec);
+            fs::create_directories(ro + "/AmbientWerk/Memories");
+            fs::permissions(ro + "/AmbientWerk/Memories", fs::perms::owner_read | fs::perms::owner_exec);
             setenv("AF_SOURCE_ROOTS", (plug + ":" + ro).c_str(), 1);
             CHECK(keepMemory(*m2, &err).empty() && err == "cannot write the Memories folder");
             int files = 0;
-            for (const auto& e : fs::directory_iterator(ro + "/AmbientForce/Memories")) {
+            for (const auto& e : fs::directory_iterator(ro + "/AmbientWerk/Memories")) {
                 (void)e;
                 ++files;
             }
             CHECK(files == 0);
-            fs::permissions(ro + "/AmbientForce/Memories", fs::perms::owner_all);
+            fs::permissions(ro + "/AmbientWerk/Memories", fs::perms::owner_all);
             CHECK(letGo(*m2));
         }
     }
@@ -2767,7 +2767,7 @@ void sourcesTests() {
     rescanSources();
     af::SourceCache::get().clear();
     std::error_code ec;
-    fs::permissions(dir() + "/keep/ro/AmbientForce/Memories", fs::perms::owner_all, ec);
+    fs::permissions(dir() + "/keep/ro/AmbientWerk/Memories", fs::perms::owner_all, ec);
     fs::remove_all(dir(), ec);
 }
 

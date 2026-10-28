@@ -6,6 +6,11 @@ may still change between releases.
 
 ## Unreleased
 
+- **AmbientForce is now AmbientWerk:** "Force" is the name of Akai's device, so it no longer belongs in this <!-- werk-rename: keep -->
+  plugin's name. MPC's plugin list shows **AmbientWerk** (`/sdcard/Synths/Devko - VST - AmbientWerk`); the installer
+  carries your presets, favorites and recents out of the old `Devko - VST - AmbientForce` folder and removes it; the <!-- werk-rename: keep -->
+  first start renames `/media/AkaiForce/AmbientForce Presets` to `AmbientWerk Presets`; projects and presets saved <!-- werk-rename: keep -->
+  under the old name keep loading (the plugin ID stays; checked the same way with SubWerk on a Force).
 - **Parameter order, now locked:** since 0.0.2, M2's 67 new parameters (Echo and the echo sends, Air,
   the Split, Weather) were placed ahead of the preset stepper and the browser, which moved from 98..150
   to 165..217 (those controls are the surface's own: not saved with the sound, not automatable).

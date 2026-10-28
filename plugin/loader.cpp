@@ -1,4 +1,4 @@
-// From PolyForce plugin/loader.cpp (3ad2ac6), pf -> af: see loader.h for what changed.
+// From PolyWerk plugin/loader.cpp (3ad2ac6), pf -> af: see loader.h for what changed.
 #include "loader.h"
 
 #include <algorithm>

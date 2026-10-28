@@ -1,4 +1,4 @@
-// From PolyForce dsp/wavetable.cpp (db7cba3), namespace pf -> af; the FFT, appendFrame and addFrames (as FrameBuilder::add, without the peak normalising) and newTableId only.
+// From PolyWerk dsp/wavetable.cpp (db7cba3), namespace pf -> af; the FFT, appendFrame and addFrames (as FrameBuilder::add, without the peak normalising) and newTableId only.
 #include "wavetable.h"
 
 #include <algorithm>

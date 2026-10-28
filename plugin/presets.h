@@ -1,11 +1,11 @@
-// From SubForce plugin/presets.h (8846421), namespace sf -> af, unchanged otherwise.
+// From SubWerk plugin/presets.h (8846421), namespace sf -> af, unchanged otherwise.
 #pragma once
 // Presets as files, plus the factory set built in.
 //
-//   *.afp under <plugin dir>/Presets and /media/AkaiForce/AmbientForce Presets (AF_PRESET_ROOTS),
+//   *.afp under <plugin dir>/Presets and /media/AkaiForce/AmbientWerk Presets (AF_PRESET_ROOTS),
 //   plus the factory presets (presets/Factory/<category>/, embedded at build time: one category
 //   per folder, keys "builtin:<name>"). A preset file is the plugin's own state text
-//   ("ambientforce 1" + key=value lines), so a preset and a project restore the same way. Saving
+//   ("ambientwerk 1" + key=value lines), so a preset and a project restore the same way. Saving
 //   writes <first root>/User/User NNN.afp: there is no text entry on the device, so names are
 //   numbered.
 #include "library.h"

@@ -1,4 +1,4 @@
-// A source for Weather's grains: see grainsrc.h. The levels are made as EffectForce's Grain makes them
+// A source for Weather's grains: see grainsrc.h. The levels are made as EffectWerk's Grain makes them
 // while it records (dsp/grain.cpp's decimate(), d94bde0): pairs of frames, early first, through
 // halfband.h's StereoDecimator; here over a loop, warmed up on its own end.
 #include "grainsrc.h"

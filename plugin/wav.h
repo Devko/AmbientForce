@@ -1,4 +1,4 @@
-// From PolyForce dsp/wavetable.cpp (61543b4), "WAV import", pf -> af: the RIFF walk, the sample formats and
+// From PolyWerk dsp/wavetable.cpp (61543b4), "WAV import", pf -> af: the RIFF walk, the sample formats and
 // EXTENSIBLE's tag. Here the reader streams, resamples and refuses more kinds of bad file, and the
 // writer is new.
 #pragma once
@@ -7,7 +7,7 @@
 // and are never called from the audio thread.
 //
 // readWav(): made to stream (a source is minutes of audio, a wavetable a few MB), to resample, and to
-// refuse more kinds of bad file than PolyForce's import.
+// refuse more kinds of bad file than PolyWerk's import.
 // - Formats: PCM 16, 24 or 32 bit, or 32-bit float; also as WAVE_FORMAT_EXTENSIBLE. 1 to 8 channels,
 //   the first two kept (a mono file is both sides). A block align over the samples' bytes (a container
 //   wider than its samples) gives each channel a slot of align / channels bytes, the second after the

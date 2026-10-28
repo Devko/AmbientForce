@@ -1,4 +1,4 @@
-// From SubForce plugin/vst2.h (8846421), unchanged.
+// From SubWerk plugin/vst2.h (8846421), unchanged.
 #pragma once
 // The slice of the VST2 ABI that MPC OS's JUCE host uses, written out by hand
 // (no Steinberg SDK). Layout and opcode values follow sd88me/mpc-vst-plugins

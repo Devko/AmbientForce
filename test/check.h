@@ -1,4 +1,4 @@
-// From SubForce test/check.h (8846421), sft -> aft; the allocation counter and the largest allocation added.
+// From SubWerk test/check.h (8846421), sft -> aft; the allocation counter and the largest allocation added.
 #pragma once
 // The tiny check framework every test file shares (counters live in plugin_test.cpp).
 #include <cstddef>

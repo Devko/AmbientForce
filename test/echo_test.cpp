@@ -1,8 +1,8 @@
-// From EffectForce test/delay_test.cpp (3ae8a4d), eft -> aft; Diffuse and Echo added.
+// From EffectWerk test/delay_test.cpp (3ae8a4d), eft -> aft; Diffuse and Echo added.
 // dsp/delay.h: echo timing against theory (free, synced at several tempos, spread, Ping-Pong), the
 // feedback ratio and the cuts against the one-pole responses, the glide landing exactly, drive,
 // limiter, ducking, wow depth, and robustness (feedback 1 for 30 s, extremes, random jumps, NaN
-// input, block sizes, reset, the tail). Then AmbientForce's own: Diffuse (0 is EffectForce's Delay
+// input, block sizes, reset, the tail). Then AmbientWerk's own: Diffuse (0 is EffectWerk's Delay
 // bit for bit, the smear, what a pass loses, the comb a long tail narrows to, no growth, Mono,
 // clicks, block sizes, odd values, the tail), nothing old after a reset (two Delays whose lines
 // differ only before it), and dsp/echo.h (wet only, silent() within the Delay's reach, nothing old
@@ -1098,7 +1098,7 @@ void tail() {
 }
 
 
-// --- Diffuse (AmbientForce's) ------------------------------------------------------------------
+// --- Diffuse (AmbientWerk's) ------------------------------------------------------------------
 
 // FNV-1a over the bits of L, then R.
 uint64_t hashOf(const Buf& L, const Buf& R) {
@@ -1156,9 +1156,9 @@ uint64_t diffuseZeroHash(int mode, bool& ran) {
     return hashOf(L, R);
 }
 
-// Diffuse 0 is EffectForce's Delay, bit for bit, at every mode: the fingerprints of EffectForce's
+// Diffuse 0 is EffectWerk's Delay, bit for bit, at every mode: the fingerprints of EffectWerk's
 // own dsp/delay.cpp (7cf6e95) over the same ten seconds, taken once with a scratch harness that
-// builds it from EffectForce's repo with this suite's flags (x86 at make test's, -O1 with ASan;
+// builds it from EffectWerk's repo with this suite's flags (x86 at make test's, -O1 with ASan;
 // -O3 gives the same. The device's at make test-arm's: NEON fuses multiply-adds, so its bits
 // differ). Not against profile-guided objects (make test-arm-pgo): the profile moves the fusing
 // with every change of the code, so no fingerprint stays. In every build: the diffusers never ran.
@@ -1172,11 +1172,11 @@ void diffuseZero() {
     return;
 #endif
 #if AF_NEON
-    const uint64_t effectForce[Delay::kModes] = {0x9f6001c5eddf2732ull, 0x18746121166c7accull, 0xb9c8ab6fb7ffabd6ull};
+    const uint64_t effectWerk[Delay::kModes] = {0x9f6001c5eddf2732ull, 0x18746121166c7accull, 0xb9c8ab6fb7ffabd6ull};
 #else
-    const uint64_t effectForce[Delay::kModes] = {0xf6a4afbb49a74bb3ull, 0x33435f15e9b9625full, 0x446a83e633a1e9daull};
+    const uint64_t effectWerk[Delay::kModes] = {0xf6a4afbb49a74bb3ull, 0x33435f15e9b9625full, 0x446a83e633a1e9daull};
 #endif
-    for (int mode = 0; mode < Delay::kModes; ++mode) CHECK(got[mode] == effectForce[mode]);
+    for (int mode = 0; mode < Delay::kModes; ++mode) CHECK(got[mode] == effectWerk[mode]);
 }
 
 // The Delay as Echo plays it (initEcho()'s cuts), free at `ms`, without the wow and the duck so an
@@ -2018,7 +2018,7 @@ void resumeDuck() {
     CHECK(near(off, 0.0, 0.5));
 }
 
-// Delay::rest() and Echo::rest() (AmbientForce's: the time the engine skipped Echo). A loud burst at
+// Delay::rest() and Echo::rest() (AmbientWerk's: the time the engine skipped Echo). A loud burst at
 // duck 1, then a silence: processed by one Delay, rest() of as many samples in another, nothing in a
 // third; after one more chunk of silence through each (so each aims its duck from its envelope), the
 // rested one's wet gain is the processed one's within 0.001 at 0.1, 1 and 5 s of silence, where the
@@ -2109,7 +2109,7 @@ void echoTests() {
     blockSizes();
     resetClears();
     tail();
-    // AmbientForce's
+    // AmbientWerk's
     diffuseZero();
     diffuseSmears();
     diffuseLoss();

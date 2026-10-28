@@ -1,7 +1,7 @@
 #pragma once
 // Space (docs/CONCEPT.md, "Space"): the instrument's reverb as a send / return. The strata's sends
 // sum into it and it returns only the wet: the dry is the strata's own, and the engine sets the
-// return's level. Inside is EffectForce's Reverb (dsp/reverb.h) at mix 1, run in its control
+// return's level. Inside is EffectWerk's Reverb (dsp/reverb.h) at mix 1, run in its control
 // chunks (32 samples) whatever the block.
 //
 // Rise: the wet ducks under what is coming in and blooms once it stops, so the reverb answers a

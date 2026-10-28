@@ -1,4 +1,4 @@
 {
-    global: VSTPluginMain; AmbientForceStageTimes;
+    global: VSTPluginMain; AmbientWerkStageTimes;
     local: *;
 };

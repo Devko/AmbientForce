@@ -57,7 +57,7 @@ float peakOf(const float* l, const float* r, int m) {
 
 } // namespace
 
-// Wet only before any set() too: Delay::Params' own mix is EffectForce's 0.3.
+// Wet only before any set() too: Delay::Params' own mix is EffectWerk's 0.3.
 Echo::Echo() : dp_(initEcho().delay) {
     dp_.mix = 1.0f;
     reset();

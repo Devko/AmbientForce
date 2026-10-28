@@ -1,4 +1,4 @@
-// From PolyForce plugin/loader.h (3ad2ac6), pf -> af. TableCache is SourceCache (Weather's sources, 48 MB)
+// From PolyWerk plugin/loader.h (3ad2ac6), pf -> af. TableCache is SourceCache (Weather's sources, 48 MB)
 // and loadTable is loadSource (plugin/sources.h). Changed: the graveyard's rule, which Weather's keeping
 // a source between blocks asks more of (below); blockDone() says whether the audio side still holds
 // one; post() runs a job on the worker (Keep), and setTick() has it poll every pass (Keep's button);
@@ -28,13 +28,13 @@
 //
 // When a replaced object is freed. This is the whole of the argument; loader.cpp keeps to it.
 //
-// What the audio side keeps between blocks matters. PolyForce's oscillators read their table pointer
+// What the audio side keeps between blocks matters. PolyWerk's oscillators read their table pointer
 // anew in each block and kept nothing, so it freed a replaced table once one block had ended since the
 // swap, or at once while none was running. Weather keeps its source: its grains point into it from one
 // block to the next while it is audible(), and the first render() it is given another source in (or
 // none) copies from the old one what each grain still has to read, and only then lets go (dsp/weather.h,
 // "A source change"). So the old source is read once more, by the first block that sees the new one.
-// PolyForce's rule frees it before that block when the track isn't being processed at the swap (MPC
+// PolyWerk's rule frees it before that block when the track isn't being processed at the swap (MPC
 // may stop calling for a long while), or when the block in progress at the swap ends first.
 //
 // The audio thread, in each block:   blockStart();  p = live(slot);  ...;  blockDone(holds);
@@ -75,7 +75,7 @@
 //
 // The rule has been checked against every interleaving of the audio thread (a block is six steps) with
 // swaps and checks of the worker, by a model in test/sources_test.cpp that calls the two functions
-// below; PolyForce's rule, and the never-seen rule without its starting counts, fail it.
+// below; PolyWerk's rule, and the never-seen rule without its starting counts, fail it.
 //
 // A swap leaves the slot as it was if anything in it fails: everything that can throw (the graveyard's
 // room, the copy of the key, the error text, the listener's copy) is done before the store to live,

@@ -1,10 +1,10 @@
-// From EffectForce dsp/halfband.h (c9d09f1), namespace ef -> af, EF_ -> AF_. Here the stereo
+// From EffectWerk dsp/halfband.h (c9d09f1), namespace ef -> af, EF_ -> AF_. Here the stereo
 // decimator makes Weather's slower levels (dsp/grainsrc.cpp, and Memory as it records); the tests
 // named below are the siblings', and test/weather_test.cpp and test/fields_test.cpp measure the
 // levels it makes. Added here: FrameDecimator, the stereo decimator over a run of frames as they
 // lie, its state in registers (Memory's recording, within its 4k instructions a block).
 #pragma once
-// 2x up and down: the decimator (SubForce's dsp/halfband.h; there the whole voice runs at
+// 2x up and down: the decimator (SubWerk's dsp/halfband.h; there the whole voice runs at
 // 88.2 kHz) folds a 2x oversampled signal back to MPC's 44.1 kHz; the interpolator, its mirror
 // image, lifts 44.1 kHz to 88.2 kHz (the drive shapes there). Both are the same polyphase IIR
 // halfband (two chains of first-order allpasses at the low rate, Laurent de Soras's HIIR
@@ -12,8 +12,8 @@
 //
 // Design: 8 coefficients, transition band 0.0232 of the high rate (passband to 20.0 kHz,
 // stopband from 24.1 kHz): passband ripple < 1e-7 dB, stopband >= 85 dB. Coefficients from
-// HIIR's PolyphaseIir2Designer formulas (SubForce's tools/halfband_design.py prints them); the
-// decimator's response is measured in SubForce's test/engine_test.cpp, the interpolator's (and
+// HIIR's PolyphaseIir2Designer formulas (SubWerk's tools/halfband_design.py prints them); the
+// decimator's response is measured in SubWerk's test/engine_test.cpp, the interpolator's (and
 // the pair's) in test/drive_test.cpp. Nonlinear phase (an IIR), like any analog filter: up and
 // down together delay low frequencies by 2.7 samples, 20 kHz by 5.
 //

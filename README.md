@@ -1,13 +1,15 @@
-# AmbientForce
+# AmbientWerk
 
 **An ambient instrument that runs natively inside MPC on the Akai Force.**
 
-AmbientForce is a VST2 instrument for MPC OS's built-in plugin host, with its own touchscreen pages
+*Formerly AmbientForce.* <!-- werk-rename: keep -->
+
+AmbientWerk is a VST2 instrument for MPC OS's built-in plugin host, with its own touchscreen pages
 and Q-Link sets, built for slow music that keeps breathing after you stop playing. One gesture
 drives several layers of sound, the **strata**, through a shared **harmony brain**: press one pad
 and a drone moves under a chord, both in key and in just intonation, into a long reverb. It is
-built on the same groundwork as its siblings [PolyForce](https://github.com/Devko/PolyForce),
-[SubForce](https://github.com/Devko/SubForce) and [EffectForce](https://github.com/Devko/EffectForce).
+built on the same groundwork as its siblings [PolyWerk](https://github.com/Devko/PolyWerk),
+[SubWerk](https://github.com/Devko/SubWerk) and [EffectWerk](https://github.com/Devko/EffectWerk).
 What it is meant to become is in the [concept](docs/CONCEPT.md).
 
 > [!NOTE]
@@ -20,7 +22,7 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 > name and survive that, but recorded automation (stored by parameter index) could then move a
 > different control.
 
-![AmbientForce's PLAY page](docs/img/play.png)
+![AmbientWerk's PLAY page](docs/img/play.png)
 
 *The PLAY page, rendered offline from the skin (on the device MPC fills in the values).*
 
@@ -70,7 +72,7 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 | Document | What's in it |
 |---|---|
 | [User guide](docs/USER_GUIDE.md) | Playing it: the strata and Listen, the harmony page, Ground, Bloom, Space, the pages, presets |
-| [Concept](docs/CONCEPT.md) | What AmbientForce is meant to become, and why |
+| [Concept](docs/CONCEPT.md) | What AmbientWerk is meant to become, and why |
 | [Building](docs/BUILDING.md) | Toolchain, make targets, tests, device bench, packaging, release builds |
 | [Architecture](docs/ARCHITECTURE.md) | Source layout, the signal path, threads and real-time rules, saved state |
 | [Performance](docs/PERFORMANCE.md) | The CPU budget, what each case costs on the Force, where the time goes |
@@ -89,19 +91,19 @@ What it is meant to become is in the [concept](docs/CONCEPT.md).
 
 ## Installation
 
-There is no release yet. Once there is, download the package (`AmbientForce-<version>-mpc-armv7.zip`)
-from [Releases](https://github.com/Devko/AmbientForce/releases), unzip it and follow the
+There is no release yet. Once there is, download the package (`AmbientWerk-<version>-mpc-armv7.zip`)
+from [Releases](https://github.com/Devko/AmbientWerk/releases), unzip it and follow the
 `INSTALL.md` inside. In short:
 
 ```sh
-scp -r AmbientForce-<version> root@<device-ip>:/tmp/
-ssh -t root@<device-ip> sh /tmp/AmbientForce-<version>/install.sh
+scp -r AmbientWerk-<version> root@<device-ip>:/tmp/
+ssh -t root@<device-ip> sh /tmp/AmbientWerk-<version>/install.sh
 ```
 
 The installer asks for confirmation (`-y` skips it), **stops MPC** (save your project first),
-copies the plugin to `/sdcard/Synths/Devko - VST - AmbientForce/`, backs up and edits
+copies the plugin to `/sdcard/Synths/Devko - VST - AmbientWerk/`, backs up and edits
 `MPC.settings`, and starts MPC again. Running it again upgrades in place and keeps your own presets
-(`Presets/` in that folder) and favorites. Then add **AmbientForce** to a track from MPC's
+(`Presets/` in that folder) and favorites. Then add **AmbientWerk** to a track from MPC's
 instrument plugins.
 
 From source, `make plugin-install` builds the package, copies it to the device named by `FORCE`
@@ -142,7 +144,7 @@ and their release, peaks under −1 dBFS:
 Each one in a line: [User guide](docs/USER_GUIDE.md#presets).
 
 Your own presets (SAVE writes `User NNN.afp`) go to `Presets/User/` in the plugin folder; presets
-in `/media/AkaiForce/AmbientForce Presets/` on the Force's drive show up too, a folder for each
+in `/media/AkaiForce/AmbientWerk Presets/` on the Force's drive show up too, a folder for each
 category ([User guide](docs/USER_GUIDE.md#presets)).
 
 ## Listen
@@ -158,9 +160,9 @@ On Linux or WSL (developed on Ubuntu 24.04):
 
 ```sh
 make test            # the full test suite under ASan/UBSan
-make arm-plugin      # build/arm/ambientforce.so for the device
+make arm-plugin      # build/arm/ambientwerk.so for the device
 make skin preview    # the skin, and every page as surface/build/page_*.png
-make plugin-package  # dist/AmbientForce-<version>-mpc-armv7.zip
+make plugin-package  # dist/AmbientWerk-<version>-mpc-armv7.zip
 ```
 
 Release packages come from CI (glibc 2.31, profile-guided, checked with the plugin catalog's own
@@ -182,15 +184,15 @@ Details in the [roadmap](docs/ROADMAP.md); what changed in the [changelog](CHANG
 
 ## License
 
-AmbientForce is released under the [MIT License](LICENSE). Third-party components keep their own
+AmbientWerk is released under the [MIT License](LICENSE). Third-party components keep their own
 licenses (below).
 
 ## Credits
 
 - Plugin groundwork (VST2 glue, touchscreen logic, preset library, build and bench tooling):
-  [PolyForce](https://github.com/Devko/PolyForce), [SubForce](https://github.com/Devko/SubForce) and
-  [EffectForce](https://github.com/Devko/EffectForce), MIT. The wavetable layout is PolyForce's,
-  the reverb EffectForce's.
+  [PolyWerk](https://github.com/Devko/PolyWerk), [SubWerk](https://github.com/Devko/SubWerk) and
+  [EffectWerk](https://github.com/Devko/EffectWerk), MIT. The wavetable layout is PolyWerk's,
+  the reverb EffectWerk's.
 - DSP from the literature: Andrew Simper's linear trapezoidal state-variable filter (Cytomic);
   Jean-Marc Jot's decay gains for the reverb's feedback delay network; Jon Dattorro's input
   diffusion for the Plate.
@@ -200,6 +202,6 @@ licenses (below).
 - Interface font: [Titillium Web](https://fonts.google.com/specimen/Titillium+Web), SIL Open Font
   License 1.1 (`surface/fonts/OFL.txt`).
 
-AmbientForce is an independent project, not affiliated with or endorsed by Akai Professional /
+AmbientWerk is an independent project, not affiliated with or endorsed by Akai Professional /
 inMusic or Steinberg. Akai, Force and MPC are trademarks of inMusic Brands; VST is a trademark of
 Steinberg Media Technologies GmbH.

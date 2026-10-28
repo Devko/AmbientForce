@@ -1,7 +1,7 @@
-// From EffectForce dsp/common.h (4160e87), namespace ef -> af.
+// From EffectWerk dsp/common.h (4160e87), namespace ef -> af.
 #pragma once
 // What every module shares: MPC's rate, the control chunk, the transport, sync divisions,
-// smoothing, interpolation and a delay line. The module contract (EffectForce's docs/DESIGN.md,
+// smoothing, interpolation and a delay line. The module contract (EffectWerk's docs/DESIGN.md,
 // "Modules"; Space keeps it for the Reverb inside):
 //
 //   Module();                                       allocates (UI thread)
@@ -233,7 +233,7 @@ private:
 };
 
 // A gain that moves in a straight line to its target over `samples` from wherever it is when the
-// target changes, taken on a piece at a time (AmbientForce's: Air's and Weather's pans and Echo
+// target changes, taken on a piece at a time (AmbientWerk's: Air's and Weather's pans and Echo
 // sends, which glide as the engine's own gains do). A step under half an ulp of `now` lands, as one
 // past the target does.
 struct LineGlide {

@@ -1,5 +1,5 @@
 #pragma once
-// The AmbientForce engine (docs/CONCEPT.md 4 and 8): the harmony brain, the four strata (Ground,
+// The AmbientWerk engine (docs/CONCEPT.md 4 and 8): the harmony brain, the four strata (Ground,
 // Bloom, Air, Weather), Echo and Space, Memory, and the output stage, behind the interface the plugin
 // drives (MIDI at sample offsets, the transport once per block, a Patch when a parameter changes,
 // Weather's source and Remember once per block).
@@ -207,7 +207,7 @@ enum OnStop : int { OS_KEEP, OS_FADE, OS_CUT, OS_COUNT };
 inline constexpr const char* kOnStopNames[] = {"Keep", "Fade", "Cut"};   // the surface's (harmony.h says why)
 static_assert(sizeof kOnStopNames / sizeof *kOnStopNames == OS_COUNT, "a name per On Stop");
 
-// Init's Space: a slow hall for pads, not the Reverb's own defaults (EffectForce's, for any input).
+// Init's Space: a slow hall for pads, not the Reverb's own defaults (EffectWerk's, for any input).
 constexpr Space::Params initSpace() {
     Space::Params s;
     s.reverb.mode = Reverb::HALL;

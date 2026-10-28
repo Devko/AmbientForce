@@ -1,4 +1,4 @@
-// Memory: see memory.h. The recording is EffectForce's Grain recording (dsp/grain.cpp, d94bde0):
+// Memory: see memory.h. The recording is EffectWerk's Grain recording (dsp/grain.cpp, d94bde0):
 // level 0 as it comes, each pair of its frames through the halfband decimator into level 1 and
 // each pair of those into level 2, the guard written as the ring's first frames are; the seam's
 // fade is Grain's hold fade (freeze(): 220 frames at level 0, window1's sin^2). Here the samples
@@ -58,7 +58,7 @@ AF_INLINE void put4(const float* x, int16_t* q, int count) {
 }
 
 // Four frames of L and R staged at x, interleaved, in 16-bit units: each sample not finite (NaN or
-// an infinity) made 0, as EffectForce's Grain does (finiteLr), then times kToInt and clamped to full
+// an infinity) made 0, as EffectWerk's Grain does (finiteLr), then times kToInt and clamped to full
 // scale (+-kIn before the scaling; a finite sample too large for the scaling clamps too). The
 // decimators take them as they are (a power of two changes none of their arithmetic but the
 // exponents).
@@ -139,7 +139,7 @@ Memory::Memory() : since_(kGapFrames) {
         r.src.origin = 0;
         r.src.gain = kIn / 32768.0f;
     }
-    // window1 (EffectForce): sin^2 of a quarter turn, 0 at the seam's own frame.
+    // window1 (EffectWerk): sin^2 of a quarter turn, 0 at the seam's own frame.
     for (int k = 0; k < GrainSource::kLevels; ++k) {
         const int n = kSeamFade >> k;
         for (int i = 0; i < n; ++i) {

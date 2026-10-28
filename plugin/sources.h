@@ -5,7 +5,7 @@
 //   builtin:<field name>        a procedural field (dsp/fields.h)
 //   memory:                     Memory's remembered 16 s (the engine's; nothing to load)
 //   plugin:Weather/<file>.wav   in the plugin's folder
-//   ssd:AmbientForce/Weather/<file>.wav, ssd:AmbientForce/Memories/<file>.wav   on the SSD
+//   ssd:AmbientWerk/Weather/<file>.wav, ssd:AmbientWerk/Memories/<file>.wav   on the SSD
 //
 // Those three folders are the only places a file key may name, and only .wav (any case): a key that
 // names anything else is refused, as one that climbs out of its root is (paths.h's resolveKey). The
@@ -60,7 +60,7 @@ inline const GrainSource* sourceOf(const void* live) {
     return live ? &static_cast<const SourceBuffer*>(live)->src : nullptr;
 }
 
-// Keep: the remembered Memory written as ssd:AmbientForce/Memories/Memory NNN.wav, 16-bit stereo at
+// Keep: the remembered Memory written as ssd:AmbientWerk/Memories/Memory NNN.wav, 16-bit stereo at
 // 44.1 kHz, from the oldest frame on, at the level the instrument played it (the ring holds it 6 dB
 // down for headroom; the file has that back, clamped). NNN is one past the highest number ever used
 // (001 the first): never a deleted file's, as the user presets do, so a project or preset that

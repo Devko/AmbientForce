@@ -45,10 +45,10 @@ Bloom 6×2 with Ground and Space at p99 ≤ 15% of the block.
 
 | Task | | |
 |---|---|---|
-| 1 | Scaffold: SubForce's plugin side renamed, EffectForce's page groups, a stub engine | ✅ |
-| 2 | Space: EffectForce's reverb with Haze and Abyss, as a send / return with Rise | ✅ |
+| 1 | Scaffold: SubWerk's plugin side renamed, EffectWerk's page groups, a stub engine | ✅ |
+| 2 | Space: EffectWerk's reverb with Haze and Abyss, as a send / return with Rise | ✅ |
 | 3 | The harmony brain: scales, Input, diatonic chords, voicings, voice leading, tunings, memory | ✅ |
-| 4 | Tables: PolyForce's wavetable layout, 8 lifetime models, 4 digital waves, a builder thread | ✅ |
+| 4 | Tables: PolyWerk's wavetable layout, 8 lifetime models, 4 digital waves, a builder thread | ✅ |
 | 5 | The lifetime oscillator: frame crossfade, mip choice, Sway and Smear, the Couple modes | ✅ |
 | 6 | Ground: one drone voice, just partials, beating in Hz, Gravity, Body and Breath | ✅ |
 | 7 | Bloom: six chord voices, strum, voice-led moves, unison, the tail handoff | ✅ |
@@ -66,7 +66,7 @@ quality; each finding was checked against the code and fixed with a check that f
 ## Phase 0: the probe
 
 What MPC does with an **instrument** plugin, measured on the device. Folded into M1's device run:
-with `/tmp/ambientforce.trace` present the M1 build logs every parameter change, every suspend and
+with `/tmp/ambientwerk.trace` present the M1 build logs every parameter change, every suspend and
 resume and where the audio thread took the resume, every MIDI event as it came in (channel and
 all), each table's build time, and which of MPC's threads made each call
 ([diagnostics](BUILDING.md#diagnostics-on-the-device)). The answers go in `docs/PROBE.md`, and then
@@ -98,11 +98,11 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 
 ## Planned, not yet placed
 
-- ⬜ **Tuning from a file** (`.scl` / `.tun`, PolyForce's) and **Tune Drift** (each pitch class
+- ⬜ **Tuning from a file** (`.scl` / `.tun`, PolyWerk's) and **Tune Drift** (each pitch class
   wandering on its own, 0–15 cents): in the concept's harmony, not in M1.
 - ⬜ **Split**: pads below a split note set the harmony and play Bloom, pads above play Air as a
   melody (with Air, M2).
-- ⬜ **The CPU guard** (PolyForce's: shedding tails above 40% and 65% of a block), the tail
+- ⬜ **The CPU guard** (PolyWerk's: shedding tails above 40% and 65% of a block), the tail
   handoff's second line of defence.
 - ⬜ **Voice leading's taste**: `voiceLeadCost` is the plan's baseline (the least total movement); a
   `TODO(Roland)` in `dsp/harmony.cpp` names the trade-offs (parallel fifths, the upper voices, common
@@ -117,15 +117,15 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 | Air driving other tracks | MPC drops a plugin's MIDI output |
 | Instances sharing one harmony ("Link") | A stratum per track, each with its own mixer channel and clips: after v0.1 |
 | Echo's reverse mode | After v0.1 |
-| Step sequencers, an arpeggiator | The Force's sequencer is better; PolyForce has an arp |
-| Crush, overdrive, more reverb algorithms | EffectForce's (the scope rule: a feature a sibling has, not tied to the strata or to long time, stays there) |
+| Step sequencers, an arpeggiator | The Force's sequencer is better; PolyWerk has an arp |
+| Crush, overdrive, more reverb algorithms | EffectWerk's (the scope rule: a feature a sibling has, not tied to the strata or to long time, stays there) |
 | Third-party sample content | Every factory sound is computed; your own sounds come from the SSD |
 
 ## Decisions
 
 ### From the concept
 
-- 2026-10-06 — **Space, Echo and Patina are built in**, reusing EffectForce's code: the tail handoff,
+- 2026-10-06 — **Space, Echo and Patina are built in**, reusing EffectWerk's code: the tail handoff,
   Memory and complete presets all need Space inside the instrument (CONCEPT §17.1).
 - 2026-10-06 — **Memory is kept as an SSD WAV** (Keep), not inside the project chunk (5.6 MB per
   instance per save) (§17.2).
@@ -137,7 +137,7 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 - 2026-10-06 — **No Focus selector**: the stratum pages share one knob layout instead, because MPC
   records automation per parameter (§17.6).
 - 2026-10-06 — **Hardware product names stay in CONCEPT §2 only**: code comments and user docs
-  describe AmbientForce on its own terms (§17.7).
+  describe AmbientWerk on its own terms (§17.7).
 - 2026-10-06 — **Every task implemented by a subagent and reviewed twice**: for the spec, then for
   code quality.
 
@@ -210,7 +210,7 @@ From the concept ([§14](CONCEPT.md#14-roadmap)):
 
 ### Space
 
-- 2026-10-06 — **Haze and Abyss are added** after EffectForce's four modes, which stay bit for bit as
+- 2026-10-06 — **Haze and Abyss are added** after EffectWerk's four modes, which stay bit for bit as
   they were.
 - 2026-10-06 — **Abyss is deliberately louder** (Decay × 4): Space doesn't compensate; level
   matching handles it.
@@ -301,7 +301,7 @@ knobs are doing".
 - 2026-10-07 — **The breath and the sways can sync to the bar; Free stays the default.** CONCEPT
   §7.1 plans Free / Sync rates; asked for now, for the breath and both sways: Sync runs one cycle per
   division (1/4 to 64 bars of 4/4) on a beat clock per stratum, locked to MPC's position while it
-  plays (SubForce's synced busses' rule) and running on at the tempo while it is stopped.
+  plays (SubWerk's synced busses' rule) and running on at the tempo while it is stopped.
   (Re-review: each stratum's clock ran on by itself only while it was rendered, so a silent Bloom's
   stood still while a sounding Ground's ran on: 3 s stopped put a chord 0.17 of the table off the
   grid the drone breathed on. Now the engine keeps one count, MPC's position while it plays and on
@@ -369,5 +369,5 @@ knobs are doing".
 - 2026-10-07 — **The trace never writes from the audio thread**: it leaves notes (the resume, a ring
   of MIDI events) that MPC's own threads write at their next call.
 - 2026-10-07 — **Bloom's unison 2 stays**: the device bench puts everything M1 has at its heaviest at
-  p99 10.6%. The instruction counts at PolyForce's ~1 ns an instruction had put it at 14.6–14.9%; the
-  Force ran AmbientForce's code at about 0.6 ns an instruction.
+  p99 10.6%. The instruction counts at PolyWerk's ~1 ns an instruction had put it at 14.6–14.9%; the
+  Force ran AmbientWerk's code at about 0.6 ns an instruction.

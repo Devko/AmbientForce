@@ -1,5 +1,5 @@
-# From SubForce Makefile (8846421), renamed.
-# AmbientForce: an ambient instrument as a VST2 plugin for MPC OS (Force / MPC standalone).
+# From SubWerk Makefile (8846421), renamed.
+# AmbientWerk: an ambient instrument as a VST2 plugin for MPC OS (Force / MPC standalone).
 # Builds on Linux or WSL. Native: g++ (tests, x86 bench). Device: arm-linux-gnueabihf-g++ 11 or newer
 # (libstdc++ is linked dynamically; MPC OS has it). Releases come from CI, built against glibc 2.31 so
 # they load on MPC OS 2.x and 3.x; a newer distribution's cross toolchain needs a newer glibc (3.x only).
@@ -34,7 +34,7 @@ SSH      := ssh -n $(SSH_OPTS)
 MV       := third_party/mpc-vst-plugins
 SURF     := surface
 SURF_OUT := $(SURF)/build
-SKIN_DIR := $(SURF_OUT)/skin/Devko - VST - AmbientForce
+SKIN_DIR := $(SURF_OUT)/skin/Devko - VST - AmbientWerk
 GEN      := $(SURF_OUT)/param_ids.h $(SURF_OUT)/factory_presets.h
 SKIN     := $(SURF_OUT)/skin.stamp
 
@@ -46,8 +46,8 @@ INC      := -I$(SURF_OUT) -Iplugin
 # (NEON flushes denormals, so it isn't IEEE-exact). Not -ffast-math: keep isfinite() honest.
 ARM_OPT  := -O3 -march=armv7-a -mtune=cortex-a17 -mfpu=neon-vfpv4 -mfloat-abi=hard \
             -funsafe-math-optimizations -fno-math-errno -fno-tree-loop-distribute-patterns
-ARM_SO   := $(BUILD)/arm/ambientforce.so
-ARM_SO_STAGES := $(BUILD)/arm/ambientforce_stages.so
+ARM_SO   := $(BUILD)/arm/ambientwerk.so
+ARM_SO_STAGES := $(BUILD)/arm/ambientwerk_stages.so
 ARM_BENCH := $(BUILD)/arm/afbench
 
 # --- objects ----------------------------------------------------------------------------------
@@ -93,7 +93,7 @@ endef
 # A recipe that fails leaves no half-written target behind for the next make to trust.
 .DELETE_ON_ERROR:
 # The stage-timing build too: a -DAF_STAGE_TIMING break shows here, not at bench time.
-all: test arm-plugin $(BUILD)/ambientforce_stages.so
+all: test arm-plugin $(BUILD)/ambientwerk_stages.so
 
 # Goals that run something (a suite, the soak, the bench, the instruction counts, the device) take
 # turns when several are given, in the order given: their builds overlap, their runs do not.
@@ -152,7 +152,7 @@ $(BUILD)/arm/plugin_test: $(call objs,arm-test,$(SRC) $(TESTS))
 	mkdir -p $(BUILD)/arm
 	$(ARM_CXX) $(ARM_TEST_FLAGS) $^ -o $@
 
-# One dsp suite on its own, quicker to iterate on (EffectForce's): make test-module M=reverb links
+# One dsp suite on its own, quicker to iterate on (EffectWerk's): make test-module M=reverb links
 # test/reverb_test.cpp with every dsp/*.cpp under ASan/UBSan, the objects make test built (only
 # module_main.cpp is compiled for the suite: -DMODULE_TESTS names the suite it calls); test-module-arm
 # the same for the device's CPU under qemu-arm. Suites that drive the plugin (engine, preset) need
@@ -187,18 +187,18 @@ endif
 
 # x86 numbers say nothing about the Force; this only checks the bench and the .so paths work
 # (the plain plugin, then the stage-timing build).
-bench: $(BUILD)/ambientforce.so $(BUILD)/ambientforce_stages.so $(BUILD)/afbench
-	$(BUILD)/afbench $(BUILD)/ambientforce.so -s 1 -c -1
-	$(BUILD)/afbench $(BUILD)/ambientforce_stages.so -s 1 -c -1
+bench: $(BUILD)/ambientwerk.so $(BUILD)/ambientwerk_stages.so $(BUILD)/afbench
+	$(BUILD)/afbench $(BUILD)/ambientwerk.so -s 1 -c -1
+	$(BUILD)/afbench $(BUILD)/ambientwerk_stages.so -s 1 -c -1
 
 X86_SO_FLAGS = -std=c++17 -O3 -fno-tree-loop-distribute-patterns -fPIC -fvisibility=hidden -fno-gnu-unique -Wall -Wextra -pthread $(INC)
 X86_STAGES_FLAGS = $(X86_SO_FLAGS) -DAF_STAGE_TIMING
 X86_SO_CMD = $(CXX) $(X86_SO_FLAGS) -shared -Wl,--no-undefined
 $(eval $(call objrule,x86-so,X86_SO_FLAGS,CXX))
 $(eval $(call objrule,x86-stages,X86_STAGES_FLAGS,CXX))
-$(BUILD)/ambientforce.so: $(call objs,x86-so,$(SRC)) plugin/exports.map
+$(BUILD)/ambientwerk.so: $(call objs,x86-so,$(SRC)) plugin/exports.map
 	$(X86_SO_CMD) -Wl,--version-script=plugin/exports.map $(filter %.o,$^) -o $@
-$(BUILD)/ambientforce_stages.so: $(call objs,x86-stages,$(SRC)) plugin/exports_stages.map
+$(BUILD)/ambientwerk_stages.so: $(call objs,x86-stages,$(SRC)) plugin/exports_stages.map
 	$(X86_SO_CMD) -Wl,--version-script=plugin/exports_stages.map $(filter %.o,$^) -o $@
 
 # The bench sets parameters in real values: patch_map.cpp's paramNorm makes them MPC's 0..1. M2's
@@ -240,7 +240,7 @@ $(BUILD)/soak: $(call objs,o2,$(SRC) tools/soak.cpp)
 # instantiations and typeinfo -fvisibility leaves; -fno-gnu-unique keeps it unloadable);
 # --no-undefined because an unresolved symbol otherwise only shows up as MPC crashing on load.
 ARM_SO_FLAGS = -std=c++17 $(ARM_OPT) -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -fno-gnu-unique -Wall -Wextra -Wno-psabi -pthread $(INC)
-ARM_SO_LINK  = -shared -Wl,--no-undefined -Wl,-soname,ambientforce.so -Wl,--version-script=plugin/exports.map
+ARM_SO_LINK  = -shared -Wl,--no-undefined -Wl,-soname,ambientwerk.so -Wl,--version-script=plugin/exports.map
 ARM_SO_CMD   = $(ARM_CXX) $(ARM_SO_FLAGS) $(ARM_SO_LINK)
 
 # Profile-guided: on by default when ARM programs can run here (qemu-arm installed, as test-arm
@@ -332,14 +332,14 @@ test-arm-pgo: $(ARM_SO)
 endif
 
 # The profiling build: the same plugin with timers between the render stages (dsp/stages.h)
-# and one more export, AmbientForceStageTimes, which afbench reads. Never shipped. A plain build
+# and one more export, AmbientWerkStageTimes, which afbench reads. Never shipped. A plain build
 # (not profile-guided): its times read a little higher than the shipped .so's.
 arm-bench-stages: $(ARM_SO_STAGES) $(ARM_BENCH)
 ARM_STAGES_FLAGS = $(ARM_SO_FLAGS) -DAF_STAGE_TIMING
 $(eval $(call objrule,arm-stages,ARM_STAGES_FLAGS,ARM_CXX))
 $(ARM_SO_STAGES): $(call objs,arm-stages,$(SRC)) plugin/exports_stages.map $(ARM_SO_STAMP)
 	mkdir -p $(BUILD)/arm
-	$(ARM_CXX) $(ARM_SO_FLAGS) -shared -Wl,--no-undefined -Wl,-soname,ambientforce.so \
+	$(ARM_CXX) $(ARM_SO_FLAGS) -shared -Wl,--no-undefined -Wl,-soname,ambientwerk.so \
 		-Wl,--version-script=plugin/exports_stages.map $(filter %.o,$^) -o $@
 	$(ARM_PREFIX)strip --strip-unneeded $@
 
@@ -368,7 +368,7 @@ ICOUNT_QEMU    ?= /home/user/qemu-icount/qemu-arm-plugins
 ICOUNT_PLUGIN  ?= /home/user/qemu-icount/libinsn.so
 ICOUNT_SYSROOT ?= /usr/arm-linux-gnueabihf
 ICOUNT_RUN      = env -i $(ICOUNT_BIN) -L $(ICOUNT_SYSROOT) -plugin $(ICOUNT_PLUGIN) -d plugin
-ARM_SO_PLAIN   := $(BUILD)/arm-plain/ambientforce.so
+ARM_SO_PLAIN   := $(BUILD)/arm-plain/ambientwerk.so
 ICOUNT_LOG     := $(BUILD)/arm-plain/icount.log
 
 # Checked before anything is built: without them there is nothing to count with. ICOUNT_BIN is the
@@ -414,9 +414,9 @@ BENCH_ARGS ?= -s 3
 bench-device: $(ARM_SO) $(ARM_SO_STAGES) $(ARM_BENCH)
 	scp -q $(SSH_OPTS) $(ARM_SO) $(ARM_SO_STAGES) $(ARM_BENCH) $(FORCE):/tmp/
 	$(SSH) $(FORCE) 'r=0; \
-		/tmp/afbench /tmp/ambientforce.so $(BENCH_ARGS) -c 1 || r=1; \
-		/tmp/afbench /tmp/ambientforce_stages.so $(BENCH_ARGS) -c 1 || r=1; \
-		rm -f /tmp/afbench /tmp/ambientforce.so /tmp/ambientforce_stages.so; exit $$r'
+		/tmp/afbench /tmp/ambientwerk.so $(BENCH_ARGS) -c 1 || r=1; \
+		/tmp/afbench /tmp/ambientwerk_stages.so $(BENCH_ARGS) -c 1 || r=1; \
+		rm -f /tmp/afbench /tmp/ambientwerk.so /tmp/ambientwerk_stages.so; exit $$r'
 
 # Release zip: plugin + skin + sd88me's installer (stops MPC, backs up and edits
 # MPC.settings, restarts MPC).
@@ -431,8 +431,8 @@ plugin-package: $(ARM_SO) $(SKIN)
 		echo "warning: this .so needs glibc $$g: it loads on MPC OS 3.x only, and the plugin catalog refuses it."; \
 		echo "         Release packages come from CI (glibc 2.31, docs/BUILDING.md#release-builds)."; fi
 	$(PY) $(MV)/tools/release.py --so $(ARM_SO) --skin "$(SKIN_DIR)" --entry $(SURF_OUT)/pluginlist-entry.xml \
-		--version $(PLUGIN_VERSION) --repo Devko/AmbientForce --license MIT \
-		--about "AmbientForce ambient instrument (preview, in development)." \
+		--version $(PLUGIN_VERSION) --repo Devko/AmbientWerk --license MIT \
+		--about "AmbientWerk ambient instrument (preview, in development)." \
 		--requires "root SSH (MockbaMod); MPC OS 3.x for the pages" \
 		--user-data Presets --user-data preset_favorites.txt --user-data preset_recent.txt \
 		-o dist
@@ -442,9 +442,9 @@ plugin-package: $(ARM_SO) $(SKIN)
 PKG_TMP := /tmp/afpkg
 plugin-install: plugin-package
 	rm -rf $(PKG_TMP) && mkdir -p $(PKG_TMP)
-	python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' dist/AmbientForce-$(PLUGIN_VERSION)-mpc-armv7.zip $(PKG_TMP)
-	tar -C $(PKG_TMP) -cf - AmbientForce-$(PLUGIN_VERSION) | ssh $(SSH_OPTS) $(FORCE) 'rm -rf /tmp/AmbientForce-$(PLUGIN_VERSION) && tar -C /tmp -xf -'
-	$(SSH) $(FORCE) 'sh /tmp/AmbientForce-$(PLUGIN_VERSION)/install.sh -y'
+	python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' dist/AmbientWerk-$(PLUGIN_VERSION)-mpc-armv7.zip $(PKG_TMP)
+	tar -C $(PKG_TMP) -cf - AmbientWerk-$(PLUGIN_VERSION) | ssh $(SSH_OPTS) $(FORCE) 'rm -rf /tmp/AmbientWerk-$(PLUGIN_VERSION) && tar -C /tmp -xf -'
+	$(SSH) $(FORCE) 'sh /tmp/AmbientWerk-$(PLUGIN_VERSION)/install.sh -y'
 
 $(BUILD):
 	mkdir -p $(BUILD)

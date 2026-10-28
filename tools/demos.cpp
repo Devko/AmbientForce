@@ -1,4 +1,4 @@
-// From SubForce tools/demos.cpp (8846421), renamed; the ambient phrase (tools/phrase.h) in stereo, and
+// From SubWerk tools/demos.cpp (8846421), renamed; the ambient phrase (tools/phrase.h) in stereo, and
 // a look at each preset's sound.
 // Demo clips, preset levels and what each factory preset measures, rendered through the plugin's own
 // entry points (VSTPluginMain, 128-frame blocks, MIDI with sample offsets), the way MPC plays it.

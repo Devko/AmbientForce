@@ -1,9 +1,9 @@
-// From EffectForce test/reverb_test.cpp (4160e87), eft -> aft; Haze, Abyss and Space added.
+// From EffectWerk test/reverb_test.cpp (4160e87), eft -> aft; Haze, Abyss and Space added.
 // dsp/reverb.h: decay time against the target (Schroeder integration), damping, evenness across
 // frequency, echo density, level, predelay, freeze, stereo decorrelation and width, mix, low cut,
 // modulation, shimmer (pitch, bounds, clicks, off bit for bit as before), and robustness
 // (extremes, random jumps, NaN input, block sizes, reset and stale buffers, clicks on changes,
-// tailSamples()). Then AmbientForce's own: Haze and Abyss, no mode growing over a minute, and
+// tailSamples()). Then AmbientWerk's own: Haze and Abyss, no mode growing over a minute, and
 // dsp/space.h (Rise, silent(), nothing from before a silence after the engine skipped Space).
 #include "signal.h"
 #include "../dsp/reverb.h"
@@ -22,7 +22,7 @@ using af::Space;
 using P = Reverb::Params;
 const char* const kModeNames[] = {"Room", "Hall", "Plate", "Space", "Haze", "Abyss"};
 static_assert(sizeof kModeNames / sizeof kModeNames[0] == Reverb::kModes, "a name for every mode");
-constexpr int kEffectForceModes = Reverb::SPACE + 1;   // Room, Hall, Plate, Space: as EffectForce has them
+constexpr int kEffectWerkModes = Reverb::SPACE + 1;   // Room, Hall, Plate, Space: as EffectWerk has them
 
 int secs(double s) { return static_cast<int>(s * af::kRate); }
 size_t at(double s) { return static_cast<size_t>(secs(s)); }
@@ -41,7 +41,7 @@ P wetOnly(int mode, float decay) {
 
 // The Decay that makes `mode` ring for `rt60` seconds and the Damp that makes it damp from `hz`
 // (Abyss rings four times Decay, Haze damps from half of Damp), for the checks that hold every mode
-// to the same tail. EffectForce's four get the values themselves: their checks are as they were.
+// to the same tail. EffectWerk's four get the values themselves: their checks are as they were.
 float decayFor(int mode, float rt60) { return mode == Reverb::ABYSS ? rt60 / 4.0f : rt60; }
 float dampFor(int mode, float hz) { return mode == Reverb::HAZE ? 2.0f * hz : hz; }
 
@@ -687,7 +687,7 @@ uint64_t fingerprint(const Buf& L, const Buf& R) {
 }
 
 // Every mode through one second of everything moving: size, predelay, freeze, modulation, decay,
-// damping, low cut, width, mix, and a mode change (to the next of EffectForce's four, as there).
+// damping, low cut, width, mix, and a mode change (to the next of EffectWerk's four, as there).
 uint64_t goldenRun(int mode) {
     Reverb r;
     Buf L = whiteNoise(secs(1.0), 0.5f, 41 + static_cast<uint32_t>(mode)), R = whiteNoise(secs(1.0), 0.5f, 51);
@@ -705,14 +705,14 @@ uint64_t goldenRun(int mode) {
         q.lowCutHz = t < 0.45 ? 150.0f : 400.0f;
         q.width = t < 0.55 ? 1.0f : 0.6f;
         q.mix = t < 0.65 ? 0.3f : 0.7f;
-        q.mode = t < 0.8 ? mode : (mode + 1) % kEffectForceModes;
+        q.mode = t < 0.8 ? mode : (mode + 1) % kEffectWerkModes;
     });
     return fingerprint(L, R);
 }
 
 // Shimmer 0 is the reverb as it was before shimmer, bit for bit: the fingerprints it had then (the
 // x86 test build and the device's differ: GCC fuses multiply-adds for NEON). The same fingerprints
-// say that Haze and Abyss left EffectForce's four modes as they were. The plain builds only (make
+// say that Haze and Abyss left EffectWerk's four modes as they were. The plain builds only (make
 // test, test-arm, GCC 13): against profile-guided objects (make test-arm-pgo, CI's GCC 11) the
 // profile and the compiler move the fusing, so no fingerprint stays.
 void golden() {
@@ -721,11 +721,11 @@ void golden() {
     return;
 #endif
 #if AF_NEON
-    const uint64_t before[kEffectForceModes] = {0xdd8cbf74d06f96c3ull, 0x39827f258658b59cull, 0xc476a1cf2992a1aeull, 0xb88c6356e4a4538eull};
+    const uint64_t before[kEffectWerkModes] = {0xdd8cbf74d06f96c3ull, 0x39827f258658b59cull, 0xc476a1cf2992a1aeull, 0xb88c6356e4a4538eull};
 #else
-    const uint64_t before[kEffectForceModes] = {0x982cafd935fb49caull, 0x7769d083c90a8076ull, 0xb926f8e8c89084baull, 0xc81be01a1943df90ull};
+    const uint64_t before[kEffectWerkModes] = {0x982cafd935fb49caull, 0x7769d083c90a8076ull, 0xb926f8e8c89084baull, 0xc81be01a1943df90ull};
 #endif
-    for (int mode = 0; mode < kEffectForceModes; ++mode) CHECK(goldenRun(mode) == before[mode]);
+    for (int mode = 0; mode < kEffectWerkModes; ++mode) CHECK(goldenRun(mode) == before[mode]);
 }
 
 // --- shimmer -----------------------------------------------------------------------------------

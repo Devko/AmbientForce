@@ -1,4 +1,4 @@
-// From SubForce plugin/patch_map.cpp (8846421), namespace sf -> af; the M1 parameters and their formats.
+// From SubWerk plugin/patch_map.cpp (8846421), namespace sf -> af; the M1 parameters and their formats.
 #include "patch_map.h"
 
 #include <algorithm>
@@ -179,7 +179,7 @@ std::string paramDisplay(int id, float n) {
             std::snprintf(b, sizeof b, "%+ld Oct", o);
             break;
         }
-        case Fmt::Pan: {   // PolyForce's: C, L50, R100
+        case Fmt::Pan: {   // PolyWerk's: C, L50, R100
             const long p = std::lround(std::fabs(v) * 100.0f);
             if (p == 0) return "C";
             std::snprintf(b, sizeof b, "%c%ld", v < 0.0f ? 'L' : 'R', p);

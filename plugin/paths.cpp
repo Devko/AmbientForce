@@ -1,4 +1,4 @@
-// From SubForce plugin/paths.cpp (8846421), namespace sf -> af; sourceRoots() added (a plugin root with no
+// From SubWerk plugin/paths.cpp (8846421), namespace sf -> af; sourceRoots() added (a plugin root with no
 // subfolder).
 #include "paths.h"
 
@@ -63,7 +63,7 @@ std::string pluginDir() {
     return dir;
 }
 
-std::vector<Root> presetRoots() { return roots("AF_PRESET_ROOTS", "Presets", "/media/AkaiForce/AmbientForce Presets"); }
+std::vector<Root> presetRoots() { return roots("AF_PRESET_ROOTS", "Presets", "/media/AkaiForce/AmbientWerk Presets"); }
 std::vector<Root> sourceRoots() { return roots("AF_SOURCE_ROOTS", "", "/media/AkaiForce"); }
 
 std::string dataDir() {

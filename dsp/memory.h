@@ -4,7 +4,7 @@
 // nothing to build. Two rings take turns: one records, the other holds what Remember kept. Weather
 // never reads the ring being recorded (plan decision 3), so nothing it plays can feed itself back.
 //
-// Recording (EffectForce's Grain recording, dsp/grain.cpp): write() stages each sample (one not
+// Recording (EffectWerk's Grain recording, dsp/grain.cpp): write() stages each sample (one not
 // finite, NaN or an infinity, made 0) scaled by 1/2 (6 dB of headroom: the tap may pass 0 dBFS
 // before the limiter) and clamped, and records them kBlock (128) frames at a time: level 0 rounded
 // to the nearest 16-bit value; each pair of frames (even, odd: the ring's own pairs, where
@@ -30,7 +30,7 @@
 //
 // Remember: the ring recording becomes the remembered source, and recording goes on in the other,
 // from its frame 0, empty. Its seam (newest frame against oldest) is faded over 5 ms each side at
-// each level (220, 110 and 55 frames; EffectForce's hold fade, sin^2 from 0 at the seam), so a grain
+// each level (220, 110 and 55 frames; EffectWerk's hold fade, sin^2 from 0 at the seam), so a grain
 // reading across it hears a dip, never a step; the guard is written after the fade.
 // - Full (16 s or more recorded): a source of all its frames, starting at the oldest (origin: the
 //   frame the next write would have taken).

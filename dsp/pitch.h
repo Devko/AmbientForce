@@ -1,4 +1,4 @@
-// From EffectForce dsp/pitch.h (4160e87), namespace ef -> af.
+// From EffectWerk dsp/pitch.h (4160e87), namespace ef -> af.
 #pragma once
 // A pitch shifter for feedback paths (the Reverb's shimmer; a Grain module can reuse it): a read
 // head moves through a delay line at `ratio` times the speed it is written, so the pitch is exact.

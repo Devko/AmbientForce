@@ -1,4 +1,4 @@
-// From SubForce tools/pgo_train.cpp (8846421), renamed; AmbientForce's patches and phrase.
+// From SubWerk tools/pgo_train.cpp (8846421), renamed; AmbientWerk's patches and phrase.
 // The profile-guided build's trainer (make arm-plugin with PGO): an instrumented copy of the
 // plugin is linked in and plays through VSTPluginMain under qemu-arm, the way MPC drives it
 // (128-frame blocks, MIDI at sample offsets, parameters by index, the transport running). An

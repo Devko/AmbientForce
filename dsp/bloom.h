@@ -110,7 +110,7 @@
 // The cost, as ARM instructions per 128-sample block with all six voices sounding on a lifetime
 // table (the device's flags, counted under qemu): unison 1 about 97k with Mix (126 a voice and
 // sample: A's read 74, the breath, SVF, pan and gains 36, the control steps and the bus the rest),
-// 121k with FM; unison 2 153k, FM 203k. By PolyForce's calibration (about 1 ns an instruction on
+// 121k with FM; unison 2 153k, FM 203k. By PolyWerk's calibration (about 1 ns an instruction on
 // the device) that is 3.3% / 4.2% of a block at unison 1 and 5.3% / 7.0% at unison 2, against
 // Bloom's 4% (CONCEPT.md 11): if the device bench agrees, unison 2 is the first cap to fall. A
 // table change reads both pairs of tables for its 20 ms. FM's DC blocker adds about 6 a sample (make

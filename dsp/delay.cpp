@@ -1,4 +1,4 @@
-// From EffectForce dsp/delay.cpp (7cf6e95), namespace ef -> af, EF_ -> AF_; Diffuse added.
+// From EffectWerk dsp/delay.cpp (7cf6e95), namespace ef -> af, EF_ -> AF_; Diffuse added.
 #include "delay.h"
 #include "simd.h"
 
@@ -653,7 +653,7 @@ void Delay::process(float* L, float* R, int n) {
                 if (fading_) diffuseRun<false, true>(L + i, R + i, m);
                 else diffuseRun<false, false>(L + i, R + i, m);
             }
-        } else if (moving) {   // EffectForce's Delay
+        } else if (moving) {   // EffectWerk's Delay
             if (fading_) run<true, true>(L + i, R + i, m);
             else run<true, false>(L + i, R + i, m);
         } else {

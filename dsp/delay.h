@@ -1,6 +1,6 @@
-// From EffectForce dsp/delay.h (7cf6e95), namespace ef -> af; Diffuse added.
+// From EffectWerk dsp/delay.h (7cf6e95), namespace ef -> af; Diffuse added.
 #pragma once
-// Delay (EffectForce's docs/DESIGN.md, "Modules"; here inside Echo, dsp/echo.h): EffectForce's probe
+// Delay (EffectWerk's docs/DESIGN.md, "Modules"; here inside Echo, dsp/echo.h): EffectWerk's probe
 // delay grown up. Two delay lines, L and R, each read at its own time and fed back through the cuts,
 // the diffusers, a drive and a limiter; the wet ducks under the input.
 //
@@ -34,7 +34,7 @@
 // over 1, so feedback 1 holds the repeats (the cuts still take their share each pass) and never
 // runs away; drive 1 makes them fade slowly as it squares them off.
 //
-// Diffuse (AmbientForce's): four Schroeder allpasses per side, 7.3, 11.9, 17.1 and 23.7 ms on L,
+// Diffuse (AmbientWerk's): four Schroeder allpasses per side, 7.3, 11.9, 17.1 and 23.7 ms on L,
 // 8.1, 12.7, 18.3 and 24.9 ms on R (never in step), coefficient 0.65 each. Each pass blends the
 // repeat with its diffused self, y + diffuse x (allpasses(y) - y), so repeat n has been through
 // them n times: the repeats smear more with each pass, from a clear echo into a wash for the
@@ -52,7 +52,7 @@
 // peak as at Diffuse 0).
 // Diffused energy comes the allpasses' lengths later on average (60 ms on L, 64 ms on R, a pass):
 // heavily diffused repeats trail the beat. Mono's R takes L's diffusion. At Diffuse 0 none of it
-// runs, and the Delay is EffectForce's bit for bit; a change glides across the chunk like the other
+// runs, and the Delay is EffectWerk's bit for bit; a change glides across the chunk like the other
 // ramps, and diffusers that start again (after reset() or clear(), or after Diffuse sat at 0) start
 // empty, so nothing old comes back out of them. The allpasses run four samples at a time
 // (diffuseRun() in delay.cpp says how): about 4k ARM instructions a 128-sample block on top of the
@@ -67,7 +67,7 @@
 // gain to 1 / (1 + 16 duck env): at duck 1, -6 dB with the input at -24 dBFS, -19 dB at -6 dBFS.
 // Only the wet ducks, not the loop, so the repeats bloom in the gaps.
 //
-// reset() is cheap (EffectForce's rack called it on the audio thread when the module came back on;
+// reset() is cheap (EffectWerk's rack called it on the audio thread when the module came back on;
 // here the engine's reset and its guard do, and Echo its clear() when it runs again after a
 // silence): the lines aren't cleared. Until they have been written past the reach (reachSamples()),
 // each run of samples first zeroes the few old samples its taps can reach, in one or two fills, so
@@ -110,7 +110,7 @@ public:
     void clear();
     // The duck's envelope as `samples` more of silence at the input would have left it, falling at
     // its 250 ms release, and the wet's gain at once where that puts it: Echo's rest(), for the time
-    // the engine didn't run it. Nothing else moves (AmbientForce's).
+    // the engine didn't run it. Nothing else moves (AmbientWerk's).
     void rest(double samples);
     void set(const Params& p, const Transport& t);
     void process(float* L, float* R, int n);
@@ -146,7 +146,7 @@ private:
     // one-pole glide, as a tape delay's motor would: echoes already in flight bend in pitch while
     // the time moves, more the further it has to go. The last millionth of a sample snaps, so it
     // lands exactly. In double: in float the step drops under the precision of a time near 22050
-    // samples and the glide stalls ~2.6 samples short of its target, for good. (EffectForce's
+    // samples and the glide stalls ~2.6 samples short of its target, for good. (EffectWerk's
     // docs/PROBE.md, "Your part": the choice is Params::glide now; Fade is the other branch in
     // segment().)
     double glideTime(double current, double target) const {
@@ -157,7 +157,7 @@ private:
     void segment();
     void wowNow(double tl, double tr, float& l, float& r) const;
     template <bool Moving, bool Fading>
-    void run(float* L, float* R, int n);          // EffectForce's loop: Diffuse 0
+    void run(float* L, float* R, int n);          // EffectWerk's loop: Diffuse 0
     template <bool Moving, bool Fading>
     void diffuseRun(float* L, float* R, int n);   // the same with the diffusers
 

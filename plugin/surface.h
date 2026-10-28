@@ -1,8 +1,8 @@
-// From SubForce plugin/surface.h (8846421), namespace sf -> af; without RANDOMIZE. Weather's source
-// stepper on the loader as PolyForce's table steppers are (3ad2ac6), Remember, Keep and messages.
+// From SubWerk plugin/surface.h (8846421), namespace sf -> af; without RANDOMIZE. Weather's source
+// stepper on the loader as PolyWerk's table steppers are (3ad2ac6), Remember, Keep and messages.
 #pragma once
 // Surface: what every plugin parameter does when MPC sets it, what it reads back, and what
-// its value text says. PolyForce's plugin/surface.{h,cpp} (itself RackForce's, device-proven):
+// its value text says. PolyWerk's plugin/surface.{h,cpp} (itself RackWerk's, device-proven):
 // the preset browser, and one loader slot, Weather's source (below).
 //
 // Threads:
@@ -17,7 +17,7 @@
 // is 1/128 of the range, a data-wheel click 0.01, a touch drag about 0.04, and a tile tap
 // sends a release echo ~0.7 s later. So every stepped parameter (choices, small whole
 // numbers, the preset stepper) moves exactly one step per event in MPC's direction, and the
-// plugin pushes the snapped value back (stepIndex / stepItem below, RackForce's rules). The
+// plugin pushes the snapped value back (stepIndex / stepItem below, RackWerk's rules). The
 // read-back is the base of every value, within a turn too: a stepper measures each detent from
 // its own value, never from MPC's previous one. A button tap toggles its read-back, and a button
 // always reads back 0 (it springs back): every 1 is a press, and no release ever follows.
@@ -206,7 +206,7 @@ private:
     std::string sourceText() const;
     uint32_t pickRemembersSeen() const;   // pickRemembers_, under the lock
 
-    // UI-thread-only stepping state (RackForce's).
+    // UI-thread-only stepping state (RackWerk's).
     long long lastSentMs_[P_COUNT] = {};
     float     lastN_[P_COUNT] = {};
     long long toggleMs_[P_COUNT] = {};

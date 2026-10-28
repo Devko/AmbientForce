@@ -1,4 +1,4 @@
-// From SubForce plugin/patch_map.h (8846421), namespace sf -> af.
+// From SubWerk plugin/patch_map.h (8846421), namespace sf -> af.
 #pragma once
 // MPC's 0..1 parameter values <-> real values, display text, and the engine Patch.
 // Ranges, curves, names and options come from surface/surface.py via build/param_ids.h.

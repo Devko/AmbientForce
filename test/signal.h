@@ -1,4 +1,4 @@
-// From EffectForce test/signal.h (4160e87), eft -> aft; the FFT, spectra and tables shared by the
+// From EffectWerk test/signal.h (4160e87), eft -> aft; the FFT, spectra and tables shared by the
 // lifetime suites added.
 #pragma once
 // Signals and measurements for the module tests: generators, levels, a single-frequency magnitude

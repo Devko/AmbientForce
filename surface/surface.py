@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# From SubForce surface/surface.py (8846421), renamed; the page groups from EffectForce's (4160e87).
-"""AmbientForce touchscreen surface: the ONE place the plugin's parameters and pages are defined.
+# From SubWerk surface/surface.py (8846421), renamed; the page groups from EffectWerk's (4160e87).
+"""AmbientWerk touchscreen surface: the ONE place the plugin's parameters and pages are defined.
 
 Writes, next to this file:
   params.json        ordered VST parameter list (index = position; append-only once released:
@@ -28,8 +28,8 @@ title band, open popup lists inside the plugin area, options that fit their popu
 segment, bitmap-font glyphs), the parameter names MPC shows (short, unique) and the help lines
 and preset descriptions the status line shows (every control a hand moves has one; each fits), so
 a broken page fails here instead of on the device.
-The layout machinery and its checks are PolyForce's; the page groups (several pages under one
-tab) are EffectForce's.
+The layout machinery and its checks are PolyWerk's; the page groups (several pages under one
+tab) are EffectWerk's.
 
 Run: python3 surface/surface.py   (make surface does this)
 """
@@ -46,8 +46,8 @@ STEPPER_RANGE = 1023        # the preset stepper's VST range: 0..1023 items (ste
 BROWSER_CATS = 16           # category tiles on the browser page (2 x 8)
 BROWSER_ITEMS = 24          # preset tiles (3 x 8)
 
-VST = {"name": "AmbientForce", "vendor": "Devko", "uid": "AmFc", "version": 1000,
-       "so": "ambientforce.so", "params": "params.json", "layout": "layout.conf"}
+VST = {"name": "AmbientWerk", "vendor": "Devko", "uid": "AmFc", "version": 1000,
+       "so": "ambientwerk.so", "params": "params.json", "layout": "layout.conf"}
 
 
 # --- parameters ------------------------------------------------------------------------------
@@ -454,8 +454,8 @@ def params_json():
 
 
 # --- touchscreen pages -------------------------------------------------------------------------
-# PolyForce's look (style=td3 rounded cards on one flat colour; bg and box the same, so the opaque image of a
-# control never shows a box behind it), in AmbientForce's mist blue. Plugin area 1280x628 at y = 86..714. Every
+# PolyWerk's look (style=td3 rounded cards on one flat colour; bg and box the same, so the opaque image of a
+# control never shows a box behind it), in AmbientWerk's mist blue. Plugin area 1280x628 at y = 86..714. Every
 # page: a header row (the status line from x=24), then cards at y=158 and y=440 (h=270) or one full-height card
 # (h=552), x=24 w=1232 or halves at x=24 / 648 (w=608). Nothing may sit in a card's title band (y .. y+44: td3
 # draws the title rule at y+38). skin_polish.py (run by `make skin` after the generator) redraws the knob
@@ -579,7 +579,7 @@ class Layout:
     def toggle(self, cx, cy, key):
         self.add('toggle cx=%d cy=%d label="%s" key=%s' % (cx, cy, PARAMS[key]["name"], key))
 
-    def meter(self, cx, cy, w, h, key):   # display only: shadow_skin's filmstrip meter, no look (PolyForce patch)
+    def meter(self, cx, cy, w, h, key):   # display only: shadow_skin's filmstrip meter, no look (PolyWerk patch)
         self.add('meter cx=%d cy=%d w=%d h=%d key=%s' % (cx, cy, w, h, key))
 
     def tiles(self, x, y, w, cols, rows, th, gap, key):
@@ -1535,7 +1535,7 @@ static constexpr SourceFitCase kSourceFitCases[] = {
 
 # --- factory presets: presets/Factory/<NN_Category>/<NN_Name>.afp, embedded in the .so ---------
 PRESET_DIR = os.path.join(HERE, "..", "presets", "Factory")
-PRESET_MAGIC = "ambientforce "
+PRESET_MAGIC = "ambientwerk "
 NUMBER = re.compile(r"^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$")
 PRESET_NAME_MAX = 18      # an item tile on the browser page (816 px / 3 columns)
 CATEGORY_NAME_MAX = 12    # a category tile (320 px / 2 columns), shown in capitals

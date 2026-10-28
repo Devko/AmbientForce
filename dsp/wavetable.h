@@ -1,4 +1,4 @@
-// From PolyForce dsp/wavetable.h (db7cba3), namespace pf -> af; the layout, mipFor, newTableId and the frame builder from wavetable.cpp only (no WAV loader, no built-in tables).
+// From PolyWerk dsp/wavetable.h (db7cba3), namespace pf -> af; the layout, mipFor, newTableId and the frame builder from wavetable.cpp only (no WAV loader, no built-in tables).
 #pragma once
 // Band-limited wavetables. A table is a stack of single-cycle frames (the "position" axis);
 // every frame is stored as kMipLevels pre-filtered copies, level k keeping harmonics

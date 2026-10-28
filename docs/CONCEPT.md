@@ -1,10 +1,10 @@
-# AmbientForce concept
+# AmbientWerk concept
 
 > **Press one pad, get a landscape.** An instrument for slow music that keeps breathing after you
 > stop playing.
 
 Status: concept, 2026-10-06, before the probe. After [Phase 0](#14-roadmap) it becomes
-`DESIGN.md` the way EffectForce's did. Numbers marked *est.* are taken from measured sibling
+`DESIGN.md` the way EffectWerk's did. Numbers marked *est.* are taken from measured sibling
 costs. The first device bench replaces them.
 
 - [1. Why a fourth Force](#1-why-a-fourth-force)
@@ -31,35 +31,35 @@ costs. The first device bench replaces them.
 
 | Plugin | Its job | What it deliberately does not do |
 |---|---|---|
-| PolyForce | Playing parts: 8 voices, wavetables, matrix, arp, sequencers | Effects |
-| SubForce | Bass: paraphonic mono, ladder, 2× oversampled | Polyphony, effects |
-| EffectForce | Insert rack: Reverb (freeze, shimmer), Grain, Delay, Looper, scenes | Making sound |
-| **AmbientForce** | **Time.** Sounds whose main parameter is minutes, not notes | Everything above |
+| PolyWerk | Playing parts: 8 voices, wavetables, matrix, arp, sequencers | Effects |
+| SubWerk | Bass: paraphonic mono, ladder, 2× oversampled | Polyphony, effects |
+| EffectWerk | Insert rack: Reverb (freeze, shimmer), Grain, Delay, Looper, scenes | Making sound |
+| **AmbientWerk** | **Time.** Sounds whose main parameter is minutes, not notes | Everything above |
 
-PolyForce into EffectForce makes a good pad. It can't make a landscape that keeps moving with
+PolyWerk into EffectWerk makes a good pad. It can't make a landscape that keeps moving with
 your hands off the pads, stays in key while it does, and never repeats itself in an hour. That
-gap is AmbientForce's whole reason to exist. The rule against scope creep: **if a feature already
+gap is AmbientWerk's whole reason to exist. The rule against scope creep: **if a feature already
 exists in a sibling and is not tied to the strata or to long time, it stays in the sibling.**
 
 ## 2. What we take from the hardware, and what we leave
 
-| | Sonicware LIVEN Ambient Ø | Sonicware LIVEN Evoke | AmbientForce |
+| | Sonicware LIVEN Ambient Ø | Sonicware LIVEN Evoke | AmbientWerk |
 |---|---|---|---|
 | Layers | 4 fixed roles: Drone, Pad, Atmos, Noise | 4 sequencer tracks on one engine | 4 roles (**strata**) that all answer **one** MIDI stream |
-| Core oscillator | Blendwave: 32 waves × 128 tables; 6 structures incl. ring-mod and FM variants | Acoustronic Flux: 34 instruments sliced into 256 time fragments, scanned back and forth ("Backtide") | **Lifetime oscillator**: 256-frame tables of an instrument's life, computed or sampled by you, coupled to a PolyForce wavetable (Mix / FM / AM / Ring) |
+| Core oscillator | Blendwave: 32 waves × 128 tables; 6 structures incl. ring-mod and FM variants | Acoustronic Flux: 34 instruments sliced into 256 time fragments, scanned back and forth ("Backtide") | **Lifetime oscillator**: 256-frame tables of an instrument's life, computed or sampled by you, coupled to a PolyWerk wavetable (Mix / FM / AM / Ring) |
 | Texture | Noise layer with 8 s self-sampling | Grain FX, up to 12 grains, pitch harmonised to scales | **Weather**: 16 grains over procedural fields, your WAVs, or the instrument's own **Memory** |
 | Harmony | 12-mode arp | 16 chord modes, 13-mode arp | **Harmony brain**: key, scale, just intonation, chords with voice leading, harmonic memory, generative **Air** |
 | Time | 64-step sequencers, probability, parameter recording | Same, plus random playback | The Force's sequencer, plus **phasing cycles**, **scene glides** lasting minutes, and **Autopilot** |
-| Space | 9 reverbs, tape and reverse delay, chorus, crush, tilt EQ | 10 reverbs incl. the veiled "Mirage" | **Patina → Echo → Space**, reusing EffectForce's FDN and adding a **Haze** voicing. A **tail handoff** gives the feel of endless polyphony |
+| Space | 9 reverbs, tape and reverse delay, chorus, crush, tilt EQ | 10 reverbs incl. the veiled "Mirage" | **Patina → Echo → Space**, reusing EffectWerk's FDN and adding a **Haze** voicing. A **tail handoff** gives the feel of endless polyphony |
 
 **Taken:** Ø's role-based layers and its self-sampling noise layer. Evoke's best idea: an
 instrument's *lifetime* used as a wavetable axis, scanned back and forth. Its grain pitches
 quantised to the scale. Single-pad chords. A veiled reverb voicing.
 
 **Left behind:**
-- Their step sequencers and arps. The Force's sequencer is better, and PolyForce has an arp.
+- Their step sequencers and arps. The Force's sequencer is better, and PolyWerk has an arp.
 - Nine or ten reverb algorithms. One well-tuned FDN with five voicings is enough.
-- Crush and overdrive, which belong to EffectForce.
+- Crush and overdrive, which belong to EffectWerk.
 - Their sample ROMs. We never ship third-party samples, so every factory sound is computed and
   the rest comes from you ([10](#10-content)).
 
@@ -177,7 +177,7 @@ Echo and Space sends (on the MIX page).
 | Register | −2 … +1 oct | |
 | **Beat** | 0–3 Hz | Detune set in **Hz, not cents**, so the beating rate is the same in every register. In Just tuning the partials are exact ratios over Ground's own root, so within Ground the only beating is the beating you dial in. Bloom's notes are just relative to the *key*: on chords off the tonic (ii, vi) Ground's fifth or third can sit a comma (~21 cents) away from Bloom's, a slow 1–3 Hz shimmer between the strata |
 | Breath | 0–1 | Slow swell of level and brightness, driven by the Swell source |
-| Cutoff, Body | LP; off → A → O → U | Body is a vowel/formant morph taken from PolyForce's vowel filter. It makes a drone into a choir |
+| Cutoff, Body | LP; off → A → O → U | Body is a vowel/formant morph taken from PolyWerk's vowel filter. It makes a drone into a choir |
 
 ### 5.2 BLOOM: chords and the Lifetime oscillator
 
@@ -198,7 +198,7 @@ moment of an instrument's note, from the attack (frame 0) to the deep tail (fram
 | **Age** | Where in the instrument's life to listen: 0 = just struck, 1 = almost gone |
 | **Sway** | Depth, rate and asymmetry of a slow back-and-forth scan around Age. The sound decays and then comes back |
 | **Smear** | Fast random micro-motion of Age that makes the spectrum shimmer. Costs nothing, because it only moves the read position |
-| Table B | Any PolyForce wavetable, computed or Serum-format |
+| Table B | Any PolyWerk wavetable, computed or Serum-format |
 | Blend | A ↔ B |
 | **Couple** | Mix / FM / AM / Ring, with an amount. Our answer to Ø's six structures in one control |
 | Breath | Filtered noise layered under the voice, so breath and bow return without a sample |
@@ -238,7 +238,7 @@ and the time system decides when they happen. 6 short voices.
 
 ### 5.4 WEATHER: texture and Memory
 
-A 16-grain cloud over one source. The grain engine is EffectForce's Grain (Cloud and Stretch),
+A 16-grain cloud over one source. The grain engine is EffectWerk's Grain (Cloud and Stretch),
 plus a **Stream** mode: plain playback with slowly drifting position, for fields that should stay
 recognisable.
 
@@ -251,12 +251,12 @@ recognisable.
 | Reverse, Width, Tilt, HP | |
 | **Duck** | Weather recedes while Bloom plays and comes back in the gaps |
 
-**Memory.** A rolling 16 s stereo capture of AmbientForce's own output, taken before or after
+**Memory.** A rolling 16 s stereo capture of AmbientWerk's own output, taken before or after
 Space.
 - **Remember** freezes the last 16 s and makes them the Weather source. The instrument plays
   *its own past* back to you as weather. This is Ø's self-sampling idea, pointed at the instrument
   itself.
-- **Keep** writes the frozen Memory to `ssd:AmbientForce/Memories/Memory NNN.wav`. The write
+- **Keep** writes the frozen Memory to `ssd:AmbientWerk/Memories/Memory NNN.wav`. The write
   happens on the loader thread, never the audio thread. After that the Memory is an ordinary
   source and can be saved with a preset.
 
@@ -268,7 +268,7 @@ Everything that has a pitch asks the brain first.
 |---|---|
 | Key | C … B |
 | Scale | Major, Minor, Dorian, Lydian, Mixolydian, Phrygian, Maj Pent, Min Pent, Hirajoshi, In-Sen, Whole Tone, Chromatic |
-| Tuning | Equal / **Just** (5-limit ratios relative to Key) / Pythagorean / File (`.scl`/`.tun`, from PolyForce) |
+| Tuning | Equal / **Just** (5-limit ratios relative to Key) / Pythagorean / File (`.scl`/`.tun`, from PolyWerk) |
 | Tune Drift | 0–15 cents: each pitch class wanders slowly and on its own |
 | Input | As played / **Snap** (snap to the nearest scale tone) / **Degrees** (C, D, E … play degrees 1, 2, 3 …, so any key or pad is in key) |
 | Chord | Off, Triad, Seventh, Sus2, Sus4, Add9, Quartal, Fifths, Cluster, **Spread**. Always diatonic to the scale |
@@ -292,7 +292,7 @@ a just fifth (3:2) is still. In ambient music you hear that difference.
 | LFO 1–2 | Classic shapes | 0.0008 Hz (≈20 min) – 20 Hz, or synced |
 | Macro 1–4 | Macro 1 is **HORIZON** | |
 
-Routing goes through an 8-slot matrix (EffectForce's), and every source has a sensible default
+Routing goes through an 8-slot matrix (EffectWerk's), and every source has a sensible default
 destination, so most presets never open the matrix.
 
 **HORIZON** is one knob from *near* (dry, dark, sparse, close) to *far* (wet, bright, dense,
@@ -316,7 +316,7 @@ on its own.
 
 ### 7.3 Scenes, Evolve, Autopilot
 
-- **Scenes** come from EffectForce unchanged: 8 scenes, the Force crossfader as morph, and timed
+- **Scenes** come from EffectWerk unchanged: 8 scenes, the Force crossfader as morph, and timed
   moves. One mental model across the family.
 - **Evolve** builds a target scene by mutating the current one by *Amount*. Each parameter has a
   mutation range declared in `surface.py`. Structural parameters are never mutated (sources, key,
@@ -332,7 +332,7 @@ on its own.
 
 ### 7.4 Hold and Stop
 
-- **Hold** is a toggle tile, following the PolyForce lesson: ignore the bounce revert that
+- **Hold** is a toggle tile, following the PolyWerk lesson: ignore the bounce revert that
   arrives within 1 s.
 - **On Stop:** Keep / **Fade** (8 s, default) / Cut. What MPC sends to an instrument on Stop
   (all-notes-off, suspend) is a [Phase 0](#14-roadmap) question.
@@ -342,11 +342,11 @@ on its own.
 Strata → sends → **Echo** → **Space**. The dry bus, Echo and Space sum, then pass through
 **Patina** and a tilt EQ with a limiter.
 
-| Block | Based on | AmbientForce additions |
+| Block | Based on | AmbientWerk additions |
 |---|---|---|
-| **Space** | EffectForce Reverb: 8-line FDN, decay to 30 s, freeze, shimmer +12/+7/+19/−12 | Voicings Hall, Plate, Space, **Haze** (extra diffusion, darkening, heavy modulation: veiled and distant) and **Abyss** (near-infinite). **Rise** ducks the wet signal under the input so the reverb blooms *after* the note, using the Delay's ducker |
-| **Echo** | EffectForce Delay: tape wow, feedback filters, ducking | Diffuse (smears the repeats into the reverb). Reverse mode after v0.1 |
-| **Patina** | EffectForce Drive (not oversampled) and the Delay's wow | Wow, flutter, saturation, hiss and Age (a gentle loss of top end). The whole landscape on old tape |
+| **Space** | EffectWerk Reverb: 8-line FDN, decay to 30 s, freeze, shimmer +12/+7/+19/−12 | Voicings Hall, Plate, Space, **Haze** (extra diffusion, darkening, heavy modulation: veiled and distant) and **Abyss** (near-infinite). **Rise** ducks the wet signal under the input so the reverb blooms *after* the note, using the Delay's ducker |
+| **Echo** | EffectWerk Delay: tape wow, feedback filters, ducking | Diffuse (smears the repeats into the reverb). Reverse mode after v0.1 |
+| **Patina** | EffectWerk Drive (not oversampled) and the Delay's wow | Wow, flutter, saturation, hiss and Age (a gentle loss of top end). The whole landscape on old tape |
 | Output | | Tilt EQ, a soft limiter at −1 dBFS, and the family's non-finite guard. Freeze + shimmer + feedback must never run away over a long night |
 
 **Tail handoff.** With Tail = Space, a Bloom voice whose release is longer than 1.5 s:
@@ -355,15 +355,15 @@ Strata → sends → **Echo** → **Space**. The dry bus, Echo and Space sum, th
 - and the Space decay is held at or above the release time.
 
 The listener hears a 20 s release, but the voice is free again after 1.5 s. The result feels like
-endless polyphony from 6 voices. PolyForce's CPU guard, which sheds tails above 40% and 65%, stays
+endless polyphony from 6 voices. PolyWerk's CPU guard, which sheds tails above 40% and 65%, stays
 as a second line of defence.
 
 ## 9. On the Force
 
 **Identity:**
-- Name `AmbientForce`, vendor Devko, uid `AmFc`, file `ambientforce.so`.
-- Bundle folder `Devko - VST - AmbientForce`.
-- Presets are `.afp` files with the header `ambientforce 1`.
+- Name `AmbientWerk`, vendor Devko, uid `AmFc`, file `ambientwerk.so`.
+- Bundle folder `Devko - VST - AmbientWerk`.
+- Presets are `.afp` files with the header `ambientwerk 1`.
 - Environment variables use the prefix `AF_`.
 - Skin accent: mist blue `8ab4f8`, next to teal, amber and violet.
 
@@ -390,17 +390,17 @@ WEATHER are always Level · Tone · Shape · Motion · Density · Echo · Space 
 the stratum's own parameter. Switching sub-page switches which stratum your hands are on, and
 muscle memory carries over. There is deliberately **no "Focus" selector** that retargets one set
 of knobs: MPC records automation per parameter, so a knob whose meaning depends on another
-setting would play back onto the wrong stratum (EffectForce's rule against generic slots).
+setting would play back onto the wrong stratum (EffectWerk's rule against generic slots).
 Each stratum also has a **Mute** tile, and there is one **Solo**, for arranging live.
 
-- **Crossfader:** scene morph, as in EffectForce.
+- **Crossfader:** scene morph, as in EffectWerk.
 - **Pads:**
   - With the Force's pads in a scale mode, set Input to As played.
   - With chromatic pads or a keyboard, Input = Snap or Degrees puts every pad in key.
   - Velocity scales each stratum's response.
 
-**Sky view.** Skins can't draw, so like PolyForce's wave view the PLAY page fakes a display with
-pushed meter filmstrips. It has about 20 meters, against PolyForce's 48:
+**Sky view.** Skins can't draw, so like PolyWerk's wave view the PLAY page fakes a display with
+pushed meter filmstrips. It has about 20 meters, against PolyWerk's 48:
 - 12 pitch-class lamps: the scale is dim and the current harmony memory is bright, so you can see
   what is "in the air".
 - 4 strata activity bars.
@@ -408,7 +408,7 @@ pushed meter filmstrips. It has about 20 meters, against PolyForce's 48:
 - Scene glide progress.
 - Autopilot countdown.
 
-**Source pickers** are steppers whose display text is the file name, as in PolyForce's table
+**Source pickers** are steppers whose display text is the file name, as in PolyWerk's table
 browser. They are keyed `builtin:`, `plugin:` or `ssd:`, never by index.
 
 **Known limits, accepted:**
@@ -427,19 +427,19 @@ third-party content. It also keeps the `.so` small.
   - Cello Tasto, Choir Ah→Oo, Reed Organ, Harmonium
   - Flute Breath, Distant Horn, Tape Strings, Sine Bloom (pure → rich)
 
-  This is the same "compute lazily at load" pattern that took PolyForce's startup from 163 ms to
+  This is the same "compute lazily at load" pattern that took PolyWerk's startup from 163 ms to
   42 ms.
 - **Weather fields:** 12 at v0.1, rendered from procedural models:
   - Rain on Roof, Light Rain, Wind High, Wind Low
   - Surf, Stream, Embers, Vinyl Dust
   - Tape Hiss, Room Tone, Night (FM crickets), Distant City
 - **Your own sounds:**
-  - `ssd:AmbientForce/Lifetime/*.wav` becomes a lifetime table. The importer runs on the loader
+  - `ssd:AmbientWerk/Lifetime/*.wav` becomes a lifetime table. The importer runs on the loader
     thread: YIN pitch detection on the sustained part, then 256 log-spaced slices, then single
     cycles, then band-limited mips, then a 16-bit table. Unpitched audio is flagged and offered
     as a Weather source instead. **Record a note on the Force's own sampler, drop it in the
     folder, and it becomes a Bloom voice.**
-  - `ssd:AmbientForce/Weather/*.wav` becomes a Weather source.
+  - `ssd:AmbientWerk/Weather/*.wav` becomes a Weather source.
   - `Memories/` is written by Keep.
 - **Presets:** 64 at v0.1, 8 categories × 8: Drones, Beds, Blooms, Choirs, Glass, Weather,
   Memory, Autopilot. Loudness is matched to the family at −16 LUFS over 60 s with peaks under
@@ -461,19 +461,19 @@ siblings:
 
 | Block | Load | Basis | Target |
 |---|---|---|---|
-| Bloom | 6 voices, 2 oscillators, unison ≤2, 1 SVF | PolyForce 8×1 = 5.3%, 8×4 = 7.7% | 4.0% |
-| Ground | 1 voice, 5 partials | PolyForce 1×1 = 1.7% incl. fixed cost | 0.8% |
+| Bloom | 6 voices, 2 oscillators, unison ≤2, 1 SVF | PolyWerk 8×1 = 5.3%, 8×4 = 7.7% | 4.0% |
+| Ground | 1 voice, 5 partials | PolyWerk 1×1 = 1.7% incl. fixed cost | 0.8% |
 | Air | 6 voices × 6 modes | new; 36 two-pole resonators | 1.0% |
-| Weather | 16 grains | EffectForce Grain 2.73% | 2.2% |
+| Weather | 16 grains | EffectWerk Grain 2.73% | 2.2% |
 | Space | FDN-8, shimmer on | Reverb 3.20%, shimmer ≤1% more | 3.8% |
 | Echo | | Delay 1.42% | 1.0% |
 | Patina + output | | Drive 1.79%, oversampled, which Patina isn't | 0.5% |
-| Brain, time, meters, idle | | EffectForce idle 0.58% | 0.6% |
+| Brain, time, meters, idle | | EffectWerk idle 0.58% | 0.6% |
 | **Worst case, everything on** | | | **13.9%** |
 
-**This is tight on purpose. EffectForce's all-on run cost more than the sum of its parts.** The
+**This is tight on purpose. EffectWerk's all-on run cost more than the sum of its parts.** The
 mitigations are:
-- 32-sample control chunks and 4-voice NEON blocks, as in PolyForce.
+- 32-sample control chunks and 4-voice NEON blocks, as in PolyWerk.
 - Sleeping strata.
 - The tail handoff.
 - The CPU guard.
@@ -495,24 +495,24 @@ CPU, not RAM, limits how many instances you can run.
 
 ## 12. Reuse map
 
-About 60% of the DSP already exists. New work is concentrated where AmbientForce differs.
+About 60% of the DSP already exists. New work is concentrated where AmbientWerk differs.
 
 | From | Taken |
 |---|---|
-| PolyForce | Wavetable oscillator and LRU table cache; loader thread with epoch graveyard; Serum import (the base for lifetime import); 4-voice NEON engine and CPU guard; vowel filter; `.scl`/`.tun` tuning; the `surface.py` pattern |
-| SubForce | The plugin shell lineage and the preset system |
-| EffectForce | Reverb (FDN, freeze, shimmer); Grain (Cloud, Stretch); Delay (wow, ducking); Drive; macros, 8-slot matrix, scenes, moves and crossfader; the probe method |
+| PolyWerk | Wavetable oscillator and LRU table cache; loader thread with epoch graveyard; Serum import (the base for lifetime import); 4-voice NEON engine and CPU guard; vowel filter; `.scl`/`.tun` tuning; the `surface.py` pattern |
+| SubWerk | The plugin shell lineage and the preset system |
+| EffectWerk | Reverb (FDN, freeze, shimmer); Grain (Cloud, Stretch); Delay (wow, ducking); Drive; macros, 8-slot matrix, scenes, moves and crossfader; the probe method |
 | **New** | Harmony brain; Ground partial engine; lifetime scanning and import; Air modal bank and generator; procedural Weather fields; Memory; phasing; Evolve and Autopilot; tail handoff; Sky view |
 
-Code is copied into `dsp/` with a provenance header (sibling and commit), the same way EffectForce
-took SubForce's plugin side. Pulling the shared code into a common library is a separate decision,
+Code is copied into `dsp/` with a provenance header (sibling and commit), the same way EffectWerk
+took SubWerk's plugin side. Pulling the shared code into a common library is a separate decision,
 for later.
 
 ## 13. Code layout and tests
 
 The layout is the family's: `dsp/` (no VST, files or threads), `plugin/`, `surface/`, `presets/`,
 `test/` with the fake MPC `host.h`, `tools/`, and `third_party/mpc-vst-plugins`. The tests below
-are new ones, specific to AmbientForce.
+are new ones, specific to AmbientWerk.
 
 | Test | Checks |
 |---|---|
@@ -520,7 +520,7 @@ are new ones, specific to AmbientForce.
 | `air` | Under `AF_FIXED_SEED`, the same seed gives the same events. Gravity 1 gives only chord tones. No pitch repeats within 2. Density matches its rate within ±10% over 10 min |
 | `lifetime` | Import: pitch within ±5 cents on generated test tones. Frames band-limited per mip. Unpitched input rejected |
 | **`soak`** | Renders **24 h** offline on x86, about 15 min of wall time, with Autopilot, Freeze, shimmer and Echo feedback all on. No non-finite samples, \|DC\| < −60 dB, peaks ≤ −1 dBFS, loudness drift within ±3 LU of the preset |
-| `clock` | Song position and sample counters near 2³¹ and 2³². A 32-bit sample counter wraps after 27 h, and installations run that long (the PolyForce hang lesson) |
+| `clock` | Song position and sample counters near 2³¹ and 2³². A 32-bit sample counter wraps after 27 h, and installations run that long (the PolyWerk hang lesson) |
 | `bench-device` | The [11](#11-budget) budget table, per stratum and worst case |
 
 ## 14. Roadmap
@@ -543,7 +543,7 @@ are new ones, specific to AmbientForce.
 | Pitch detection fails on your WAVs | Manual root-note override; fallback to Weather |
 | Long-run instability (feedback, freeze, denormals over hours) | Limiter, non-finite guard, FTZ, `soak` |
 | Counter wrap during installations | 64-bit time everywhere; `clock` test |
-| Turning into PolyForce plus EffectForce | The scope rule in [1](#1-why-a-fourth-force) |
+| Turning into PolyWerk plus EffectWerk | The scope rule in [1](#1-why-a-fourth-force) |
 | Looking like a Sonicware clone | Our own names and algorithms; the shared ideas (role layers, scanning an instrument's lifetime) are general concepts, and none of their data or code is used |
 
 ## 16. Approaches considered
@@ -551,14 +551,14 @@ are new ones, specific to AmbientForce.
 | | Approach | Verdict |
 |---|---|---|
 | **A** | **Four strata, one gesture**: role layers with a harmony brain and long time | **Chosen.** Only this one does what no sibling does |
-| B | One deep voice: lifetime oscillator + grain + reverb, Evoke-style | Fastest to build, but it is "PolyForce with a new oscillator". The lifetime oscillator may go back into PolyForce later anyway |
-| C | Texture box: granular fields and a looper, Ø's noise layer grown up | EffectForce's Grain and Looper already cover about 70% of it |
+| B | One deep voice: lifetime oscillator + grain + reverb, Evoke-style | Fastest to build, but it is "PolyWerk with a new oscillator". The lifetime oscillator may go back into PolyWerk later anyway |
+| C | Texture box: granular fields and a looper, Ø's noise layer grown up | EffectWerk's Grain and Looper already cover about 70% of it |
 
 ## 17. Decisions
 
 Taken 2026-10-06, when the build started:
 
-1. **Space, Echo and Patina are built in**, reusing EffectForce's code. The tail handoff, Memory
+1. **Space, Echo and Patina are built in**, reusing EffectWerk's code. The tail handoff, Memory
    and complete presets all need Space inside the instrument.
 2. **Memory is kept as an SSD WAV** (Keep), not inside the project chunk (5.6 MB per instance per
    save).
@@ -568,4 +568,4 @@ Taken 2026-10-06, when the build started:
    Split off by default ([4.1](#41-who-hears-your-notes-listen)).
 6. **No Focus selector**; the stratum pages share one knob layout instead ([9](#9-on-the-force)).
 7. **Product names of the hardware stay in §2 of this document only**: code comments and user
-   docs describe AmbientForce on its own terms, as SubForce's docs do.
+   docs describe AmbientWerk on its own terms, as SubWerk's docs do.

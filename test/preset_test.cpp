@@ -1,4 +1,4 @@
-// From SubForce test/preset_test.cpp (8846421), sft -> aft; AmbientForce's parameters, RANDOMIZE left out.
+// From SubWerk test/preset_test.cpp (8846421), sft -> aft; AmbientWerk's parameters, RANDOMIZE left out.
 // Saved state, presets and the surface: chunk round trips, the preset stepper and buttons, user
 // presets and their descriptions, the browser, favorites, stepping (options and popups too), pushing
 // values back to MPC, every factory preset playing the demo phrase at its level, and the macros at
@@ -30,7 +30,7 @@ void presetFiles(const std::string& folder, std::initializer_list<const char*> n
     const std::string dir = fixtureDir() + "/presets/" + folder;
     std::filesystem::create_directories(dir);
     float vol = -20.0f;
-    for (const char* n : names) std::ofstream(dir + "/" + n + ".afp") << "ambientforce 1\nvolume=" << (vol += 1.0f) << "\n";
+    for (const char* n : names) std::ofstream(dir + "/" + n + ".afp") << "ambientwerk 1\nvolume=" << (vol += 1.0f) << "\n";
 }
 
 void testState() {
@@ -38,7 +38,7 @@ void testState() {
     Host a;
     a.set(af::P_VOLUME, -12.5f);
     const std::string s = a.chunk();
-    CHECK(s.compare(0, 15, "ambientforce 1\n") == 0);
+    CHECK(s.compare(0, 14, "ambientwerk 1\n") == 0);
     CHECK(s.find("volume=-12.5\n") != std::string::npos);
     // Only the sound is saved: not the browser, the stepper or the readouts.
     CHECK(s.find("fav") == std::string::npos && s.find("cat_") == std::string::npos && s.find("status") == std::string::npos);
@@ -97,7 +97,7 @@ void testState() {
     // every new value at its default; a project changes only what it lists, so over an instance that has them moved
     // it leaves them; a preset names every sound value, so loading one brings them back.
     {
-        const std::string old = "ambientforce 1\nvolume=-3\nh_key=2\ng_level=0.5\nb_swell=1.5\n";
+        const std::string old = "ambientwerk 1\nvolume=-3\nh_key=2\ng_level=0.5\nb_swell=1.5\n";
         const auto atDefaults = [](Host& h) {
             int off = 0;
             for (int i = af::P_E_MODE; i <= af::P_W_MEMTAP; ++i)
@@ -121,26 +121,26 @@ void testState() {
     // A project's state changes only what it lists; unknown keys and bad numbers are skipped.
     Host c;
     c.set(af::P_VOLUME, -20.0f);
-    CHECK(c.load("ambientforce 1\nnot_a_param=3\nvolume=abc\n") == 1);
+    CHECK(c.load("ambientwerk 1\nnot_a_param=3\nvolume=abc\n") == 1);
     CHECK(std::fabs(c.value(af::P_VOLUME) + 20.0f) < 1e-3f);
-    CHECK(c.load("ambientforce 1\nvolume=1,5\n") == 1 && std::fabs(c.value(af::P_VOLUME) + 20.0f) < 1e-3f);
-    CHECK(c.load("ambientforce 1\nvolume=-3\n") == 1 && std::fabs(c.value(af::P_VOLUME) + 3.0f) < 1e-3f);
+    CHECK(c.load("ambientwerk 1\nvolume=1,5\n") == 1 && std::fabs(c.value(af::P_VOLUME) + 20.0f) < 1e-3f);
+    CHECK(c.load("ambientwerk 1\nvolume=-3\n") == 1 && std::fabs(c.value(af::P_VOLUME) + 3.0f) < 1e-3f);
     // A preset's description (about=) is not a sound value: loading skips it, saving never writes one.
-    CHECK(c.load("ambientforce 1\nabout=a test = with an equals sign\nvolume=-4\n") == 1 &&
+    CHECK(c.load("ambientwerk 1\nabout=a test = with an equals sign\nvolume=-4\n") == 1 &&
           std::fabs(c.value(af::P_VOLUME) + 4.0f) < 1e-3f && c.chunk().find("about") == std::string::npos);
-    CHECK(af::presetAbout("ambientforce 1\nvolume=1\nabout=low and slow \r\nabout=again\n") == "low and slow" &&
-          af::presetAbout("ambientforce 1\nvolume=1\n").empty() && af::presetAbout("ambientforce 1\nnot_about=x\n").empty());
+    CHECK(af::presetAbout("ambientwerk 1\nvolume=1\nabout=low and slow \r\nabout=again\n") == "low and slow" &&
+          af::presetAbout("ambientwerk 1\nvolume=1\n").empty() && af::presetAbout("ambientwerk 1\nnot_about=x\n").empty());
     // Out of range values clamp; BOM and CRLF are fine; other text is refused.
-    CHECK(c.load("\xEF\xBB\xBF" "ambientforce 1\r\nvolume=99\r\n") == 1 && std::fabs(c.value(af::P_VOLUME) - 6.0f) < 1e-3f);
-    CHECK(c.load("subforce 1\nvolume=0\n") == 0 && c.load("") == 0 && c.load("ambientforce x\n") == 0);
+    CHECK(c.load("\xEF\xBB\xBF" "ambientwerk 1\r\nvolume=99\r\n") == 1 && std::fabs(c.value(af::P_VOLUME) - 6.0f) < 1e-3f);
+    CHECK(c.load("subwerk 1\nvolume=0\n") == 0 && c.load("") == 0 && c.load("ambientwerk x\n") == 0);
     CHECK(c.e->dispatcher(c.e, vst::effSetChunk, 0, 0, nullptr, 0.0f) == 0);
     // The loaded patch is what plays.
     Host d;
-    CHECK(d.load("ambientforce 1\nvolume=-60\n") == 1);
+    CHECK(d.load("ambientwerk 1\nvolume=-60\n") == 1);
     d.on(57);
     d.run(kBlocksPerSec / 4);
     CHECK(d.run(4) == 0.0f);
-    CHECK(d.load("ambientforce 1\nvolume=0\n") == 1);
+    CHECK(d.load("ambientwerk 1\nvolume=0\n") == 1);
     d.run(3 * kBlocksPerSec);   // past Bloom's swell
     CHECK(d.run(4) > 0.05f);
 }
@@ -160,11 +160,11 @@ void testSourceState() {
     CHECK(at != std::string::npos && at > s.find("\nw_memtap=") && s.find("w_source=") == s.rfind("w_source="));
     Host b;
     CHECK(b.load(s) == 1 && showsSource(b, "Surf"));
-    CHECK(b.load("ambientforce 1\nvolume=-3\n") == 1 && text(b) == "Surf");   // 0.0.2's project: the source stays
+    CHECK(b.load("ambientwerk 1\nvolume=-3\n") == 1 && text(b) == "Surf");   // 0.0.2's project: the source stays
     b.press(af::P_PRE_INIT);                                                  // a preset without one: the default
     CHECK(showsSource(b, "Rain on Roof") && b.chunk().find("\nw_source=builtin:Rain on Roof\n") != std::string::npos);
     // A user preset keeps its source.
-    b.load("ambientforce 1\nw_source=builtin:Embers\n");
+    b.load("ambientwerk 1\nw_source=builtin:Embers\n");
     CHECK(showsSource(b, "Embers"));
     b.press(af::P_PRE_SAVE);
     const std::string project = b.chunk();
@@ -174,12 +174,12 @@ void testSourceState() {
     CHECK(af::presetText(key, saved) && saved.find("\nw_source=builtin:Embers\n") != std::string::npos);
     b.press(af::P_PRE_INIT);
     CHECK(showsSource(b, "Rain on Roof"));
-    CHECK(b.load("ambientforce 1\npreset=" + key + "\n") == 1);   // the stepper on it (a project loads nothing of it)
+    CHECK(b.load("ambientwerk 1\npreset=" + key + "\n") == 1);   // the stepper on it (a project loads nothing of it)
     b.press(af::P_PRESET_PREV);   // the preset before it (Init's is the first of all), then back onto it, loaded
     b.press(af::P_PRESET_NEXT);
     CHECK(b.display(af::P_PRESET) == "PRESET  " + af::presetLibrary().listing()->label(key) && showsSource(b, "Embers"));
     // A key that names nothing: kept, saved back as it was, MISSING.
-    CHECK(b.load("ambientforce 1\nw_source=builtin:Hail\n") == 1 && showsSource(b, "MISSING Hail") &&
+    CHECK(b.load("ambientwerk 1\nw_source=builtin:Hail\n") == 1 && showsSource(b, "MISSING Hail") &&
           b.chunk().find("\nw_source=builtin:Hail\n") != std::string::npos);
     b.run(4);
     CHECK(b.finite);
@@ -224,7 +224,7 @@ void testPresets() {
     CHECK(h.chunk().find("\npreset=" + L->items[static_cast<size_t>(at + 1)].key + "\n") != std::string::npos);
     // A preset that went missing is ignored: NEXT steps on from where the stepper stood.
     const std::string here = h.display(af::P_PRESET);
-    h.load("ambientforce 1\npreset=plugin:User/Gone.afp\n");
+    h.load("ambientwerk 1\npreset=plugin:User/Gone.afp\n");
     CHECK(h.display(af::P_PRESET) == "PRESET  Gone");
     h.press(af::P_PRESET_NEXT);
     h.run(4);
@@ -236,7 +236,7 @@ void testPresets() {
     h.press(af::P_PRESET_PREV);
     CHECK(std::fabs(h.value(af::P_VOLUME) + 30.0f) < 0.01f);
     const std::string lastKey = L->items.back().key;
-    h.load("ambientforce 1\npreset=" + lastKey + "\n");
+    h.load("ambientwerk 1\npreset=" + lastKey + "\n");
     h.set(af::P_VOLUME, -30.0f);
     h.press(af::P_PRESET_NEXT);
     CHECK(std::fabs(h.value(af::P_VOLUME) + 30.0f) < 0.01f && h.display(af::P_PRESET) == "PRESET  " + L->label(lastKey));
@@ -246,7 +246,7 @@ void testPresets() {
     h.press(af::P_PRESET_NEXT);
     h.press(af::P_PRESET_NEXT);   // the third preset
     const std::string third = h.display(af::P_PRESET);
-    h.load("ambientforce 1\nvolume=-9\n");
+    h.load("ambientwerk 1\nvolume=-9\n");
     CHECK(h.display(af::P_PRESET) == "PRESET  -");
     h.press(af::P_PRESET_NEXT);
     CHECK(h.display(af::P_PRESET) == "PRESET  " + L->label(L->items[static_cast<size_t>(at + 3)].key) && third != h.display(af::P_PRESET));
@@ -645,7 +645,7 @@ void testMacroLevels() {
 void testWeatherRendersAlike() {
     std::printf("== the phrase with Weather on: the same samples every time\n");
     CHECK(afl::waitForTables());
-    const std::string text = "ambientforce 1\nw_level=0.8\nw_source=builtin:Embers\ng_level=0\nb_level=0\n";   // Weather alone
+    const std::string text = "ambientwerk 1\nw_level=0.8\nw_source=builtin:Embers\ng_level=0\nb_level=0\n";   // Weather alone
     uint64_t prints[2] = {};
     double weather = 0.0;
     for (int k = 0; k < 2; ++k) {

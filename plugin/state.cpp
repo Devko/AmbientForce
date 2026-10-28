@@ -1,4 +1,4 @@
-// From SubForce plugin/state.cpp (8846421), namespace sf -> af; Weather's source (w_source=) added.
+// From SubWerk plugin/state.cpp (8846421), namespace sf -> af; Weather's source (w_source=) added.
 #include "state.h"
 
 #include "patch_map.h"
@@ -11,7 +11,7 @@
 
 namespace af {
 namespace {
-constexpr const char* kMagic = "ambientforce ";
+constexpr const char* kMagic = "ambientwerk ";
 
 // Numbers in the C locale whatever the process's is (a "0,5" would misread every preset).
 std::string number(float v) {

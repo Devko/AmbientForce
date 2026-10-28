@@ -1,13 +1,13 @@
 # Handover, 2026-10-24
 
-This is for an agent continuing AmbientForce without the people and the machine it was built on.
+This is for an agent continuing AmbientWerk without the people and the machine it was built on.
 Read it top to bottom before touching anything.
 
 ## What this is
 
-AmbientForce is an ambient instrument: a hand-written VST2 plugin for the Akai Force (MPC OS,
+AmbientWerk is an ambient instrument: a hand-written VST2 plugin for the Akai Force (MPC OS,
 ARMv7 Cortex-A17, 44.1 kHz, 128-frame blocks). It is the fourth of a family by the same author,
-after PolyForce, SubForce and EffectForce, all at `github.com/Devko/<Name>`. One pad drives four
+after PolyWerk, SubWerk and EffectWerk, all at `github.com/Devko/<Name>`. One pad drives four
 **strata** through a shared harmony brain. M1 has built two of them:
 - Ground, a drone.
 - Bloom, chords on "lifetime" wavetables.
@@ -31,7 +31,7 @@ on branch `m2`.
 6. [`docs/plans/2026-10-08-m2-presets-proposal.md`](plans/2026-10-08-m2-presets-proposal.md):
    Task 12's 24 presets, **approved by the author**.
 7. [`docs/USER_GUIDE.md`](USER_GUIDE.md) and [`docs/PERFORMANCE.md`](PERFORMANCE.md) as needed.
-8. Devko/AmbientForce#2 and #3 (`m2` → `main`, both merged on 2026-10-24): M2's status through
+8. Devko/AmbientWerk#2 and #3 (`m2` → `main`, both merged on 2026-10-24): M2's status through
    Task 12, task by task. Open a new draft PR for Task 13.
 
 ## Where things stand
@@ -163,8 +163,8 @@ All are recorded in the plan, in its As-built blocks and Decisions.
 
 ## Device questions for the author (Phase 0 and Task 10)
 
-Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostics-on-the-device)).
-- **Keep:** can the plugin write `/media/AkaiForce/AmbientForce/Memories/Memory NNN.wav`?
+Trace with `touch /tmp/ambientwerk.trace` ([diagnostics](BUILDING.md#diagnostics-on-the-device)).
+- **Keep:** can the plugin write `/media/AkaiForce/AmbientWerk/Memories/Memory NNN.wav`?
   - How long does the fsync'ed 2.8 MB write take, and does the audio stay clean during it?
   - Does a missing or read-only SSD give "KEEP: couldn't write to the SSD" without a hang?
 - **Parameters:**
@@ -203,7 +203,7 @@ Trace with `touch /tmp/ambientforce.trace` ([diagnostics](BUILDING.md#diagnostic
 ## Rules
 
 - **Branches:** work on **`m2`** and push it.
-  - Keep a draft PR (`m2` → `main`) saying what's done, decided and open. Devko/AmbientForce#2
+  - Keep a draft PR (`m2` → `main`) saying what's done, decided and open. Devko/AmbientWerk#2
     was merged with Tasks 1–11 and #3 with Task 12; open a new one when Task 13 starts.
   - **Merge into `main` or tag only when the author asks.**
 - **No device:** no `bench-device` or `plugin-install`. Never invent device numbers; mark them
@@ -244,5 +244,5 @@ make test && make test-arm && make arm-plugin && make skin preview
   - On the author's machine it is `~/qemu-icount/` in WSL, set in `local.mk`.
   - Run WSL commands in a login shell (`wsl.exe -e bash -lc ...`), so `~/.local/bin`'s
     `qemu-arm` is on the PATH.
-- The sibling repos are useful to read and to port from: clone `Devko/EffectForce`,
-  `Devko/PolyForce` and `Devko/SubForce` next to this repo.
+- The sibling repos are useful to read and to port from: clone `Devko/EffectWerk`,
+  `Devko/PolyWerk` and `Devko/SubWerk` next to this repo.

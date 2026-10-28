@@ -1,4 +1,4 @@
-// Weather's sources by key: see sources.h. The listing's walk is SubForce's plugin/library.cpp (8846421).
+// Weather's sources by key: see sources.h. The listing's walk is SubWerk's plugin/library.cpp (8846421).
 #include "sources.h"
 
 #include "param_ids.h"
@@ -36,8 +36,8 @@ struct Place {
     const char* label;
     const char* folder;
 };
-constexpr Place kPlaces[] = {{"plugin", "Weather"}, {"ssd", "AmbientForce/Weather"}, {"ssd", "AmbientForce/Memories"}};
-constexpr const char* kMemoriesFolder = "AmbientForce/Memories";
+constexpr Place kPlaces[] = {{"plugin", "Weather"}, {"ssd", "AmbientWerk/Weather"}, {"ssd", "AmbientWerk/Memories"}};
+constexpr const char* kMemoriesFolder = "AmbientWerk/Memories";
 
 // surface.py's keys (what a factory preset may name, checked there) are these.
 constexpr bool same(const char* a, const char* b) {

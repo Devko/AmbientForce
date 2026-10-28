@@ -12,12 +12,12 @@
 
 ## Overview
 
-AmbientForce is a single shared object, `ambientforce.so`, that MPC loads through its VST2 host as an
+AmbientWerk is a single shared object, `ambientwerk.so`, that MPC loads through its VST2 host as an
 instrument (no inputs, 2 outputs), plus a touchscreen skin generated at build time. The plugin side
 (VST2 glue, the touchscreen logic, the preset library, saved state, the build, test and bench
-tooling) is SubForce's, renamed; the page groups, the reverb and the delay are EffectForce's; the
-wavetable layout is PolyForce's. The harmony brain, the lifetime tables and their oscillator,
-Ground, Bloom and the engine that routes one MIDI stream through them are AmbientForce's own.
+tooling) is SubWerk's, renamed; the page groups, the reverb and the delay are EffectWerk's; the
+wavetable layout is PolyWerk's. The harmony brain, the lifetime tables and their oscillator,
+Ground, Bloom and the engine that routes one MIDI stream through them are AmbientWerk's own.
 
 ```mermaid
 flowchart LR
@@ -25,7 +25,7 @@ flowchart LR
   S -->|params.json, layout.conf| G[skin generator] --> K[skin: TUI.json + PNGs]
   D[dsp/ engine] --> P
   T[plugin/tables: builder thread] -->|lifetime tables, published| D
-  P --> SO[ambientforce.so]
+  P --> SO[ambientwerk.so]
 ```
 
 - **`surface/surface.py`** is the single source of the parameter list and the touchscreen pages. It
@@ -53,16 +53,16 @@ flowchart LR
 | `dsp/airvoices.*` | Air's voices: six that ring once struck. Glass, Bowl, Bar and Bell as six decaying complex one-poles each, four to a vector; Kalimba, a Karplus-Strong pluck (an allpass for the period's fraction, the loop low-pass at Tone, a burst of noise); Felt on the Felt Piano table, Age moving as it fades. Allocation and the steal's fade, pans, sleeping |
 | `dsp/lifeosc.h` | The lifetime oscillator (header-only): the Hermite and linear table reads, frame crossfade and mip choice, `LifeScan` (Age, Sway, Smear), the Couple modes |
 | `dsp/lifetime.*` | The table library: eight life models (additive, every harmonic its own decay, beating and formant path) and four digital waves; `TableSet`, the atomic slots the audio thread reads |
-| `dsp/wavetable.*` | PolyForce's wavetable layout: 11 mip levels of their own lengths, 16-bit samples with a scale per frame, `mipFor`, and the band-limited frame builder (an inverse FFT per level) |
+| `dsp/wavetable.*` | PolyWerk's wavetable layout: 11 mip levels of their own lengths, 16-bit samples with a scale per frame, `mipFor`, and the band-limited frame builder (an inverse FFT per level) |
 | `dsp/space.*` | Space: the Reverb as a send / return (wet only), Rise, `silent()` |
-| `dsp/weather.*` | Weather: EffectForce's grain voices over a fixed source, Cloud, Stretch and Stream, the anchor and its drift, To Key, the gate, Duck, the tilt and high-pass, the copies a source change leaves the fading grains |
+| `dsp/weather.*` | Weather: EffectWerk's grain voices over a fixed source, Cloud, Stretch and Stream, the anchor and its drift, To Key, the gate, Duck, the tilt and high-pass, the copies a source change leaves the fading grains |
 | `dsp/grainsrc.*` | A Weather source: 16-bit stereo at three rates, looping through its guard frames (`GrainSource`, which Memory fills too); `buildSource()` makes one of any signal at load time (the loop's crossfade, the level, the decimated levels) |
 | `dsp/fields.*` | Weather's eight procedural fields (Rain on Roof, Light Rain, Wind High, Wind Low, Surf, Stream, Embers, Night), each rendered on the loader thread into a source: a 12 s loop, decorrelated stereo, its pitched parts on C, its peaks under a soft knee |
 | `dsp/memory.*` | Memory: the last 16 s recorded at the grains' three levels into one of two rings; Remember makes that ring Weather's source (its seam faded, its guard written) and records on in the other; pins for Keep |
-| `dsp/halfband.h` | EffectForce's halfband decimator (and interpolator): the sources' slower levels; `FrameDecimator`, the same filter over a run of frames, for Memory's recording |
-| `dsp/reverb.*`, `pitch.h` | EffectForce's Reverb: predelay, low cut, diffusion, an 8-line feedback delay network with modulation, freeze and shimmer; the Haze and Abyss modes added. The shimmer's pitch shifter |
+| `dsp/halfband.h` | EffectWerk's halfband decimator (and interpolator): the sources' slower levels; `FrameDecimator`, the same filter over a run of frames, for Memory's recording |
+| `dsp/reverb.*`, `pitch.h` | EffectWerk's Reverb: predelay, low cut, diffusion, an 8-line feedback delay network with modulation, freeze and shimmer; the Haze and Abyss modes added. The shimmer's pitch shifter |
 | `dsp/echo.*` | Echo: the Delay as a send / return (wet only), ducking under the send, `silent()`, its defaults (`initEcho()`), `rest()` (the engine's skipped time, for the duck) |
-| `dsp/delay.*` | EffectForce's Delay: two lines read at free or synced times (Tape glides or Fade crossfades), Stereo, Ping-Pong and Mono, the cuts, drive and limiter in the loop, wow and flutter, ducking; Diffuse added (four allpasses a side in the loop, blended in by the amount) |
+| `dsp/delay.*` | EffectWerk's Delay: two lines read at free or synced times (Tape glides or Fade crossfades), Stereo, Ping-Pong and Mono, the cuts, drive and limiter in the loop, wow and flutter, ducking; Diffuse added (four allpasses a side in the loop, blended in by the amount) |
 | `dsp/svf.h` | Andrew Simper's trapezoidal state-variable filter (Bloom's filter, Ground's Tone and formants) |
 | `dsp/common.h`, `fastmath.h`, `simd.h` | The rate and the control chunk, `Transport`, smoothing; fast exp2, log2, tan, soft clip and random numbers; four-float vectors (NEON on the Force, GCC's generic vectors on x86, so the tests run the same arithmetic) |
 | `dsp/stages.h` | Stage timers for the profiling build (`-DAF_STAGE_TIMING`): ground, bloom, air, weather, echo, space, out |
@@ -70,16 +70,16 @@ flowchart LR
 | `plugin/surface.*` | The touchscreen side: parameter values, stepping, popups, the preset browser, pushes to MPC; Weather's source by its key (the Source stepper, Memory's flag for the engine), Remember's and Keep's requests, and what they came to on the status line |
 | `plugin/patch_map.*` | 0..1 ↔ real values, display text, parameters → `Patch` (the levels' audio taper), then the four macros bending that `Patch` (`applyMacros`); every option list checked against the engine's names as it compiles |
 | `plugin/tables.*` | The process-wide `TableSet` and its builder thread: started by the first instance, joined at unload, the tables freed only with no instance alive |
-| `plugin/loader.*` | PolyForce's loader for Weather's sources: a worker thread per instance, the 150 ms debounce, the slots' published pointers and the graveyard that frees a replaced source only when no block can still read it (the rule, in the header, as counters: Weather keeps its source between blocks), jobs on the worker (Keep's write), a tick every pass (the buttons' requests); `SourceCache`, the process-wide LRU of sources (48 MB, never one in use, a file's kept with its size and time). One per instance, its slot Weather's source |
+| `plugin/loader.*` | PolyWerk's loader for Weather's sources: a worker thread per instance, the 150 ms debounce, the slots' published pointers and the graveyard that frees a replaced source only when no block can still read it (the rule, in the header, as counters: Weather keeps its source between blocks), jobs on the worker (Keep's write), a tick every pass (the buttons' requests); `SourceCache`, the process-wide LRU of sources (48 MB, never one in use, a file's kept with its size and time). One per instance, its slot Weather's source |
 | `plugin/wav.*` | WAVs in and out for the sources: a streaming, bounded reader (PCM 16/24/32 and float, up to 8 channels, 1 to 384 kHz resampled to 44.1: halfband decimation above 96 kHz, then 32 taps) that refuses what it can't trust, and an atomic, fsync'ed 16-bit writer |
-| `plugin/sources.*` | Weather's sources by key (`builtin:`, `memory:`, `plugin:Weather/`, `ssd:AmbientForce/Weather/`, `ssd:AmbientForce/Memories/`): the listing (scanned at most every 2 s), `loadSource`, the loader's source slot, and Keep (`keepMemory`: the remembered 16 s to `Memory NNN.wav`, numbered past the highest ever used) |
+| `plugin/sources.*` | Weather's sources by key (`builtin:`, `memory:`, `plugin:Weather/`, `ssd:AmbientWerk/Weather/`, `ssd:AmbientWerk/Memories/`): the listing (scanned at most every 2 s), `loadSource`, the loader's source slot, and Keep (`keepMemory`: the remembered 16 s to `Memory NNN.wav`, numbered past the highest ever used) |
 | `plugin/library.*` | The preset library: scan, categories, favorites, recent |
 | `plugin/presets.*` | Factory and user presets, and a preset's description (`about=`) |
 | `plugin/state.*` | The state text shared by projects and preset files, Weather's source among it by its key |
 | `plugin/paths.*` | Plugin folder, preset roots, source roots (`AF_SOURCE_ROOTS`), data folder, atomic file writes |
-| `plugin/trace.*` | Device diagnostics while `/tmp/ambientforce.trace` exists: parameter sets, suspends and resumes, MIDI, table build times ([Building](BUILDING.md#diagnostics-on-the-device)) |
+| `plugin/trace.*` | Device diagnostics while `/tmp/ambientwerk.trace` exists: parameter sets, suspends and resumes, MIDI, table build times ([Building](BUILDING.md#diagnostics-on-the-device)) |
 | `plugin/vst2.h` | A hand-written slice of the VST2 ABI (no Steinberg SDK) |
-| `plugin/exports.map`, `exports_stages.map` | Linker version scripts: only `VSTPluginMain` exported (plus `AmbientForceStageTimes` in the profiling build) |
+| `plugin/exports.map`, `exports_stages.map` | Linker version scripts: only `VSTPluginMain` exported (plus `AmbientWerkStageTimes` in the profiling build) |
 | `surface/surface.py` | Parameters, pages, the layout and preset checks; generates everything the skin and the C++ side need |
 | `surface/skin_polish.py` | Redraws the knob strips, trigger buttons and stepper arrows after the skin generator; makes each group's pages sub-pages of one tab |
 | `surface/fonts/` | Titillium Web (SIL OFL), the skin's font; the layout check measures text with its advance table |
@@ -198,7 +198,7 @@ limiter → Stop's fade.
   the voice's own `LifeScan` position, joined by `renderCoupled()`; plus the breath noise
   band-passed at the note; through the SVF; times the envelope and velocity; panned. Unison 2 runs a
   second pair in the SVF's other lane.
-- **Space**: the strata's summed sends into EffectForce's Reverb at mix 1; Rise ducks the wet
+- **Space**: the strata's summed sends into EffectWerk's Reverb at mix 1; Rise ducks the wet
   under an envelope of the send.
 
 ## Control rate
@@ -309,7 +309,7 @@ eight lifetime tables (256 frames each) and the four one-frame waves.
 
 ## Talking to MPC
 
-The family's rules, device-proven on the Force by PolyForce, SubForce and EffectForce:
+The family's rules, device-proven on the Force by PolyWerk, SubWerk and EffectWerk:
 
 - MPC only notices value changes the plugin makes (lit browser tiles, the stepper, snapped steps)
   when they are pushed with `audioMasterAutomate`, and only re-reads texts after
@@ -341,7 +341,7 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 - A tap on a button toggles the value MPC read back, and a button always reads back 0, so every tap
   arrives as a lone 1: each 1 is a press, and the plugin springs the button back to 0.
 - MPC sends a second toggle about 0.7 s after a tap on a tile; a revert within 1 s is ignored.
-  AmbientForce's switches that matter mid-performance (Hold, Freeze, the mutes) are segments, not
+  AmbientWerk's switches that matter mid-performance (Hold, Freeze, the mutes) are segments, not
   tiles, so a tap is exactly one change.
 - MPC polls names, categories and parameter texts hundreds of times a second while the screen is
   open: every getter reads caches.
@@ -349,7 +349,7 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
 - What MPC does with an **instrument** on Stop (all-notes-off? a suspend, as it does to an insert?),
   with the Force's pad latch and CC 64, and with MIDI tracks routed to a plugin's track, is still to
   be measured ([Roadmap](ROADMAP.md#phase-0-the-probe)). The engine takes either a falling transport
-  or a short suspend as Stop, and `/tmp/ambientforce.trace` logs every suspend and resume, where the
+  or a short suspend as Stop, and `/tmp/ambientwerk.trace` logs every suspend and resume, where the
   audio thread took the resume (how long after the suspend, whether the host said so, Stop or
   reset), every MIDI event as it came in, channel and all, and which of MPC's threads made each call
   ([diagnostics](BUILDING.md#diagnostics-on-the-device)).
@@ -364,7 +364,7 @@ The family's rules, device-proven on the Force by PolyForce, SubForce and Effect
   the volume, the four macros and the seven of the free or synced cycles, which come after Tilt in
   that order, then M2's 58) are saved and automatable; the surface's own values (the preset stepper,
   Weather's Source stepper, Remember and Keep, tiles, popup flags) are not. 218 parameters in all.
-- **Saved state** (projects and `.afp` preset files) is the text format `ambientforce 1`:
+- **Saved state** (projects and `.afp` preset files) is the text format `ambientwerk 1`:
   `key=value` lines of *real* values (Hz, seconds, dB, an option's index), then Weather's source by
   its key (`w_source=builtin:Surf`, never an index), plus, in a project, the preset it came from.
   Ranges can change without remapping saved projects or presets. Options are

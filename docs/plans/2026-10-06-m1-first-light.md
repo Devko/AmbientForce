@@ -3,43 +3,43 @@
 > **For Claude:** REQUIRED SUB-SKILL: use superpowers:subagent-driven-development (this session)
 > or superpowers:executing-plans to implement this plan task by task.
 
-**Goal:** a playable AmbientForce on the Force. One pad plays a Bloom chord over a Ground drone
+**Goal:** a playable AmbientWerk on the Force. One pad plays a Bloom chord over a Ground drone
 that follows the harmony, in just intonation, into a Space reverb with Haze and Abyss voicings.
 It has the M1 pages, 16 factory presets, and a CPU gate of ≤15% p99.
 
-**Architecture:** SubForce's plugin side (VST2 glue, surface, presets, tests, tools, CI), copied and
-renamed, the way EffectForce was made from SubForce. The page machinery with sub-page groups
-comes from EffectForce's `surface.py` and `skin_polish.py`. EffectForce's Reverb, ported. The
-wavetable memory layout comes from PolyForce. New code: the harmony brain, lifetime tables and
+**Architecture:** SubWerk's plugin side (VST2 glue, surface, presets, tests, tools, CI), copied and
+renamed, the way EffectWerk was made from SubWerk. The page machinery with sub-page groups
+comes from EffectWerk's `surface.py` and `skin_polish.py`. EffectWerk's Reverb, ported. The
+wavetable memory layout comes from PolyWerk. New code: the harmony brain, lifetime tables and
 their oscillator, Ground, Bloom, and the engine that routes one MIDI stream through Listen modes.
 
 **Tech stack:** C++17, GNU make in WSL Ubuntu (`g++` 13 for x86 tests and ASan;
 `arm-linux-gnueabihf-g++` and `qemu-arm` for ARM), Python 3 for `surface.py` (Pillow for the skin,
-from `$(HOME)/.venvs/rackforce`), hand-written VST2.
+from `$(HOME)/.venvs/rackwerk`), hand-written VST2.
 
 **Source documents:** [`docs/CONCEPT.md`](../CONCEPT.md) (what and why). The sibling repos are
 the references for every convention:
-- `D:\DEV\SubForce`: the instrument template.
-- `D:\DEV\EffectForce`: the reverb, the sub-page groups, the newest conventions.
-- `D:\DEV\PolyForce`: the wavetables and the loader.
-- `D:\DEV\mockba\RackForcePlugin\docs\MPC_PLUGIN_SPEC.md`: the device-verified host facts.
+- `D:\DEV\SubWerk`: the instrument template.
+- `D:\DEV\EffectWerk`: the reverb, the sub-page groups, the newest conventions.
+- `D:\DEV\PolyWerk`: the wavetables and the loader.
+- `D:\DEV\mockba\RackWerkPlugin\docs\MPC_PLUGIN_SPEC.md`: the device-verified host facts.
 
 ---
 
 ## Ground rules for every task
 
 - **Running commands:** from Windows, every build and test runs in WSL:
-  `wsl -e bash -lc 'cd /mnt/d/DEV/AmbientForce && make test'`. The toolchain is already
+  `wsl -e bash -lc 'cd /mnt/d/DEV/AmbientWerk && make test'`. The toolchain is already
   installed there. `local.mk` (git-ignored) holds `FORCE`, `SSH_KEY` and `PY`, copied from
-  SubForce's.
+  SubWerk's.
 - **Real-time rules** (from the family's ARCHITECTURE docs):
   - Nothing on the audio thread allocates, locks or throws.
   - Host callbacks only from `processReplacing`.
   - A `try`/`catch` at every entry point.
   - Getters read caches only.
   - Every `dsp/` class allocates in its constructor or `prepare()`, never in `render()`/`process()`.
-- **Time:** any sample counter that can run for hours is 64-bit (the PolyForce hang lesson).
-  Delay and line lengths in samples are `double`, or integers plus a float fraction (the EffectForce
+- **Time:** any sample counter that can run for hours is 64-bit (the PolyWerk hang lesson).
+  Delay and line lengths in samples are `double`, or integers plus a float fraction (the EffectWerk
   float-stall lesson).
 - **Namespaces and names:**
 
@@ -47,19 +47,19 @@ the references for every convention:
   |---|---|
   | Namespace | `af` (tests: `aft`) |
   | Environment variables | `AF_FIXED_SEED`, `AF_PRESET_ROOTS`, `AF_DATA_DIR` |
-  | Trace file | `/tmp/ambientforce.trace` |
-  | Plugin and bench | `ambientforce.so`, `afbench` |
-  | Plugin identity | uid `AmFc`, vendor `Devko`, bundle folder `Devko - VST - AmbientForce` |
-  | Presets | `.afp`, magic `ambientforce 1` |
+  | Trace file | `/tmp/ambientwerk.trace` |
+  | Plugin and bench | `ambientwerk.so`, `afbench` |
+  | Plugin identity | uid `AmFc`, vendor `Devko`, bundle folder `Devko - VST - AmbientWerk` |
+  | Presets | `.afp`, magic `ambientwerk 1` |
   | Accent colour | mist blue `8ab4f8` |
 
 - **Code copied from a sibling** gets a first-line provenance comment. For example:
-  `// From EffectForce dsp/reverb.h (4160e87), namespace ef -> af; Haze and Abyss added.`
+  `// From EffectWerk dsp/reverb.h (4160e87), namespace ef -> af; Haze and Abyss added.`
 - **Comments and docs** follow the family's voice: plain sentences that explain why. **No hardware
   product names** in code or user docs (CONCEPT.md §17, decision 7).
 - **TDD:** write the checks first, run them and watch them fail, implement, then watch them pass.
   Checks use `CHECK()` from `test/check.h`. Each suite is a `void xxxTests()` called from
-  `plugin_test.cpp`'s `main` (the SubForce pattern).
+  `plugin_test.cpp`'s `main` (the SubWerk pattern).
 - **Commits:** one per task at least, with a message in the family's style: a subject line, then
   a body explaining what and why, ending with:
 
@@ -73,13 +73,13 @@ the references for every convention:
 
 ---
 
-## Task 1: Scaffold from SubForce
+## Task 1: Scaffold from SubWerk
 
-**Goal:** an AmbientForce that builds, loads in the fake host, passes its tests and has a skin. The
+**Goal:** an AmbientWerk that builds, loads in the fake host, passes its tests and has a skin. The
 engine is a stub that plays a sine per note, so there is something to hear and test.
 
 **Files:**
-- **Copy from SubForce:**
+- **Copy from SubWerk:**
   - `Makefile`
   - `.github/workflows/build.yml`
   - `plugin/*` (all)
@@ -88,22 +88,22 @@ engine is a stub that plays a sine per note, so there is something to hear and t
   - `surface/surface.py`, `surface/skin_polish.py`, `surface/fonts/*`
   - `presets/Factory/01_Templates/01_Init.sfp` → `01_Init.afp`
   - `third_party/mpc-vst-plugins/`
-- **Take from EffectForce:**
+- **Take from EffectWerk:**
   - `surface/skin_polish.py`, plus the page-group machinery in `surface.py`: `Layout.group()`,
     `Layout.page()`, and `skin_style()` with `tab_groups`.
-  - `third_party/mpc-vst-plugins/` instead of SubForce's copy, if its marked local patches are a
+  - `third_party/mpc-vst-plugins/` instead of SubWerk's copy, if its marked local patches are a
     superset. Diff the two READMEs' patch lists, and keep the one with all of them.
-- **Create:** `dsp/engine.h`, `dsp/engine.cpp` (the stub), `dsp/stages.h` (from SubForce,
+- **Create:** `dsp/engine.h`, `dsp/engine.cpp` (the stub), `dsp/stages.h` (from SubWerk,
   renamed), `local.mk` (git-ignored), and `README.md` (a short stub; Task 12 writes the real one).
-- **Delete** everything SubForce-specific: `dsp/synth.*`, `osc.h`, `ladder.h`, `halfband.h`,
+- **Delete** everything SubWerk-specific: `dsp/synth.*`, `osc.h`, `ladder.h`, `halfband.h`,
   `env.h`, `mod.h`, the `keys_test`, `mod_test` and `engine_test` suites, and
   `tools/halfband_design.py`.
 
 **Steps:**
-1. **Copy and rename.** Change `SubForce` → `AmbientForce`, `subforce` → `ambientforce`,
+1. **Copy and rename.** Change `SubWerk` → `AmbientWerk`, `subwerk` → `ambientwerk`,
    `sf::` / `namespace sf` → `af`, `sft` → `aft`, `SF_` → `AF_`, `.sfp` → `.afp`, `SbFc` → `AmFc`,
-   `sfbench` → `afbench`, `SubForceStageTimes` → `AmbientForceStageTimes`. Use the accent palette
-   from EffectForce's `PALETTE`, re-coloured to `8ab4f8`, with `accent_hi` `c6dcff`,
+   `sfbench` → `afbench`, `SubWerkStageTimes` → `AmbientWerkStageTimes`. Use the accent palette
+   from EffectWerk's `PALETTE`, re-coloured to `8ab4f8`, with `accent_hi` `c6dcff`,
    `seg_active_tx` `0d1b33` and `tile_on` `1f2d45`.
 2. **Write the stub engine** in `dsp/engine.h`. It keeps `sf::Synth`'s public API, so
    `plugin/plugin.cpp` changes only in its type names:
@@ -136,19 +136,19 @@ engine is a stub that plays a sine per note, so there is something to hear and t
    Stub behaviour: up to 6 sine voices with a 10 ms attack and 300 ms release.
 3. **Cut `surface.py`** down to: `status` (index 0), `volume`, the preset stepper and buttons,
    `rand_amt`, and the BROWSE tiles. Its pages are one group BROWSE with one page PRESETS (the
-   SubForce BROWSE layout, made a `page()` of a `group()`). `plugin/patch_map.cpp` maps `volume`
-   only. The `static_assert`s that mirrored SubForce's lists go.
-4. **Cut the tests.** `plugin_test.cpp` and `preset_test.cpp` lose their SubForce-specific
+   SubWerk BROWSE layout, made a `page()` of a `group()`). `plugin/patch_map.cpp` maps `volume`
+   only. The `static_assert`s that mirrored SubWerk's lists go.
+4. **Cut the tests.** `plugin_test.cpp` and `preset_test.cpp` lose their SubWerk-specific
    checks, but keep every generic one: chunks round-trip, every getter is safe for every index,
    the browser, preset save and load, button taps, stepper detents, non-finite host values
    ignored. Add `test/engine_test.cpp` with `void engineTests()`:
    - **Silence:** with no notes held, output is exactly 0.
-   - **Note:** note 69 at velocity 100 → a 440 Hz peak (Hann correlation as in SubForce's
+   - **Note:** note 69 at velocity 100 → a 440 Hz peak (Hann correlation as in SubWerk's
      `toneAmp`, at least 20 dB above 430 Hz and 450 Hz).
    - **Note-off:** output < 1e-6 within 0.5 s of note-off.
    - **Six voices:** 6 voices sound at once; a 7th note steals.
 5. **Adjust the Makefile:** `SRC` and target names, `PLUGIN_VERSION ?= 0.0.1`,
-   `--repo Devko/AmbientForce`, the `--about` text ("AmbientForce ambient instrument (preview):
+   `--repo Devko/AmbientWerk`, the `--about` text ("AmbientWerk ambient instrument (preview):
    …"), and the `make loudness`/`demos` paths. Point CI at the new names.
 6. **Run, and fix until all pass:**
    - `make test`: ASan suite passes.
@@ -158,17 +158,17 @@ engine is a stub that plays a sine per note, so there is something to hear and t
    - `make bench`: the x86 bench runs.
 7. **Look at** `surface/build/page_1.png` (Read the PNG) and confirm the BROWSE page renders in
    mist blue.
-8. **Commit:** "Scaffold: SubForce's plugin side, renamed; a stub engine".
+8. **Commit:** "Scaffold: SubWerk's plugin side, renamed; a stub engine".
 
 ---
 
 ## Task 2: Space, the reverb ported, with Haze and Abyss
 
 **Files:**
-- **Copy from EffectForce, `ef` → `af`, with provenance lines:** `dsp/common.h`, `dsp/simd.h`
-  (EffectForce's version replaces SubForce's), `dsp/fastmath.h`, `dsp/pitch.h`, `dsp/svf.h`,
+- **Copy from EffectWerk, `ef` → `af`, with provenance lines:** `dsp/common.h`, `dsp/simd.h`
+  (EffectWerk's version replaces SubWerk's), `dsp/fastmath.h`, `dsp/pitch.h`, `dsp/svf.h`,
   `dsp/reverb.h`, `dsp/reverb.cpp`.
-- **Copy:** `test/signal.h`, and the reverb checks in `test/reverb_test.cpp` (EffectForce's
+- **Copy:** `test/signal.h`, and the reverb checks in `test/reverb_test.cpp` (EffectWerk's
   suite, trimmed to the checks that test the Reverb class itself, not the rack).
 - **Create:** `dsp/space.h` and `dsp/space.cpp`.
 
@@ -208,7 +208,7 @@ public:
 - At rise 0 it is bit for bit the plain reverb.
 
 **Checks** (in `test/reverb_test.cpp`, `void reverbTests()`):
-1. Every ported EffectForce reverb check passes.
+1. Every ported EffectWerk reverb check passes.
 2. **Haze RT60:** within ±10% of `decayS` at 1 kHz for decay 4 s. Its spectral centroid of the
    tail at 2 s is lower than Space mode's under the same settings.
 3. **Abyss:** `decayS` 5 measures RT60 between 18 and 22 s.
@@ -219,7 +219,7 @@ public:
    mix 1.
 6. **`silent()`:** true 0.5 s after a 0.3 s decay tail ends; false while frozen with a tail.
 
-**Commit:** "Space: EffectForce's reverb with Haze and Abyss, as a send/return with Rise".
+**Commit:** "Space: EffectWerk's reverb with Haze and Abyss, as a send/return with Rise".
 
 ---
 
@@ -375,9 +375,9 @@ The user may replace it later, and test 5's two cases must still pass.
 
 **Files:**
 - **Create:**
-  - `dsp/wavetable.h`, `dsp/wavetable.cpp`: PolyForce's layout. Port `Wavetable`, the `kMip*`
-    constants, `mipFor`, `newTableId`, and PolyForce's band-limited frame builder (the code in
-    PolyForce `dsp/wavetable.cpp` that turns a harmonic spectrum into the 11 mip levels with
+  - `dsp/wavetable.h`, `dsp/wavetable.cpp`: PolyWerk's layout. Port `Wavetable`, the `kMip*`
+    constants, `mipFor`, `newTableId`, and PolyWerk's band-limited frame builder (the code in
+    PolyWerk `dsp/wavetable.cpp` that turns a harmonic spectrum into the 11 mip levels with
     16-bit samples and a per-frame scale). Not the WAV loader or the builtins.
   - `dsp/lifetime.h`, `dsp/lifetime.cpp`.
   - `plugin/tables.h`, `plugin/tables.cpp`.
@@ -458,7 +458,7 @@ frame f, at time t:
    returns the built table, and the builder finishes all 12 within 30 s on x86 under ASan.
 6. **Size:** `bytes()` of a lifetime table ≤ 4.8 MB.
 
-**Commit:** "Tables: PolyForce's wavetable layout, 8 lifetime models, 4 digital waves, a builder thread".
+**Commit:** "Tables: PolyWerk's wavetable layout, 8 lifetime models, 4 digital waves, a builder thread".
 
 ---
 
@@ -516,7 +516,7 @@ public:
 **Checks:**
 1. **Pitch:** the sine table at `inc = 440/44100` gives a 440 Hz peak, with harmonics under -90 dB.
 2. **No aliasing:** the Saw table at notes 24..108 in steps of 12 has no component above Nyquist
-   folded back below 15 kHz louder than -70 dB relative to the fundamental (the PolyForce
+   folded back below 15 kHz louder than -70 dB relative to the fundamental (the PolyWerk
    `kAliasLimit` rule).
 3. **Position glide:** a pos jump from 0 to 1 within one 128-sample render has no sample-to-sample
    step bigger than 1.5× the largest step of the steady state on either side.
@@ -871,9 +871,9 @@ struct Patch {
     FM at full);
   - otherwise, leave it out and say so in ROADMAP's decisions.
 
-  If `rand_amt` returns, restore SubForce's check "Rand Amount is the surface's: not saved, not
+  If `rand_amt` returns, restore SubWerk's check "Rand Amount is the surface's: not saved, not
   reset by a preset".
-- **Restore SubForce's enum and popup checks** now that those parameters exist again: one option
+- **Restore SubWerk's enum and popup checks** now that those parameters exist again: one option
   per Q-Link detent; a tapped option lands exactly; the snapped value is pushed back to MPC; a
   popup closes on pick.
 - **The skin_polish self-test's sub-page checks** come back now that there are several pages and
@@ -911,7 +911,7 @@ Gravity / Swell until Echo arrives in M2) · Space · Width.
 | STRATA | BLOOM OSC | Bloom Table B, Bloom B Oct, Bloom Couple, Couple Amount, Bloom Smear, Blm Sway Rate, Bloom Unison, Bloom Detune · Bloom Breath, Bloom Pan, Bloom Age, Bloom Sway, Bloom Blend, Bloom Tone, Bloom Swell, Bloom Release |
 | SPACE | SPACE | Space Type, Space Size, Space Decay, Pre-Delay, Space Damp, Space Low Cut, Space Mod, Space Width · Freeze, Shimmer, Shimmer Int, Space Rise, Space Level, Ground Space, Bloom Space, Tilt |
 | SPACE | MIX | Ground Level, Ground Pan, Ground Space, Ground Mute, Bloom Level, Bloom Pan, Bloom Space, Bloom Mute · Space Level, Tilt, Volume, Freeze, Ground Width, Bloom Width, Space Width, Shimmer |
-| BROWSE | PRESETS | as SubForce's BROWSE |
+| BROWSE | PRESETS | as SubWerk's BROWSE |
 
 Popups for long lists: Key, Scale, Chord, Memory, Ground Table, Bloom Table, Bloom Table B, Space
 Type. Segments for short ones. Every page must pass `check_layout()`: geometry, names and Q-Link
@@ -971,7 +971,7 @@ within -16 ± 1 LUFS, with a peak ≤ -1 dBFS.
 **Files:** modify `tools/bench.cpp` and `tools/pgo_train.cpp`; create `tools/soak.cpp`; add
 `make soak` to the Makefile.
 
-**Bench cases**, each reporting avg/p99/max % of the block like SubForce's:
+**Bench cases**, each reporting avg/p99/max % of the block like SubWerk's:
 
 | Case | Load |
 |---|---|
@@ -1008,7 +1008,7 @@ The concept's 24 h soak is M2's gate. M1 runs 1 h.
 - `README.md`: what it is, status (preview), installing, the pages.
 - `docs/ARCHITECTURE.md`: the source layout, signal path (mermaid), threads, talking to MPC
   (copied rules), parameters and state.
-- `docs/BUILDING.md`: from SubForce, renamed, plus `make soak`.
+- `docs/BUILDING.md`: from SubWerk, renamed, plus `make soak`.
 - `docs/ROADMAP.md`:
   - M1 ✅ once the device run is done (🔜 until then).
   - M2 to M4 from the concept.
@@ -1022,7 +1022,7 @@ The concept's 24 h soak is M2's gate. M1 runs 1 h.
 1. `make test test-arm arm-plugin` all pass.
 2. Commit.
 3. `git push -u origin main`.
-4. Confirm CI starts with `gh run list --repo Devko/AmbientForce`.
+4. Confirm CI starts with `gh run list --repo Devko/AmbientWerk`.
 
 **Commit:** "Docs for M1; CI".
 
@@ -1035,7 +1035,7 @@ first.**
 
 1. `make bench-device`: record the cases in PERFORMANCE.md. The gate is the worst case ≤15% p99.
 2. `make plugin-install`, after the user has saved their MPC project.
-3. With `touch /tmp/ambientforce.trace` on the device, the user plays: pads, Stop, the Force's
+3. With `touch /tmp/ambientwerk.trace` on the device, the user plays: pads, Stop, the Force's
    latch, CC64 if available, and a MIDI track routed to the plugin's track on channels 2–4. The
    trace answers the Phase 0 questions. Record them in `docs/PROBE.md`.
 4. Listening session; fix what it finds.

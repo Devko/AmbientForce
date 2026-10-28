@@ -53,7 +53,7 @@
 //   instead of stepping the level. From silence (fromSilence below) it lands on its place at once.
 //   The sway syncs the same way (LifePos swayBeats).
 // - Width: partial i is panned to width * kPan[i], equal power (unity in the middle, as
-//   PolyForce pans): Sub in the middle, Root and Octave to the left, Fifth and Color to the right.
+//   PolyWerk pans): Sub in the middle, Root and Octave to the left, Fifth and Color to the right.
 // - A new table (another one chosen, or the slot's table published over the sine it played
 //   until it was built) fades in over kTableFade samples (20 ms), both tables read only for that
 //   long: a switch never steps. The old one is read after the switch: published tables stay while
@@ -80,7 +80,7 @@
 // Cost, as ARM instructions per 128-sample block (qemu's count, the device's flags): every
 // partial on 40.0k, the default drone (Sub, Root, Fifth, Octave) 34.3k, Root alone 17.0k; each
 // partial about 5.8k, Body 5.3k more, Breath 0.6k (the Tone's coefficients, once a step). A table
-// change reads both tables for its 20 ms. By PolyForce's ~1 ns an instruction that is 1.4%, 1.2%
+// change reads both tables for its 20 ms. By PolyWerk's ~1 ns an instruction that is 1.4%, 1.2%
 // and 0.6% of a block, against CONCEPT.md 11's 0.8%; the device bench (Task 11) has the final word.
 //
 // Real-time rules: everything is fixed-size. Nothing allocates, locks or throws after the

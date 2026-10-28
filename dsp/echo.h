@@ -1,9 +1,9 @@
 #pragma once
 // Echo (docs/CONCEPT.md, "Space"): the instrument's tape delay as a send / return, between the strata
 // and Space. The strata's Echo sends sum into it and it returns only the wet: the dry is the strata's
-// own, and the engine sets the return's level. Inside is EffectForce's Delay (dsp/delay.h) with
-// AmbientForce's Diffuse, at mix 1, run in 32-sample chunks whatever the block, so its glides, wow
-// and duck step as they did in EffectForce's rack. set() gives the Delay its targets at once and
+// own, and the engine sets the return's level. Inside is EffectWerk's Delay (dsp/delay.h) with
+// AmbientWerk's Diffuse, at mix 1, run in 32-sample chunks whatever the block, so its glides, wow
+// and duck step as they did in EffectWerk's rack. set() gives the Delay its targets at once and
 // the chunks glide to them, as a set() before each would (it only moves targets; of the transport
 // the Delay reads only the tempo). Its duck listens to the send: the repeats sink while the strata
 // play into it and bloom in the gaps.
@@ -52,7 +52,7 @@
 // the engine.
 // - M2's worst case (Ping-Pong, wow 1, Diffuse 1, duck 1, feedback 0.9, 1/4. at 120 BPM): 30.0k;
 //   30.5k at 1 ms, where the diffusers' sub-runs get shorter. initEcho(): 30.0k as well.
-// - The same at Diffuse 0: 25.9k: EffectForce's Delay 25.1k, the send's level check and the copies
+// - The same at Diffuse 0: 25.9k: EffectWerk's Delay 25.1k, the send's level check and the copies
 //   the rest. The wet's level check, skipped while the send brings anything, took 0.4k more.
 // - After a fresh start (a silence, or reset()), at the worst case: the first block 36.1k, most of
 //   the extra the diffusers' 23 KB clear; then 30.9k a block for as long as the delay time (750 ms

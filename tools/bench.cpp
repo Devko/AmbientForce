@@ -1,4 +1,4 @@
-// From SubForce tools/bench.cpp (8846421), renamed; AmbientForce's cases.
+// From SubWerk tools/bench.cpp (8846421), renamed; AmbientWerk's cases.
 // CPU bench for the built plugin: dlopen()s the .so like MPC does, plays at 44.1 kHz / 128-frame
 // blocks and times every processReplacing call with the thread's own CPU clock. Same verdict rule
 // as sd88me's tools/bench.sh (percent of the 2902 us block): PASS p99 <= 15% and max <= 50%, WARN
@@ -71,7 +71,7 @@
 // Hermetic: the plugin reads no user folders and saves nothing (it looks for the trace's flag file
 // in a folder that doesn't exist), and AF_FIXED_SEED gives every run the same random numbers (the
 // engine cases seed their engine with the same number). A profiling build of the plugin (make
-// arm-bench-stages: ambientforce_stages.so) also reports where each plugin case's time goes, in us
+// arm-bench-stages: ambientwerk_stages.so) also reports where each plugin case's time goes, in us
 // per block: Ground, Bloom, Air, Weather, Echo, Space and the output (dsp/stages.h).
 //
 // --icount is make arm-icount's half. It runs under a qemu-arm with TCG plugins, whose insn plugin
@@ -630,7 +630,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "dlopen: %s\n", dlerror());
         return 1;
     }
-    auto stages = reinterpret_cast<StageFn>(dlsym(lib, "AmbientForceStageTimes"));
+    auto stages = reinterpret_cast<StageFn>(dlsym(lib, "AmbientWerkStageTimes"));
     std::printf("%s, %d s per case, %s\n", argv[1], seconds, stages ? "profiling build" : "plain build");
     bool fail = !waitForTables(lib, false);
     for (int c = 0; c < C_COUNT; ++c) {

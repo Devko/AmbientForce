@@ -1,6 +1,6 @@
 #pragma once
 // Weather (docs/CONCEPT.md 5.4): a cloud of up to 16 grains over one fixed source (dsp/grainsrc.h):
-// a procedural field, a WAV, or Memory's remembered 16 s. The grains are EffectForce's Grain voices
+// a procedural field, a WAV, or Memory's remembered 16 s. The grains are EffectWerk's Grain voices
 // (its Cloud and Stretch), reading a source that never changes under them instead of a live
 // recording, plus Stream, plain playback that drifts. The engine decides when Weather sounds
 // (Listen: gate()) and which pitch classes To Key Chord takes (setChord()).
@@ -37,12 +37,12 @@
 // - Scale or Chord: a pitch class q drawn uniformly from the scale's (key and scale, from the
 //   HarmonyPatch) or from setChord()'s (none given: the scale's), then t = round(pitch) + d with d
 //   in -6..+5 and t = q mod 12: every source's root is C (plan decision 5). No detune. A t over +24
-//   (pitch over +19) moves down an octave, EffectForce's fold: the levels serve up to two octaves.
+//   (pitch over +19) moves down an octave, EffectWerk's fold: the levels serve up to two octaves.
 // Its rate is 2^(t / 12) frames a sample. Faster than 1.26 it reads level 1 at half that, faster than
-// 2.2 level 2 at a quarter (EffectForce's thresholds), so what a shift would push past 22 kHz was
+// 2.2 level 2 at a quarter (EffectWerk's thresholds), so what a shift would push past 22 kHz was
 // filtered out before (85 dB down): +24 never aliases.
 //
-// The reads: EffectForce's, cubic (4-point Hermite), two samples a vector, the 16-bit samples
+// The reads: EffectWerk's, cubic (4-point Hermite), two samples a vector, the 16-bit samples
 // converted as they load, the taps' differences taken as integers (the source's gain folded into
 // the grain's). A grain's window runs on a recurrence, exact to 3e-6 (weather.cpp says how; checked).
 // Positions in double; each grain reads its level's ring from `origin` on (position 0 is the
@@ -60,7 +60,7 @@
 // 50 ms time constant and falling 60 dB in 1.5 s (a 0.22 s time constant: 3 s after Bloom stops
 // Weather is back within 0.01 dB, where a 1.5 s time constant would still hold it 6 dB down), sets
 // the gain 1 / (1 + 16 duck env): at duck 1, -6 dB under a peak at -24 dBFS, -19 dB at -6 dBFS
-// (EffectForce's Delay's law). It glides across the call. With nothing to hear (audible() false)
+// (EffectWerk's Delay's law). It glides across the call. With nothing to hear (audible() false)
 // the envelope empties: it moves only in render(), so it would come back holding old peaks.
 //
 // The gate: gate(true) fades in from -60 dB to 0 over kGateS, linear in dB; gate(false) fades out
@@ -75,7 +75,7 @@
 // picks one on purpose).
 //
 // Changes: Pitch, To Key, Size, Grains, Spray, Reverse and Width take effect with the next grain. A
-// mode change fades every grain out over 20 ms (EffectForce's mode fade) while the new mode's grains
+// mode change fades every grain out over 20 ms (EffectWerk's mode fade) while the new mode's grains
 // start.
 // A source change (another source, or none: nullptr or !ready()) does the same, and the grains
 // fading out of the old source read a copy of what they have left to read, taken at the change
