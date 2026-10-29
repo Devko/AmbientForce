@@ -49,6 +49,10 @@ void testState() {
             std::printf("  %s differs after a round trip\n", af::PARAM_INFO[i].key);
             CHECK(false);
         }
+    // A project or preset saved before the rename starts with the old header: it loads, the next save writes the new one.
+    Host old;
+    CHECK(old.load("ambientforce 1\nvolume=-7\n") == 1 && std::fabs(old.value(af::P_VOLUME) + 7.0f) < 0.01f);   // werk-rename: keep
+    CHECK(old.chunk().compare(0, 14, "ambientwerk 1\n") == 0);
     // Every sound value, each somewhere of its own, comes back from a saved project where it was: options and
     // whole numbers exactly (as the value they play: a range of 48 steps or more, Weather Pitch and Split, follows
     // MPC's raw 0..1, and is saved as the whole number it plays), the rest within 1e-5 of their 0..1 (a value is

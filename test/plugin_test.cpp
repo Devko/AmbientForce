@@ -3,6 +3,7 @@
 // its VST2 entry points the way MPC drives it (128-frame blocks, events with deltaFrames, 0..1
 // params). Built with ASan/UBSan by `make test`, for the Force's CPU under qemu by `make test-arm`.
 #include "host.h"
+#include "../plugin/paths.h"
 #include "../plugin/loader.h"
 #include "../plugin/presets.h"
 #include "../plugin/sources.h"
@@ -1471,6 +1472,22 @@ void testAudioThreadQuiet() {
 
 long long aft::g_msPerEvent = 1000;
 
+// The SSD preset folder of the old name moves to the new one, once, and never over a folder already there.
+static void testLegacyDir() {
+    std::printf("== the old SSD preset folder\n");
+    namespace fs = std::filesystem;
+    const std::string old = aft::fixtureDir() + "/legacy/old", now = aft::fixtureDir() + "/legacy/new";
+    fs::create_directories(old);
+    std::ofstream(old + "/a.sfp") << "x";
+    CHECK(af::migrateLegacyDir(old, now) && fs::exists(now + "/a.sfp") && !fs::exists(old));   // it moves
+    fs::create_directories(old);
+    std::ofstream(old + "/b.sfp") << "y";
+    CHECK(!af::migrateLegacyDir(old, now) && fs::exists(old + "/b.sfp") && fs::exists(now + "/a.sfp") &&
+          !fs::exists(now + "/b.sfp"));   // the new one exists: both stay as they are
+    fs::remove_all(old);
+    CHECK(!af::migrateLegacyDir(old, now + "2") && !fs::exists(now + "2"));   // no old one: nothing happens
+}
+
 int main() {
     using namespace aft;
     const std::string root = fixtureDir();
@@ -1526,6 +1543,7 @@ int main() {
     paramsTests();
     presetTests();
     testStress();
+    testLegacyDir();
 
     std::error_code ec;
     std::filesystem::remove_all(root, ec);

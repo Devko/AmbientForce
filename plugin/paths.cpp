@@ -63,7 +63,20 @@ std::string pluginDir() {
     return dir;
 }
 
-std::vector<Root> presetRoots() { return roots("AF_PRESET_ROOTS", "Presets", "/media/AkaiForce/AmbientWerk Presets"); }
+bool migrateLegacyDir(const std::string& from, const std::string& to) {
+    struct stat st;
+    if (::stat(from.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) return false;
+    if (::lstat(to.c_str(), &st) == 0 || errno != ENOENT) return false;   // rename() would replace an empty folder
+    return std::rename(from.c_str(), to.c_str()) == 0;
+}
+
+std::vector<Root> presetRoots() {
+    constexpr const char* ssd = "/media/AkaiForce/AmbientWerk Presets";
+    static const bool moved = !std::getenv("AF_PRESET_ROOTS") &&   // once a process; tests set their own roots
+                              migrateLegacyDir("/media/AkaiForce/AmbientForce Presets", ssd);   // werk-rename: keep
+    (void)moved;
+    return roots("AF_PRESET_ROOTS", "Presets", ssd);
+}
 std::vector<Root> sourceRoots() { return roots("AF_SOURCE_ROOTS", "", "/media/AkaiForce"); }
 
 std::string dataDir() {
